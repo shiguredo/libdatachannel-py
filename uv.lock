@@ -1,0 +1,27 @@
+version = 1
+revision = 1
+requires-python = ">=3.11"
+
+[[package]]
+name = "libdatachannel-py"
+version = "0.1.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "nanobind" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "nanobind", specifier = ">=2.7.0" }]
+
+[[package]]
+name = "nanobind"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/7d/f77f2bc2e2a210502a164556f8a742cd0f72f39061b97cb9d73bbd3ff0ab/nanobind-2.7.0.tar.gz", hash = "sha256:f9f1b160580c50dcf37b6495a0fd5ec61dc0d95dae5f8004f87dd9ad7eb46b34", size = 976093 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/14/989883082b395146120d34ca7e484a2b24cb73b0e428576a3a4249bd4082/nanobind-2.7.0-py3-none-any.whl", hash = "sha256:73b12d0e751d140d6c1bf4b215e18818a8debfdb374f08dc3776ad208d808e74", size = 241690 },
+]

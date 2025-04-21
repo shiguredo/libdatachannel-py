@@ -1,0 +1,13 @@
+[project]
+name = "libdatachannel-py"
+version = "0.1.0"
+description = "libdatachannel-py is a Python binding for libdatachannel."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "nanobind>=2.7.0",
+]
