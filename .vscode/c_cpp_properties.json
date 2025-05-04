@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "includePath": [
+                "${workspaceFolder}/_source/ubuntu-24.04_x86_64/libdatachannel/include",
+                "${workspaceFolder}/_source/ubuntu-24.04_x86_64/libdatachannel/deps/json/include",
+                "${workspaceFolder}/_source/ubuntu-24.04_x86_64/libdatachannel/deps/plog/include"
+            ],
+            "defines": [
+                "USE_MBEDTLS",
+                "RTC_ENABLE_WEBSOCKET",
+                "RTC_ENABLE_MEDIA",
+                "__Userspace__",
+                "SCTP_SIMPLE_ALLOCATOR",
+                "SCTP_PROCESS_LEVEL_LOCKS"
+            ],
+            "compilerArgs": [],
+            "cStandard": "c17",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}

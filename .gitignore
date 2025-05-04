@@ -1,0 +1,12 @@
+__pycache__
+
+/.pytest_cache
+/_source
+/_build
+/_install
+/src/libdatachannel/*.so
+/src/libdatachannel/*.dll
+/src/libdatachannel/*.pyd
+/src/libdatachannel/*.pyi
+/src/libdatachannel/py.typed
+/src/*.egg-info

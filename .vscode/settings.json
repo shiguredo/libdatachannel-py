@@ -1,0 +1,28 @@
+{
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingImports": "none",
+    "reportUnusedImport": "information"
+  },
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.formatOnSaveMode": "file",
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.autoIndent": "full",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "always",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "[cpp]": {
+    "editor.formatOnSave": true
+  },
+  "files.associations": {
+    "*.cs": "csharp",
+    "CMakeLists.txt": "cmake",
+  },
+  "C_Cpp.errorSquiggles": "disabled",
+  // nanobind 周りでエラーが消えないので全部消す
+  "editor.tabSize": 2
+}
