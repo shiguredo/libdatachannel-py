@@ -380,10 +380,18 @@ void bind_reliability(nb::module_& m) {
       .def_rw("max_retransmits", &Reliability::maxRetransmits);
 }
 
+void bind_frameinfo(nb::module_& m) {
+  nb::class_<FrameInfo>(m, "FrameInfo")
+      .def(nb::init<uint8_t, uint32_t>(), "payload_type"_a, "timestamp"_a)
+      .def_rw("payload_type", &FrameInfo::payloadType)
+      .def_rw("timestamp", &FrameInfo::timestamp);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
   bind_reliability(m);
+  bind_frameinfo(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }
