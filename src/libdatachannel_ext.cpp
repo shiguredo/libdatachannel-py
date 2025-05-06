@@ -6,6 +6,7 @@
 // clang-format on
 #include <nanobind/intrusive/counter.h>
 #include <nanobind/intrusive/ref.h>
+#include <nanobind/make_iterator.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/function.h>
@@ -14,6 +15,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/unique_ptr.h>
+#include <nanobind/stl/variant.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/intrusive/counter.inl>
 
@@ -23,6 +25,34 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace rtc;
+
+namespace nanobind {
+namespace detail {
+
+template <>
+struct type_caster<std::vector<std::byte>> {
+  NB_TYPE_CASTER(std::vector<std::byte>, const_name("bytes"));
+
+  bool from_python(handle src, uint8_t flags, cleanup_list* cleanup) {
+    if (PyBytes_Check(src.ptr()) == 0) {
+      return false;
+    }
+    nb::bytes pybytes(src);
+    size_t len = pybytes.size();
+    const char* data = pybytes.c_str();
+    value.assign(reinterpret_cast<const std::byte*>(data),
+                 reinterpret_cast<const std::byte*>(data + len));
+    return true;
+  }
+
+  static handle from_cpp(const std::vector<std::byte>& vec,
+                         rv_policy policy,
+                         cleanup_list* cleanup) {
+    return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
+  }
+};
+}  // namespace detail
+}  // namespace nanobind
 
 // configuration.hpp
 void bind_configuration(nb::module_& m) {
@@ -387,11 +417,98 @@ void bind_frameinfo(nb::module_& m) {
       .def_rw("timestamp", &FrameInfo::timestamp);
 }
 
+void bind_message(nb::module_& m) {
+  // Message::Type enum
+  nb::class_<Message> message(m, "Message");
+
+  nb::enum_<Message::Type>(message, "Type")
+      .value("Binary", Message::Type::Binary)
+      .value("String", Message::Type::String)
+      .value("Control", Message::Type::Control)
+      .value("Reset", Message::Type::Reset);
+
+  // Message class
+  message
+      .def(nb::init<size_t, Message::Type>(), "size"_a,
+           "type"_a = Message::Type::Binary)
+      .def_prop_rw(
+          "type", [](const Message& m) { return m.type; },
+          [](Message& m, Message::Type t) { m.type = t; })
+      .def_rw("stream", &Message::stream)
+      .def_rw("dscp", &Message::dscp)
+      .def_rw("reliability", &Message::reliability)
+      .def_rw("frame_info", &Message::frameInfo)
+      .def("to_bytes",
+           [](const Message& m) -> nb::bytes {
+             return nb::bytes(reinterpret_cast<const char*>(m.data()),
+                              m.size());
+           })
+      .def("to_str",
+           [](const Message& m) -> std::string {
+             return std::string(reinterpret_cast<const char*>(m.data()),
+                                m.size());
+           })
+      .def("__len__", [](const Message& m) { return m.size(); })
+      .def("__getitem__",
+           [](const Message& m, size_t i) -> int {
+             if (i >= m.size())
+               throw std::out_of_range("Message index out of range");
+             return (int)m[i];
+           })
+      .def("__setitem__", [](Message& m, size_t i, int b) {
+        if (i >= m.size())
+          throw std::out_of_range("Message index out of range");
+        m[i] = (std::byte)b;
+      });
+
+  // make_message overloads
+  m.def(
+      "make_message",
+      [](size_t size, Message::Type type, unsigned int stream,
+         std::shared_ptr<Reliability> reliability) {
+        return make_message(size, type, stream, reliability);
+      },
+      "size"_a, "type"_a = Message::Binary, "stream"_a = 0,
+      "reliability"_a = nullptr);
+
+  m.def(
+      "make_message_from_data",
+      [](std::vector<byte> data, Message::Type type, unsigned int stream,
+         std::shared_ptr<Reliability> reliability,
+         std::shared_ptr<FrameInfo> frameInfo) {
+        return make_message(std::move(data), type, stream, reliability,
+                            frameInfo);
+      },
+      "data"_a, "type"_a = Message::Binary, "stream"_a = 0,
+      "reliability"_a = nullptr, "frame_info"_a = nullptr);
+
+  m.def("make_message_from_variant",
+        static_cast<message_ptr (*)(message_variant)>(&make_message), "data"_a);
+
+  m.def("message_size", &message_size_func, "message"_a);
+
+  m.def(
+      "to_variant",
+      [](const Message& msg) -> nb::object {
+        auto var = to_variant(msg);
+        if (std::holds_alternative<std::string>(var)) {
+          const auto& str = std::get<std::string>(var);
+          return nb::str(str.c_str(), str.size());
+        } else {
+          const auto& vec = std::get<binary>(var);
+          return nb::bytes(reinterpret_cast<const char*>(vec.data()),
+                           vec.size());
+        }
+      },
+      "message"_a);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
   bind_reliability(m);
   bind_frameinfo(m);
+  bind_message(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }
