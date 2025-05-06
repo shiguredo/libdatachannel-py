@@ -17,6 +17,7 @@
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/variant.h>
 #include <nanobind/stl/vector.h>
+#include <nanobind/trampoline.h>
 #include <nanobind/intrusive/counter.inl>
 
 // libdatachannel
@@ -503,12 +504,143 @@ void bind_message(nb::module_& m) {
       "message"_a);
 }
 
+class PyMediaHandler : public MediaHandler {
+ public:
+  std::function<void(const Description::Media&)> media_cb;
+  std::function<void(message_vector&, const message_callback&)> incoming_cb;
+  std::function<void(message_vector&, const message_callback&)> outgoing_cb;
+  std::function<bool(const message_callback&)> requestKeyframe_cb;
+  std::function<bool(unsigned int, const message_callback&)> requestBitrate_cb;
+  void media(const Description::Media& desc) {
+    if (media_cb) {
+      media_cb(desc);
+    } else {
+      MediaHandler::media(desc);
+    }
+  }
+  void incoming(message_vector& messages, const message_callback& send) {
+    if (incoming_cb) {
+      incoming_cb(messages, send);
+    } else {
+      MediaHandler::incoming(messages, send);
+    }
+  }
+  void outgoing(message_vector& messages, const message_callback& send) {
+    if (outgoing_cb) {
+      outgoing_cb(messages, send);
+    } else {
+      MediaHandler::outgoing(messages, send);
+    }
+  }
+  bool requestKeyframe(const message_callback& send) {
+    if (requestKeyframe_cb) {
+      return requestKeyframe_cb(send);
+    } else {
+      return MediaHandler::requestKeyframe(send);
+    }
+  }
+  bool requestBitrate(unsigned int bitrate, const message_callback& send) {
+    if (requestBitrate_cb) {
+      return requestBitrate_cb(bitrate, send);
+    } else {
+      return MediaHandler::requestBitrate(bitrate, send);
+    }
+  }
+  int tp_traverse(PyObject* self, visitproc visit, void* arg) {
+    Py_VISIT(self);
+    {
+      nb::handle v = nb::find(media_cb);
+      Py_VISIT(v.ptr());
+    }
+    {
+      nb::handle v = nb::find(incoming_cb);
+      Py_VISIT(v.ptr());
+    }
+    {
+      nb::handle v = nb::find(outgoing_cb);
+      Py_VISIT(v.ptr());
+    }
+    {
+      nb::handle v = nb::find(requestKeyframe_cb);
+      Py_VISIT(v.ptr());
+    }
+    {
+      nb::handle v = nb::find(requestBitrate_cb);
+      Py_VISIT(v.ptr());
+    }
+    return 0;
+  }
+  void tp_clear() {
+    media_cb = nullptr;
+    incoming_cb = nullptr;
+    outgoing_cb = nullptr;
+    requestKeyframe_cb = nullptr;
+    requestBitrate_cb = nullptr;
+  }
+};
+
+int py_media_handler_tp_traverse(PyObject* self, visitproc visit, void* arg) {
+#if PY_VERSION_HEX >= 0x03090000
+  Py_VISIT(Py_TYPE(self));
+#endif
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
+
+  auto p = nb::inst_ptr<PyMediaHandler>(self);
+  return p->tp_traverse(self, visit, arg);
+}
+
+int py_media_handler_tp_clear(PyObject* self) {
+  auto p = nb::inst_ptr<PyMediaHandler>(self);
+  p->tp_clear();
+  return 0;
+}
+
+PyType_Slot py_media_handler_slots[] = {
+    {Py_tp_traverse, (void*)py_media_handler_tp_traverse},
+    {Py_tp_clear, (void*)py_media_handler_tp_clear},
+    {0, 0}};
+
+void bind_mediahandler(nb::module_& m) {
+  nb::class_<PyMediaHandler>(m, "MediaHandler",
+                             nb::type_slots(py_media_handler_slots))
+      .def(nb::new_([]() { return std::make_shared<PyMediaHandler>(); }))
+      .def_rw("media", &PyMediaHandler::media_cb)
+      .def_rw("incoming", &PyMediaHandler::incoming_cb)
+      .def_rw("outgoing", &PyMediaHandler::outgoing_cb)
+      .def_rw("request_keyframe", &PyMediaHandler::requestKeyframe_cb)
+      .def_rw("request_bitrate", &PyMediaHandler::requestBitrate_cb)
+      .def(
+          "add_to_chain",
+          [](std::shared_ptr<PyMediaHandler> self,
+             std::shared_ptr<PyMediaHandler> handler) {
+            self->addToChain(handler);
+          },
+          "handler"_a)
+      .def("set_next",
+           [](std::shared_ptr<PyMediaHandler> self,
+              std::shared_ptr<PyMediaHandler> next) { self->setNext(next); })
+      .def("next",
+           [](std::shared_ptr<PyMediaHandler> self) {
+             return std::static_pointer_cast<PyMediaHandler>(self->next());
+           })
+      .def("last",
+           [](std::shared_ptr<PyMediaHandler> self) {
+             return std::static_pointer_cast<PyMediaHandler>(self->last());
+           })
+      .def("media_chain", &PyMediaHandler::mediaChain)
+      .def("incoming_chain", &PyMediaHandler::incomingChain)
+      .def("outgoing_chain", &PyMediaHandler::outgoingChain);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
   bind_reliability(m);
   bind_frameinfo(m);
   bind_message(m);
+  bind_mediahandler(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }

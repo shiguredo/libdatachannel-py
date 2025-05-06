@@ -21,6 +21,22 @@
   "files.associations": {
     "*.cs": "csharp",
     "CMakeLists.txt": "cmake",
+    "array": "cpp",
+    "deque": "cpp",
+    "forward_list": "cpp",
+    "list": "cpp",
+    "string": "cpp",
+    "unordered_map": "cpp",
+    "unordered_set": "cpp",
+    "vector": "cpp",
+    "string_view": "cpp",
+    "format": "cpp",
+    "initializer_list": "cpp",
+    "ranges": "cpp",
+    "span": "cpp",
+    "regex": "cpp",
+    "valarray": "cpp",
+    "cstdio": "cpp"
   },
   "C_Cpp.errorSquiggles": "disabled",
   // nanobind 周りでエラーが消えないので全部消す
