@@ -372,9 +372,18 @@ void bind_description(nb::module_& m) {
           nb::rv_policy::reference);
 }
 
+void bind_reliability(nb::module_& m) {
+  nb::class_<Reliability>(m, "Reliability")
+      .def(nb::init<>())
+      .def_rw("unordered", &Reliability::unordered)
+      .def_rw("max_packet_lifetime", &Reliability::maxPacketLifeTime)
+      .def_rw("max_retransmits", &Reliability::maxRetransmits);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
+  bind_reliability(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }
