@@ -667,6 +667,57 @@ void bind_rtppacketizer(nb::module_& m) {
   //     .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a);
 }
 
+// ---- channel.hpp ----
+
+void bind_channel(nb::module_& m) {
+  nb::class_<Channel>(m, "Channel")
+      // Core API
+      .def("close", &Channel::close)
+      .def("send", nb::overload_cast<message_variant>(&Channel::send), "data"_a)
+      .def("send", nb::overload_cast<const byte*, size_t>(&Channel::send),
+           "data"_a, "size"_a)
+      .def("is_open", &Channel::isOpen)
+      .def("is_closed", &Channel::isClosed)
+      .def("max_message_size", &Channel::maxMessageSize)
+      .def("buffered_amount", &Channel::bufferedAmount)
+
+      // Callback registration
+      .def("on_open", &Channel::onOpen)
+      .def("on_closed", &Channel::onClosed)
+      .def("on_error", &Channel::onError)
+      .def("on_message",
+           nb::overload_cast<std::function<void(message_variant)>>(
+               &Channel::onMessage))
+      .def("on_message",
+           nb::overload_cast<std::function<void(binary)>,
+                             std::function<void(std::string)>>(
+               &Channel::onMessage),
+           "binary_callback"_a, "string_callback"_a)
+      .def("on_buffered_amount_low", &Channel::onBufferedAmountLow)
+      .def("set_buffered_amount_low_threshold",
+           &Channel::setBufferedAmountLowThreshold)
+      .def("reset_callbacks", &Channel::resetCallbacks)
+
+      // Extended API
+      .def("receive", &Channel::receive)
+      .def("peek", &Channel::peek)
+      .def("available_amount", &Channel::availableAmount)
+      .def("on_available", &Channel::onAvailable);
+}
+
+// ---- datachannel.hpp ----
+
+void bind_datachannel(nb::module_& m) {
+  nb::class_<DataChannel, Channel>(m, "DataChannel")
+      .def("stream", &DataChannel::stream)
+      .def("id", &DataChannel::id)
+      .def("label", &DataChannel::label)
+      .def("protocol", &DataChannel::protocol)
+      .def("reliability", &DataChannel::reliability)
+      .def("max_message_size", &DataChannel::maxMessageSize)
+      .def("close", &DataChannel::close);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
@@ -676,6 +727,8 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_mediahandler(m);
   bind_rtppacketizationconfig(m);
   bind_rtppacketizer(m);
+  bind_channel(m);
+  bind_datachannel(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }
