@@ -55,7 +55,8 @@ struct type_caster<std::vector<std::byte>> {
 }  // namespace detail
 }  // namespace nanobind
 
-// configuration.hpp
+// ---- configuration.hpp ----
+
 void bind_configuration(nb::module_& m) {
   // IceServer
   nb::class_<IceServer> ice_server(m, "IceServer");
@@ -174,7 +175,8 @@ void bind_configuration(nb::module_& m) {
               &WebSocketServerConfiguration::maxMessageSize);
 }
 
-// ラッパーヘルパー関数
+// ---- description.hpp ----
+
 nb::object get_media(Description& desc, int index) {
   auto var = desc.media(index);
   if (std::holds_alternative<Description::Media*>(var)) {
@@ -185,7 +187,6 @@ nb::object get_media(Description& desc, int index) {
   return nb::none();
 }
 
-// description.hpp
 void bind_description(nb::module_& m) {
   // --- CertificateFingerprint ---
   nb::class_<CertificateFingerprint> cert_fp(m, "CertificateFingerprint");
@@ -403,6 +404,8 @@ void bind_description(nb::module_& m) {
           nb::rv_policy::reference);
 }
 
+// ---- reliability.hpp ----
+
 void bind_reliability(nb::module_& m) {
   nb::class_<Reliability>(m, "Reliability")
       .def(nb::init<>())
@@ -411,12 +414,16 @@ void bind_reliability(nb::module_& m) {
       .def_rw("max_retransmits", &Reliability::maxRetransmits);
 }
 
+// ---- frameinfo.hpp ----
+
 void bind_frameinfo(nb::module_& m) {
   nb::class_<FrameInfo>(m, "FrameInfo")
       .def(nb::init<uint8_t, uint32_t>(), "payload_type"_a, "timestamp"_a)
       .def_rw("payload_type", &FrameInfo::payloadType)
       .def_rw("timestamp", &FrameInfo::timestamp);
 }
+
+// ---- message.hpp ----
 
 void bind_message(nb::module_& m) {
   // Message::Type enum
@@ -504,135 +511,150 @@ void bind_message(nb::module_& m) {
       "message"_a);
 }
 
-class PyMediaHandler : public MediaHandler {
+// ---- mediahandler.hpp ----
+
+class PyMediaHandler : public MediaHandler {};
+class PyMediaHandlerImpl : public PyMediaHandler {
  public:
-  std::function<void(const Description::Media&)> media_cb;
-  std::function<void(message_vector&, const message_callback&)> incoming_cb;
-  std::function<void(message_vector&, const message_callback&)> outgoing_cb;
-  std::function<bool(const message_callback&)> requestKeyframe_cb;
-  std::function<bool(unsigned int, const message_callback&)> requestBitrate_cb;
-  void media(const Description::Media& desc) {
-    if (media_cb) {
-      media_cb(desc);
-    } else {
-      MediaHandler::media(desc);
-    }
+  NB_TRAMPOLINE(PyMediaHandler, 5);
+  void media(const Description::Media& desc) override {
+    NB_OVERRIDE(media, desc);
   }
-  void incoming(message_vector& messages, const message_callback& send) {
-    if (incoming_cb) {
-      incoming_cb(messages, send);
-    } else {
-      MediaHandler::incoming(messages, send);
-    }
+  void incoming(message_vector& messages,
+                const message_callback& send) override {
+    NB_OVERRIDE(incoming, messages, send);
   }
-  void outgoing(message_vector& messages, const message_callback& send) {
-    if (outgoing_cb) {
-      outgoing_cb(messages, send);
-    } else {
-      MediaHandler::outgoing(messages, send);
-    }
+  void outgoing(message_vector& messages,
+                const message_callback& send) override {
+    NB_OVERRIDE(outgoing, messages, send);
   }
-  bool requestKeyframe(const message_callback& send) {
-    if (requestKeyframe_cb) {
-      return requestKeyframe_cb(send);
-    } else {
-      return MediaHandler::requestKeyframe(send);
-    }
+  bool requestKeyframe(const message_callback& send) override {
+    NB_OVERRIDE_NAME("request_keyframe", requestKeyframe, send);
   }
-  bool requestBitrate(unsigned int bitrate, const message_callback& send) {
-    if (requestBitrate_cb) {
-      return requestBitrate_cb(bitrate, send);
-    } else {
-      return MediaHandler::requestBitrate(bitrate, send);
-    }
-  }
-  int tp_traverse(PyObject* self, visitproc visit, void* arg) {
-    Py_VISIT(self);
-    {
-      nb::handle v = nb::find(media_cb);
-      Py_VISIT(v.ptr());
-    }
-    {
-      nb::handle v = nb::find(incoming_cb);
-      Py_VISIT(v.ptr());
-    }
-    {
-      nb::handle v = nb::find(outgoing_cb);
-      Py_VISIT(v.ptr());
-    }
-    {
-      nb::handle v = nb::find(requestKeyframe_cb);
-      Py_VISIT(v.ptr());
-    }
-    {
-      nb::handle v = nb::find(requestBitrate_cb);
-      Py_VISIT(v.ptr());
-    }
-    return 0;
-  }
-  void tp_clear() {
-    media_cb = nullptr;
-    incoming_cb = nullptr;
-    outgoing_cb = nullptr;
-    requestKeyframe_cb = nullptr;
-    requestBitrate_cb = nullptr;
+  bool requestBitrate(unsigned int bitrate,
+                      const message_callback& send) override {
+    NB_OVERRIDE_NAME("request_bitrate", requestBitrate, bitrate, send);
   }
 };
 
-int py_media_handler_tp_traverse(PyObject* self, visitproc visit, void* arg) {
-#if PY_VERSION_HEX >= 0x03090000
-  Py_VISIT(Py_TYPE(self));
-#endif
-  if (!nb::inst_ready(self)) {
-    return 0;
-  }
+nb::class_<MediaHandler> bind_mediahandler(nb::module_& m) {
+  nb::class_<MediaHandler> mediahandler(m, "MediaHandler");
 
-  auto p = nb::inst_ptr<PyMediaHandler>(self);
-  return p->tp_traverse(self, visit, arg);
-}
-
-int py_media_handler_tp_clear(PyObject* self) {
-  auto p = nb::inst_ptr<PyMediaHandler>(self);
-  p->tp_clear();
-  return 0;
-}
-
-PyType_Slot py_media_handler_slots[] = {
-    {Py_tp_traverse, (void*)py_media_handler_tp_traverse},
-    {Py_tp_clear, (void*)py_media_handler_tp_clear},
-    {0, 0}};
-
-void bind_mediahandler(nb::module_& m) {
-  nb::class_<PyMediaHandler>(m, "MediaHandler",
-                             nb::type_slots(py_media_handler_slots))
-      .def(nb::new_([]() { return std::make_shared<PyMediaHandler>(); }))
-      .def_rw("media", &PyMediaHandler::media_cb)
-      .def_rw("incoming", &PyMediaHandler::incoming_cb)
-      .def_rw("outgoing", &PyMediaHandler::outgoing_cb)
-      .def_rw("request_keyframe", &PyMediaHandler::requestKeyframe_cb)
-      .def_rw("request_bitrate", &PyMediaHandler::requestBitrate_cb)
+  mediahandler.def(nb::init<>())
+      .def(
+          "media",
+          [](std::shared_ptr<MediaHandler> self,
+             const Description::Media& desc) { self->media(desc); },
+          "desc"_a)
+      .def(
+          "incoming",
+          [](std::shared_ptr<MediaHandler> self, message_vector& messages,
+             const message_callback& send) { self->incoming(messages, send); },
+          "messages"_a, "send"_a)
+      .def(
+          "outgoing",
+          [](std::shared_ptr<MediaHandler> self, message_vector& messages,
+             const message_callback& send) { self->outgoing(messages, send); },
+          "messages"_a, "send"_a)
+      .def(
+          "request_keyframe",
+          [](std::shared_ptr<MediaHandler> self, const message_callback& send) {
+            return self->requestKeyframe(send);
+          },
+          "send"_a)
+      .def(
+          "request_bitrate",
+          [](std::shared_ptr<MediaHandler> self, unsigned int bitrate,
+             const message_callback& send) {
+            return self->requestBitrate(bitrate, send);
+          },
+          "bitrate"_a, "send"_a)
       .def(
           "add_to_chain",
-          [](std::shared_ptr<PyMediaHandler> self,
-             std::shared_ptr<PyMediaHandler> handler) {
+          [](std::shared_ptr<MediaHandler> self,
+             std::shared_ptr<MediaHandler> handler) {
             self->addToChain(handler);
           },
           "handler"_a)
-      .def("set_next",
-           [](std::shared_ptr<PyMediaHandler> self,
-              std::shared_ptr<PyMediaHandler> next) { self->setNext(next); })
+      .def("set_next", &MediaHandler::setNext, "next"_a)
       .def("next",
-           [](std::shared_ptr<PyMediaHandler> self) {
-             return std::static_pointer_cast<PyMediaHandler>(self->next());
-           })
+           [](std::shared_ptr<MediaHandler> self) { return self->next(); })
       .def("last",
-           [](std::shared_ptr<PyMediaHandler> self) {
-             return std::static_pointer_cast<PyMediaHandler>(self->last());
-           })
-      .def("media_chain", &PyMediaHandler::mediaChain)
-      .def("incoming_chain", &PyMediaHandler::incomingChain)
-      .def("outgoing_chain", &PyMediaHandler::outgoingChain);
+           [](std::shared_ptr<MediaHandler> self) { return self->last(); })
+      .def(
+          "media_chain",
+          [](std::shared_ptr<MediaHandler> self,
+             const Description::Media& desc) { return self->mediaChain(desc); },
+          "desc"_a)
+      .def(
+          "incoming_chain",
+          [](std::shared_ptr<MediaHandler> self, message_vector& messages,
+             const message_callback& send) {
+            return self->incomingChain(messages, send);
+          },
+          "messages"_a, "send"_a)
+      .def(
+          "outgoing_chain",
+          [](std::shared_ptr<MediaHandler> self, message_vector& messages,
+             const message_callback& send) {
+            return self->outgoingChain(messages, send);
+          },
+          "messages"_a, "send"_a);
+
+  nb::class_<PyMediaHandler, PyMediaHandlerImpl, MediaHandler>(m,
+                                                               "PyMediaHandler")
+      .def(nb::init<>());
+
+  return mediahandler;
 }
+
+// ---- rtppacketizationconfig.hpp ----
+
+void bind_rtppacketizationconfig(nb::module_& m) {
+  nb::class_<RtpPacketizationConfig>(m, "RtpPacketizationConfig")
+      .def(nb::init<uint32_t, std::string, uint8_t, uint32_t, uint8_t>(),
+           "ssrc"_a, "cname"_a, "payload_type"_a, "clock_rate"_a,
+           "video_orientation_id"_a = 0)
+
+      // Fields
+      .def_rw("ssrc", &RtpPacketizationConfig::ssrc)
+      .def_rw("cname", &RtpPacketizationConfig::cname)
+      .def_rw("payload_type", &RtpPacketizationConfig::payloadType)
+      .def_rw("clock_rate", &RtpPacketizationConfig::clockRate)
+      .def_rw("video_orientation_id",
+              &RtpPacketizationConfig::videoOrientationId)
+      .def_rw("sequence_number", &RtpPacketizationConfig::sequenceNumber)
+      .def_rw("timestamp", &RtpPacketizationConfig::timestamp)
+      .def_rw("start_timestamp", &RtpPacketizationConfig::startTimestamp)
+      .def_rw("video_orientation", &RtpPacketizationConfig::videoOrientation)
+      .def_rw("mid_id", &RtpPacketizationConfig::midId)
+      .def_rw("mid", &RtpPacketizationConfig::mid)
+      .def_rw("rid_id", &RtpPacketizationConfig::ridId)
+      .def_rw("rid", &RtpPacketizationConfig::rid)
+      .def_rw("playout_delay_id", &RtpPacketizationConfig::playoutDelayId)
+      .def_rw("playout_delay_min", &RtpPacketizationConfig::playoutDelayMin)
+      .def_rw("playout_delay_max", &RtpPacketizationConfig::playoutDelayMax)
+
+      // Methods
+      .def_static("get_seconds_from_timestamp",
+                  &RtpPacketizationConfig::getSecondsFromTimestamp,
+                  "timestamp"_a, "clock_rate"_a)
+
+      .def("timestamp_to_seconds", &RtpPacketizationConfig::timestampToSeconds,
+           "timestamp"_a)
+
+      .def_static("get_timestamp_from_seconds",
+                  &RtpPacketizationConfig::getTimestampFromSeconds, "seconds"_a,
+                  "clock_rate"_a)
+
+      .def("seconds_to_timestamp", &RtpPacketizationConfig::secondsToTimestamp,
+           "seconds"_a);
+}
+
+// ---- rtppacketizer.hpp ----
+
+void bind_rtppacketizer(nb::module_& m,
+                        const nb::class_<MediaHandler>& mediahandler) {}
 
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
@@ -640,7 +662,9 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_reliability(m);
   bind_frameinfo(m);
   bind_message(m);
-  bind_mediahandler(m);
+  auto mediahandler = bind_mediahandler(m);
+  bind_rtppacketizationconfig(m);
+  bind_rtppacketizer(m, mediahandler);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }

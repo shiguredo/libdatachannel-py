@@ -1,33 +1,33 @@
-from libdatachannel import MediaHandler, make_message
+from libdatachannel import PyMediaHandler, make_message
 
 
-class DummyHandler(MediaHandler):
+class DummyHandler(PyMediaHandler):
     def __init__(self):
         super().__init__()
         self.media_called = False
         self.incoming_called = False
         self.outgoing_called = False
 
-        def media(desc):
-            self.media_called = True
+    def media(self, desc):
+        self.media_called = True
 
-        def incoming(messages, send):
-            self.incoming_called = True
-            assert isinstance(messages, list)
-            assert len(messages) == 1
-            assert callable(send)
-            send(messages[0])
+    def incoming(self, messages, send):
+        self.incoming_called = True
+        assert isinstance(messages, list)
+        assert len(messages) == 1
+        assert callable(send)
+        send(messages[0])
 
-        def outgoing(messages, send):
-            self.outgoing_called = True
-            assert isinstance(messages, list)
-            assert len(messages) == 1
-            assert callable(send)
-            send(messages[0])
+    def outgoing(self, messages, send):
+        self.outgoing_called = True
+        assert isinstance(messages, list)
+        assert len(messages) == 1
+        assert callable(send)
+        send(messages[0])
 
-        self.media = media
-        self.incoming = incoming
-        self.outgoing = outgoing
+        # self.media = media
+        # self.incoming = incoming
+        # self.outgoing = outgoing
 
 
 def test_incoming_chain():
