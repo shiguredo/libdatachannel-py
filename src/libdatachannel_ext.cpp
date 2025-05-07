@@ -770,9 +770,23 @@ void bind_datachannel(nb::module_& m) {
       .def("id", &DataChannel::id)
       .def("label", &DataChannel::label)
       .def("protocol", &DataChannel::protocol)
-      .def("reliability", &DataChannel::reliability)
-      .def("max_message_size", &DataChannel::maxMessageSize)
-      .def("close", &DataChannel::close);
+      .def("reliability", &DataChannel::reliability);
+}
+
+// ---- track.hpp ----
+
+void bind_track(nb::module_& m) {
+  nb::class_<Track, Channel>(m, "Track")
+      .def("mid", &Track::mid)
+      .def("direction", &Track::direction)
+      .def("description", &Track::description)
+      .def("set_description", &Track::setDescription, "description"_a)
+      .def("on_frame", &Track::onFrame, "callback"_a)
+      .def("request_keyframe", &Track::requestKeyframe)
+      .def("request_bitrate", &Track::requestBitrate, "bitrate"_a)
+      .def("set_media_handler", &Track::setMediaHandler, "handler"_a)
+      .def("chain_media_handler", &Track::chainMediaHandler, "handler"_a)
+      .def("get_media_handler", &Track::getMediaHandler);
 }
 
 NB_MODULE(libdatachannel_ext, m) {
@@ -787,6 +801,7 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_rtppacketizer(m);
   bind_channel(m);
   bind_datachannel(m);
+  bind_track(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }
