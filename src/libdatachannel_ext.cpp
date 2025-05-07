@@ -404,6 +404,63 @@ void bind_description(nb::module_& m) {
           nb::rv_policy::reference);
 }
 
+// ---- candidate.hpp ----
+void bind_candidate(nb::module_& m) {
+  // Candidate enums
+  nb::class_<Candidate> candidate(m, "Candidate");
+
+  nb::enum_<Candidate::Family>(candidate, "Family")
+      .value("Unresolved", Candidate::Family::Unresolved)
+      .value("Ipv4", Candidate::Family::Ipv4)
+      .value("Ipv6", Candidate::Family::Ipv6);
+
+  nb::enum_<Candidate::Type>(candidate, "Type")
+      .value("Unknown", Candidate::Type::Unknown)
+      .value("Host", Candidate::Type::Host)
+      .value("ServerReflexive", Candidate::Type::ServerReflexive)
+      .value("PeerReflexive", Candidate::Type::PeerReflexive)
+      .value("Relayed", Candidate::Type::Relayed);
+
+  nb::enum_<Candidate::TransportType>(candidate, "TransportType")
+      .value("Unknown", Candidate::TransportType::Unknown)
+      .value("Udp", Candidate::TransportType::Udp)
+      .value("TcpActive", Candidate::TransportType::TcpActive)
+      .value("TcpPassive", Candidate::TransportType::TcpPassive)
+      .value("TcpSo", Candidate::TransportType::TcpSo)
+      .value("TcpUnknown", Candidate::TransportType::TcpUnknown);
+
+  nb::enum_<Candidate::ResolveMode>(candidate, "ResolveMode")
+      .value("Simple", Candidate::ResolveMode::Simple)
+      .value("Lookup", Candidate::ResolveMode::Lookup);
+
+  // Candidate class
+  candidate.def(nb::init<>())
+      .def(nb::init<std::string>())
+      .def(nb::init<std::string, std::string>(), "candidate"_a, "mid"_a)
+      .def("hint_mid", &Candidate::hintMid)
+      .def("change_address",
+           nb::overload_cast<std::string>(&Candidate::changeAddress))
+      .def("change_address",
+           nb::overload_cast<std::string, uint16_t>(&Candidate::changeAddress))
+      .def("change_address", nb::overload_cast<std::string, std::string>(
+                                 &Candidate::changeAddress))
+      .def("resolve", &Candidate::resolve,
+           "mode"_a = Candidate::ResolveMode::Simple)
+      .def("type", &Candidate::type)
+      .def("transport_type", &Candidate::transportType)
+      .def("priority", &Candidate::priority)
+      .def("candidate", &Candidate::candidate)
+      .def("mid", &Candidate::mid)
+      .def("is_resolved", &Candidate::isResolved)
+      .def("family", &Candidate::family)
+      .def("address", &Candidate::address)
+      .def("port", &Candidate::port)
+      .def("__eq__", &Candidate::operator==)
+      .def("__ne__", &Candidate::operator!=)
+      .def("__str__",
+           [](const Candidate& c) { return static_cast<std::string>(c); });
+}
+
 // ---- reliability.hpp ----
 
 void bind_reliability(nb::module_& m) {
@@ -721,6 +778,7 @@ void bind_datachannel(nb::module_& m) {
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
+  bind_candidate(m);
   bind_reliability(m);
   bind_frameinfo(m);
   bind_message(m);
