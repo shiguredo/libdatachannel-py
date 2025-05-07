@@ -55,12 +55,9 @@ jobs:
           - name: ubuntu-24.04_x86_64
             target: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
-            os: ubuntu
-          # - name: ubuntu-22.04_x86_64
-          #   target: ubuntu-22.04_x86_64
-          #   runs_on: ubuntu-22.04
-          #   os: ubuntu
-          #   arch: x86_64
+          - name: ubuntu-24.04_arm64
+            target: ubuntu-24.04_arm64
+            runs_on: ubuntu-24.04-arm
         python_version:
           # - "3.11"
           # - "3.12"
@@ -91,11 +88,6 @@ jobs:
       - run: |
           uv run python run.py ${{ matrix.platform.target }}
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
-          path: "dist/"
 
   slack_notify_failed:
     needs: [build_ubuntu]
