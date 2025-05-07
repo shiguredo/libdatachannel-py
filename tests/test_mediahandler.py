@@ -25,10 +25,6 @@ class DummyHandler(PyMediaHandler):
         assert callable(send)
         send(messages[0])
 
-        # self.media = media
-        # self.incoming = incoming
-        # self.outgoing = outgoing
-
 
 def test_incoming_chain():
     h = DummyHandler()

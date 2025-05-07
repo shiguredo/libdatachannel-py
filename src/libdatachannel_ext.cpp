@@ -537,10 +537,9 @@ class PyMediaHandlerImpl : public PyMediaHandler {
   }
 };
 
-nb::class_<MediaHandler> bind_mediahandler(nb::module_& m) {
-  nb::class_<MediaHandler> mediahandler(m, "MediaHandler");
-
-  mediahandler.def(nb::init<>())
+void bind_mediahandler(nb::module_& m) {
+  nb::class_<MediaHandler>(m, "MediaHandler")
+      .def(nb::init<>())
       .def(
           "media",
           [](std::shared_ptr<MediaHandler> self,
@@ -604,8 +603,6 @@ nb::class_<MediaHandler> bind_mediahandler(nb::module_& m) {
   nb::class_<PyMediaHandler, PyMediaHandlerImpl, MediaHandler>(m,
                                                                "PyMediaHandler")
       .def(nb::init<>());
-
-  return mediahandler;
 }
 
 // ---- rtppacketizationconfig.hpp ----
@@ -653,8 +650,22 @@ void bind_rtppacketizationconfig(nb::module_& m) {
 
 // ---- rtppacketizer.hpp ----
 
-void bind_rtppacketizer(nb::module_& m,
-                        const nb::class_<MediaHandler>& mediahandler) {}
+void bind_rtppacketizer(nb::module_& m) {
+  nb::class_<RtpPacketizer, MediaHandler>(m, "RtpPacketizer")
+      .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
+      .def_prop_ro("rtp_config",
+                   [](const RtpPacketizer& self) { return self.rtpConfig; });
+
+  nb::class_<OpusRtpPacketizer, RtpPacketizer>(m, "OpusRtpPacketizer")
+      .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a);
+
+  // OpusRtpPacketizer と AACRtpPacketizer は同じ型なので片方しか登録できないため
+  // AACRtpPacketizer は __init__.py で別名を作る。
+  static_assert(std::is_same_v<OpusRtpPacketizer, AACRtpPacketizer>,
+                "OpusRtpPacketizer and AACRtpPacketizer should be the same");
+  // nb::class_<AACRtpPacketizer, RtpPacketizer>(m, "AACRtpPacketizer")
+  //     .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a);
+}
 
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
@@ -662,9 +673,9 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_reliability(m);
   bind_frameinfo(m);
   bind_message(m);
-  auto mediahandler = bind_mediahandler(m);
+  bind_mediahandler(m);
   bind_rtppacketizationconfig(m);
-  bind_rtppacketizer(m, mediahandler);
+  bind_rtppacketizer(m);
 
   nb::class_<PeerConnection>(m, "PeerConnection");
 }
