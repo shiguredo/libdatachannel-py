@@ -84,11 +84,6 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get -y install libx11-dev
-      - if: ${{ matrix.platform.arch == 'armv8' }}
-        run: |
-          sudo apt-get -y install multistrap binutils-aarch64-linux-gnu
-          # multistrap に insecure なリポジトリからの取得を許可する設定を入れる
-          sudo sed -e 's/Apt::Get::AllowUnauthenticated=true/Apt::Get::AllowUnauthenticated=true";\n$config_str .= " -o Acquire::AllowInsecureRepositories=true/' -i /usr/sbin/multistrap
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
@@ -96,150 +91,18 @@ jobs:
           uv python pin ${{ matrix.python_version }}
           uv sync
 
-      - if: ${{ matrix.platform.arch == 'x86_64' }}
-        run: |
+      - run: |
           uv run python run.py ${{ matrix.platform.target }}
           uv run python -m build
-
-      # Ubuntu armv8 向け
-      - if: ${{ matrix.platform.arch == 'armv8' }}
-        run: |
-          uv run python run.py ${{ matrix.platform.target }}
-          uv run python -m build
-        env:
-          LIBDATACHANNEL_TARGET: ${{ matrix.platform.target }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
           path: "dist/"
-
-  build_ubuntu_arm:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: ubuntu-24.04_armv8
-            target: ubuntu-24.04_armv8
-            # arm64 でビルド
-            runs_on: ubuntu-24.04-arm
-            os: ubuntu
-            arch: armv8
-        python_version:
-          # - "3.11"
-          # - "3.12"
-          - "3.13"
-    needs: [build_pyi] 
-    runs-on: ${{ matrix.platform.runs_on }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: libdatachannel
-          path: libdatachannel/
-      - run: |
-          cp libdatachannel/py.typed src/libdatachannel/py.typed
-          cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
-      # libx11-dev は Ubuntu 24.04 の時に必要になる模様
-      - run: |
-          sudo apt-get update
-          sudo apt-get -y install libx11-dev
-      - run: |
-          sudo apt-get -y install multistrap binutils-aarch64-linux-gnu
-          # multistrap に insecure なリポジトリからの取得を許可する設定を入れる
-          sudo sed -e 's/Apt::Get::AllowUnauthenticated=true/Apt::Get::AllowUnauthenticated=true";\n$config_str .= " -o Acquire::AllowInsecureRepositories=true/' -i /usr/sbin/multistrap
-      # clang-18
-      - name: Install clang-18
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod a+x llvm.sh
-          sudo ./llvm.sh 18
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: false
-      - run: |
-          uv python pin ${{ matrix.python_version }}
-          uv sync
-          uv run python run.py ${{ matrix.platform.target }}
-          uv run python -m build
-        env:
-          LIBDATACHANNEL_TARGET: ${{ matrix.platform.target }}
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
-          path: "dist/"
-
-  build_macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: macos-15_arm64
-            target: macos_arm64
-            runs_on: macos-15
-            os: macos
-            python_host_platform: "macosx-15.0-arm64"
-            archflags: "-arch arm64"
-          - name: macos-14_arm64
-            target: macos_arm64
-            runs_on: macos-14
-            os: macos
-            python_host_platform: "macosx-14.0-arm64"
-            archflags: "-arch arm64"
-        python_version:
-          # - "3.11"
-          # - "3.12"
-          - "3.13"
-    needs: [build_pyi] 
-    runs-on: ${{ matrix.platform.runs_on }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: libdatachannel
-          path: libdatachannel/
-      - run: |
-          cp libdatachannel/py.typed src/libdatachannel/py.typed
-          cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: false
-      - run: |
-          uv python pin ${{ matrix.python_version }}
-          uv sync
-          uv run python run.py ${{ matrix.platform.target }}
-          uv run python -m build
-        env:
-          _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
-          ARCHFLAGS: ${{ matrix.platform.archflags }}
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
-          path: "dist/"
-
-  # slack_notify_succeeded:
-  #   needs: [build_ubuntu, build_ubuntu_arm, build_macos, build_windows]
-  #   runs-on: ubuntu-24.04
-  #   if: success()
-  #   steps:
-  #    - name: Slack Notification
-  #      uses: rtCamp/action-slack-notify@v2
-  #      env:
-  #        SLACK_CHANNEL: sora-python-sdk
-  #        SLACK_COLOR: good
-  #        SLACK_TITLE: SUCCEEDED
-  #        SLACK_ICON_EMOJI: ":star-struck:"
-  #        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   slack_notify_failed:
-    needs: [build_ubuntu, build_ubuntu_arm, build_macos]
+    needs: [build_ubuntu]
     runs-on: ubuntu-24.04
     if: failure()
     steps:
