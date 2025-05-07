@@ -55,27 +55,19 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # - name: ubuntu-24.04_x86_64
-          #   target: ubuntu-24.04_x86_64
-          #   runs_on: ubuntu-24.04
-          #   os: ubuntu
-          - name: ubuntu-22.04_x86_64
-            target: ubuntu-22.04_x86_64
-            runs_on: ubuntu-22.04
+          - name: ubuntu-24.04_x86_64
+            target: ubuntu-24.04_x86_64
+            runs_on: ubuntu-24.04
             os: ubuntu
-            arch: x86_64
+          # - name: ubuntu-22.04_x86_64
+          #   target: ubuntu-22.04_x86_64
+          #   runs_on: ubuntu-22.04
+          #   os: ubuntu
+          #   arch: x86_64
         python_version:
-          - "3.11"
-          - "3.12"
+          # - "3.11"
+          # - "3.12"
           - "3.13"
-        include:
-          - platform:
-              name: ubuntu-24.04_armv8
-              target: ubuntu-24.04_armv8
-              runs_on: ubuntu-24.04
-              os: ubuntu
-              arch: armv8
-            python_version: "3.12"
     needs: [build_pyi] 
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
@@ -135,7 +127,9 @@ jobs:
             os: ubuntu
             arch: armv8
         python_version:
-          - "3.12"
+          # - "3.11"
+          # - "3.12"
+          - "3.13"
     needs: [build_pyi] 
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
@@ -173,6 +167,12 @@ jobs:
         env:
           LIBDATACHANNEL_TARGET: ${{ matrix.platform.target }}
 
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
+          path: "dist/"
+
   build_macos:
     strategy:
       fail-fast: false
@@ -191,8 +191,8 @@ jobs:
             python_host_platform: "macosx-14.0-arm64"
             archflags: "-arch arm64"
         python_version:
-          - "3.11"
-          - "3.12"
+          # - "3.11"
+          # - "3.12"
           - "3.13"
     needs: [build_pyi] 
     runs-on: ${{ matrix.platform.runs_on }}
