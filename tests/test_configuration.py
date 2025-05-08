@@ -1,45 +1,49 @@
 from datetime import timedelta
 
-import libdatachannel
+from libdatachannel import (
+    CertificateType,
+    Configuration,
+    IceServer,
+    ProxyServer,
+    TransportPolicy,
+    WebSocketConfiguration,
+    WebSocketServerConfiguration,
+)
 
 
 def test_ice_server_stun_url_only():
-    server = libdatachannel.IceServer("stun:example.com")
+    server = IceServer("stun:example.com")
     assert server.hostname == "example.com"
-    assert server.type == libdatachannel.IceServer.Type.Stun
+    assert server.type == IceServer.Type.Stun
 
 
 def test_ice_server_stun_hostname_port():
-    server = libdatachannel.IceServer("stun.example.com", 3478)
+    server = IceServer("stun.example.com", 3478)
     assert server.hostname == "stun.example.com"
     assert server.port == 3478
 
 
 def test_ice_server_turn_full():
-    server = libdatachannel.IceServer(
-        "turn.example.com", 3478, "user", "pass", libdatachannel.IceServer.RelayType.TurnTcp
-    )
+    server = IceServer("turn.example.com", 3478, "user", "pass", IceServer.RelayType.TurnTcp)
     assert server.username == "user"
     assert server.password == "pass"
-    assert server.relay_type == libdatachannel.IceServer.RelayType.TurnTcp
+    assert server.relay_type == IceServer.RelayType.TurnTcp
 
 
 def test_proxy_server_basic():
-    proxy = libdatachannel.ProxyServer("http://proxy.example.com")
+    proxy = ProxyServer("http://proxy.example.com")
     assert proxy.hostname == "proxy.example.com"
 
 
 def test_proxy_server_full():
-    proxy = libdatachannel.ProxyServer(
-        libdatachannel.ProxyServer.Type.Socks5, "proxy.example.com", 1080, "alice", "secret"
-    )
-    assert proxy.type == libdatachannel.ProxyServer.Type.Socks5
+    proxy = ProxyServer(ProxyServer.Type.Socks5, "proxy.example.com", 1080, "alice", "secret")
+    assert proxy.type == ProxyServer.Type.Socks5
     assert proxy.username == "alice"
     assert proxy.password == "secret"
 
 
 def test_configuration_fields():
-    config = libdatachannel.Configuration()
+    config = Configuration()
     config.port_range_begin = 2000
     config.port_range_end = 3000
     config.disable_auto_gathering = True
@@ -50,10 +54,10 @@ def test_configuration_fields():
 
 
 def test_add_ice_servers_to_configuration():
-    stun = libdatachannel.IceServer("stun.example.com", 3478)
-    turn = libdatachannel.IceServer("turn.example.com", 3478, "bob", "pw")
+    stun = IceServer("stun.example.com", 3478)
+    turn = IceServer("turn.example.com", 3478, "bob", "pw")
 
-    config = libdatachannel.Configuration()
+    config = Configuration()
     config.ice_servers = [stun, turn]
 
     assert len(config.ice_servers) == 2
@@ -62,7 +66,7 @@ def test_add_ice_servers_to_configuration():
 
 
 def test_websocket_configuration_defaults():
-    ws_config = libdatachannel.WebSocketConfiguration()
+    ws_config = WebSocketConfiguration()
     assert ws_config.disable_tls_verification is False
     assert ws_config.proxy_server is None
     assert isinstance(ws_config.protocols, list)
@@ -73,7 +77,7 @@ def test_websocket_configuration_defaults():
 
 
 def test_websocket_configuration_fields():
-    ws_config = libdatachannel.WebSocketConfiguration()
+    ws_config = WebSocketConfiguration()
     ws_config.disable_tls_verification = True
     ws_config.protocols = ["json", "binary"]
     ws_config.connection_timeout = timedelta(seconds=10)
@@ -95,7 +99,7 @@ def test_websocket_configuration_fields():
 
 
 def test_websocket_server_configuration_defaults():
-    ws_server = libdatachannel.WebSocketServerConfiguration()
+    ws_server = WebSocketServerConfiguration()
     assert ws_server.port == 8080
     assert ws_server.enable_tls is False
     assert ws_server.certificate_pem_file is None
@@ -107,7 +111,7 @@ def test_websocket_server_configuration_defaults():
 
 
 def test_websocket_server_configuration_custom():
-    ws_server = libdatachannel.WebSocketServerConfiguration()
+    ws_server = WebSocketServerConfiguration()
     ws_server.port = 443
     ws_server.enable_tls = True
     ws_server.certificate_pem_file = "/tls/cert.pem"
@@ -125,7 +129,7 @@ def test_websocket_server_configuration_custom():
 
 
 def test_configuration_optional_fields():
-    config = libdatachannel.Configuration()
+    config = Configuration()
     config.mtu = 1400
     config.max_message_size = 256000
     config.certificate_pem_file = "/certs/cert.pem"
@@ -138,9 +142,9 @@ def test_configuration_optional_fields():
 
 
 def test_configuration_enums():
-    config = libdatachannel.Configuration()
-    config.certificate_type = libdatachannel.CertificateType.Rsa
-    config.ice_transport_policy = libdatachannel.TransportPolicy.Relay
+    config = Configuration()
+    config.certificate_type = CertificateType.Rsa
+    config.ice_transport_policy = TransportPolicy.Relay
 
-    assert config.certificate_type == libdatachannel.CertificateType.Rsa
-    assert config.ice_transport_policy == libdatachannel.TransportPolicy.Relay
+    assert config.certificate_type == CertificateType.Rsa
+    assert config.ice_transport_policy == TransportPolicy.Relay

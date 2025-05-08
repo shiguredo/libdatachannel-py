@@ -226,28 +226,8 @@ void bind_description(nb::module_& m) {
       .value("Inactive", Description::Direction::Inactive)
       .value("Unknown", Description::Direction::Unknown);
 
-  desc.def(nb::init<const std::string&, Description::Type, Description::Role>(),
-           "sdp"_a, "type"_a = Description::Type::Unspec,
-           "role"_a = Description::Role::ActPass)
-      .def(nb::init<const std::string&, std::string>(), "sdp"_a,
-           "type_string"_a)
-      .def("type", &Description::type)
-      .def("type_string", &Description::typeString)
-      .def("role", &Description::role)
-      .def("bundle_mid", &Description::bundleMid)
-      .def("ice_options", &Description::iceOptions)
-      .def("ice_ufrag", &Description::iceUfrag)
-      .def("ice_pwd", &Description::icePwd)
-      .def("fingerprint", &Description::fingerprint)
-      .def("hint_type", &Description::hintType)
-      .def("set_fingerprint", &Description::setFingerprint)
-      .def("add_ice_option", &Description::addIceOption)
-      .def("remove_ice_option", &Description::removeIceOption)
-      .def("__str__",
-           [](const Description& d) { return static_cast<std::string>(d); });
-
   // Entry（抽象基底）
-  nb::class_<Description::Entry> entry(m, "Entry");
+  nb::class_<Description::Entry> entry(desc, "Entry");
 
   // Entry::ExtMap
   nb::class_<Description::Entry::ExtMap> extmap(entry, "ExtMap");
@@ -283,7 +263,7 @@ void bind_description(nb::module_& m) {
       });
 
   // Application（Entry を継承）
-  nb::class_<Description::Application, Description::Entry>(m, "Application")
+  nb::class_<Description::Application, Description::Entry>(desc, "Application")
       .def(nb::init<std::string>(), "mid"_a = "data")
       .def(nb::init<const std::string&, std::string>(), "mline"_a, "mid"_a)
       .def("reciprocate", &Description::Application::reciprocate)
@@ -295,7 +275,7 @@ void bind_description(nb::module_& m) {
       .def("parse_sdp_line", &Description::Application::parseSdpLine);
 
   // Media（Entry を継承）
-  nb::class_<Description::Media, Description::Entry>(m, "Media")
+  nb::class_<Description::Media, Description::Entry>(desc, "Media")
       .def(nb::init<const std::string&, std::string, Description::Direction>(),
            "mline"_a, "mid"_a, "direction"_a = Description::Direction::SendOnly)
       .def(nb::init<const std::string&>(), "sdp"_a)
@@ -330,7 +310,7 @@ void bind_description(nb::module_& m) {
       });
 
   // RtpMap
-  nb::class_<Description::Media::RtpMap> rtpmap(m, "RtpMap");
+  nb::class_<Description::Media::RtpMap> rtpmap(desc, "RtpMap");
   rtpmap.def(nb::init<int>(), "payload_type"_a)
       .def(nb::init<std::string_view>(), "description"_a)
       .def("set_description", &Description::Media::RtpMap::setDescription)
@@ -348,7 +328,7 @@ void bind_description(nb::module_& m) {
       .def_rw("fmtps", &Description::Media::RtpMap::fmtps);
 
   // Media 継承: Audio
-  nb::class_<Description::Audio, Description::Media>(m, "Audio")
+  nb::class_<Description::Audio, Description::Media>(desc, "Audio")
       .def(nb::init<std::string, Description::Direction>(), "mid"_a = "audio",
            "direction"_a = Description::Direction::SendOnly)
       .def("add_audio_codec", &Description::Audio::addAudioCodec,
@@ -363,7 +343,7 @@ void bind_description(nb::module_& m) {
            "profile"_a = std::nullopt);
 
   // Media 継承: Video
-  nb::class_<Description::Video, Description::Media>(m, "Video")
+  nb::class_<Description::Video, Description::Media>(desc, "Video")
       .def(nb::init<std::string, Description::Direction>(), "mid"_a = "video",
            "direction"_a = Description::Direction::SendOnly)
       .def("add_video_codec", &Description::Video::addVideoCodec,
@@ -379,7 +359,26 @@ void bind_description(nb::module_& m) {
       .def("add_av1_codec", &Description::Video::addAV1Codec, "payload_type"_a,
            "profile"_a = std::nullopt);
 
-  desc.def("has_application", &Description::hasApplication)
+  desc.def(nb::init<const std::string&, Description::Type, Description::Role>(),
+           "sdp"_a, "type"_a = Description::Type::Unspec,
+           "role"_a = Description::Role::ActPass)
+      .def(nb::init<const std::string&, std::string>(), "sdp"_a,
+           "type_string"_a)
+      .def("type", &Description::type)
+      .def("type_string", &Description::typeString)
+      .def("role", &Description::role)
+      .def("bundle_mid", &Description::bundleMid)
+      .def("ice_options", &Description::iceOptions)
+      .def("ice_ufrag", &Description::iceUfrag)
+      .def("ice_pwd", &Description::icePwd)
+      .def("fingerprint", &Description::fingerprint)
+      .def("hint_type", &Description::hintType)
+      .def("set_fingerprint", &Description::setFingerprint)
+      .def("add_ice_option", &Description::addIceOption)
+      .def("remove_ice_option", &Description::removeIceOption)
+      .def("__str__",
+           [](const Description& d) { return static_cast<std::string>(d); })
+      .def("has_application", &Description::hasApplication)
       .def("has_audio_or_video", &Description::hasAudioOrVideo)
       .def("has_mid", &Description::hasMid, "mid"_a)
       .def("add_media",
@@ -789,6 +788,102 @@ void bind_track(nb::module_& m) {
       .def("get_media_handler", &Track::getMediaHandler);
 }
 
+// ---- peerconnection.hpp ----
+
+void bind_peerconnection(nb::module_& m) {
+  nb::class_<DataChannelInit>(m, "DataChannelInit")
+      .def(nb::init<>())
+      .def_rw("reliability", &DataChannelInit::reliability)
+      .def_rw("negotiated", &DataChannelInit::negotiated)
+      .def_rw("id", &DataChannelInit::id)
+      .def_rw("protocol", &DataChannelInit::protocol);
+
+  nb::class_<LocalDescriptionInit>(m, "LocalDescriptionInit")
+      .def(nb::init<>())
+      .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
+      .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
+
+  nb::class_<PeerConnection> pc(m, "PeerConnection");
+
+  // PeerConnection 内の enum
+  nb::enum_<PeerConnection::State>(pc, "State")
+      .value("New", PeerConnection::State::New)
+      .value("Connecting", PeerConnection::State::Connecting)
+      .value("Connected", PeerConnection::State::Connected)
+      .value("Disconnected", PeerConnection::State::Disconnected)
+      .value("Failed", PeerConnection::State::Failed)
+      .value("Closed", PeerConnection::State::Closed);
+
+  nb::enum_<PeerConnection::IceState>(pc, "IceState")
+      .value("New", PeerConnection::IceState::New)
+      .value("Checking", PeerConnection::IceState::Checking)
+      .value("Connected", PeerConnection::IceState::Connected)
+      .value("Completed", PeerConnection::IceState::Completed)
+      .value("Failed", PeerConnection::IceState::Failed)
+      .value("Disconnected", PeerConnection::IceState::Disconnected)
+      .value("Closed", PeerConnection::IceState::Closed);
+
+  nb::enum_<PeerConnection::GatheringState>(pc, "GatheringState")
+      .value("New", PeerConnection::GatheringState::New)
+      .value("InProgress", PeerConnection::GatheringState::InProgress)
+      .value("Complete", PeerConnection::GatheringState::Complete);
+
+  nb::enum_<PeerConnection::SignalingState>(pc, "SignalingState")
+      .value("Stable", PeerConnection::SignalingState::Stable)
+      .value("HaveLocalOffer", PeerConnection::SignalingState::HaveLocalOffer)
+      .value("HaveRemoteOffer", PeerConnection::SignalingState::HaveRemoteOffer)
+      .value("HaveLocalPranswer",
+             PeerConnection::SignalingState::HaveLocalPranswer)
+      .value("HaveRemotePranswer",
+             PeerConnection::SignalingState::HaveRemotePranswer);
+
+  // PeerConnection
+  pc.def(nb::init<>())
+      .def(nb::init<Configuration>(), "config"_a)
+      .def("close", &PeerConnection::close)
+      .def("config", &PeerConnection::config, nb::rv_policy::reference)
+      .def("state", &PeerConnection::state)
+      .def("ice_state", &PeerConnection::iceState)
+      .def("gathering_state", &PeerConnection::gatheringState)
+      .def("signaling_state", &PeerConnection::signalingState)
+      .def("negotiation_needed", &PeerConnection::negotiationNeeded)
+      .def("has_media", &PeerConnection::hasMedia)
+      .def("local_description", &PeerConnection::localDescription)
+      .def("remote_description", &PeerConnection::remoteDescription)
+      .def("remote_max_message_size", &PeerConnection::remoteMaxMessageSize)
+      .def("local_address", &PeerConnection::localAddress)
+      .def("remote_address", &PeerConnection::remoteAddress)
+      .def("max_data_channel_id", &PeerConnection::maxDataChannelId)
+      .def("get_selected_candidate_pair",
+           &PeerConnection::getSelectedCandidatePair)
+      .def("set_local_description", &PeerConnection::setLocalDescription,
+           "type"_a = Description::Type::Unspec,
+           "init"_a = LocalDescriptionInit{})
+      .def("set_remote_description", &PeerConnection::setRemoteDescription)
+      .def("add_remote_candidate", &PeerConnection::addRemoteCandidate)
+      .def("gather_local_candidates", &PeerConnection::gatherLocalCandidates,
+           "additional_ice_servers"_a = std::vector<IceServer>{})
+      .def("set_media_handler", &PeerConnection::setMediaHandler)
+      .def("get_media_handler", &PeerConnection::getMediaHandler)
+      .def("create_data_channel", &PeerConnection::createDataChannel, "label"_a,
+           "init"_a = DataChannelInit{})
+      .def("on_data_channel", &PeerConnection::onDataChannel)
+      .def("add_track", &PeerConnection::addTrack)
+      .def("on_track", &PeerConnection::onTrack)
+      .def("on_local_description", &PeerConnection::onLocalDescription)
+      .def("on_local_candidate", &PeerConnection::onLocalCandidate)
+      .def("on_state_change", &PeerConnection::onStateChange)
+      .def("on_ice_state_change", &PeerConnection::onIceStateChange)
+      .def("on_gathering_state_change", &PeerConnection::onGatheringStateChange)
+      .def("on_signaling_state_change", &PeerConnection::onSignalingStateChange)
+      .def("reset_callbacks", &PeerConnection::resetCallbacks)
+      .def("remote_fingerprint", &PeerConnection::remoteFingerprint)
+      .def("clear_stats", &PeerConnection::clearStats)
+      .def("bytes_sent", &PeerConnection::bytesSent)
+      .def("bytes_received", &PeerConnection::bytesReceived)
+      .def("rtt", &PeerConnection::rtt);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
@@ -802,6 +897,5 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
-
-  nb::class_<PeerConnection>(m, "PeerConnection");
+  bind_peerconnection(m);
 }
