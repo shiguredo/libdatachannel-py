@@ -281,7 +281,8 @@ void bind_description(nb::module_& m) {
       .def(nb::init<const std::string&>(), "sdp"_a)
       .def("description", &Description::Media::description)
       .def("reciprocate", &Description::Media::reciprocate)
-      .def("add_ssrc", &Description::Media::addSSRC)
+      .def("add_ssrc", &Description::Media::addSSRC, "ssrc"_a, "name"_a,
+           "msid"_a = std::nullopt, "track_id"_a = std::nullopt)
       .def("remove_ssrc", &Description::Media::removeSSRC)
       .def("replace_ssrc", &Description::Media::replaceSSRC)
       .def("has_ssrc", &Description::Media::hasSSRC)
