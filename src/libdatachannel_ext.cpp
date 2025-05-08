@@ -405,6 +405,7 @@ void bind_description(nb::module_& m) {
 }
 
 // ---- candidate.hpp ----
+
 void bind_candidate(nb::module_& m) {
   // Candidate enums
   nb::class_<Candidate> candidate(m, "Candidate");
@@ -710,6 +711,8 @@ void bind_rtppacketizationconfig(nb::module_& m) {
 void bind_rtppacketizer(nb::module_& m) {
   nb::class_<RtpPacketizer, MediaHandler>(m, "RtpPacketizer")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
+      .def("media", &RtpPacketizer::media)
+      .def("outgoing", &RtpPacketizer::outgoing)
       .def_prop_ro("rtp_config",
                    [](const RtpPacketizer& self) { return self.rtpConfig; });
 
@@ -766,6 +769,14 @@ void bind_channel(nb::module_& m) {
 
 void bind_datachannel(nb::module_& m) {
   nb::class_<DataChannel, Channel>(m, "DataChannel")
+      .def("is_open", &DataChannel::isOpen)
+      .def("is_closed", &DataChannel::isClosed)
+      .def("max_message_size", &DataChannel::maxMessageSize)
+      .def("close", &DataChannel::close)
+      .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
+           "data"_a)
+      .def("send", nb::overload_cast<const byte*, size_t>(&DataChannel::send),
+           "data"_a, "size"_a)
       .def("stream", &DataChannel::stream)
       .def("id", &DataChannel::id)
       .def("label", &DataChannel::label)
@@ -777,6 +788,13 @@ void bind_datachannel(nb::module_& m) {
 
 void bind_track(nb::module_& m) {
   nb::class_<Track, Channel>(m, "Track")
+      .def("is_open", &Track::isOpen)
+      .def("is_closed", &Track::isClosed)
+      .def("max_message_size", &Track::maxMessageSize)
+      .def("close", &Track::close)
+      .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a)
+      .def("send", nb::overload_cast<const byte*, size_t>(&Track::send),
+           "data"_a, "size"_a)
       .def("mid", &Track::mid)
       .def("direction", &Track::direction)
       .def("description", &Track::description)
@@ -885,6 +903,36 @@ void bind_peerconnection(nb::module_& m) {
       .def("rtt", &PeerConnection::rtt);
 }
 
+// ---- websocket.hpp ----
+
+void bind_websocket(nb::module_& m) {
+  nb::class_<WebSocket, Channel> ws(m, "WebSocket");
+
+  // WebSocket::State
+  nb::enum_<WebSocket::State>(ws, "State")
+      .value("Connecting", WebSocket::State::Connecting)
+      .value("Open", WebSocket::State::Open)
+      .value("Closing", WebSocket::State::Closing)
+      .value("Closed", WebSocket::State::Closed);
+
+  // WebSocket
+  ws.def(nb::init<>())
+      .def(nb::init<WebSocket::Configuration>(), "config"_a)
+      .def("is_open", &WebSocket::isOpen)
+      .def("is_closed", &WebSocket::isClosed)
+      .def("max_message_size", &WebSocket::maxMessageSize)
+      .def("close", &WebSocket::close)
+      .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
+           "data"_a)
+      .def("send", nb::overload_cast<const byte*, size_t>(&WebSocket::send),
+           "data"_a, "size"_a)
+      .def("ready_state", &WebSocket::readyState)
+      .def("open", &WebSocket::open, "url"_a)
+      .def("force_close", &WebSocket::forceClose)
+      .def("remote_address", &WebSocket::remoteAddress)
+      .def("path", &WebSocket::path);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
@@ -899,4 +947,5 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_datachannel(m);
   bind_track(m);
   bind_peerconnection(m);
+  bind_websocket(m);
 }
