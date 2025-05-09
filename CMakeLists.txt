@@ -71,6 +71,19 @@ endif()
 set_target_properties(libdatachannel_ext PROPERTIES CXX_STANDARD 20 C_STANDARD 20)
 set_target_properties(libdatachannel_ext PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+target_include_directories(libdatachannel_ext PRIVATE
+  ${LIBDATACHANNEL_DIR}/src
+  ${LIBDATACHANNEL_DIR}/include/rtc
+  ${LIBDATACHANNEL_DIR}/deps/plog/include
+  ${LIBDATACHANNEL_DIR}/deps/usrsctp/usrsctplib
+  ${LIBDATACHANNEL_DIR}/deps/libjuice/include
+  ${LIBDATACHANNEL_DIR}/deps/libsrtp/include
+  ${LIBDATACHANNEL_DIR}/../mbedtls/include
+)
+target_compile_definitions(libdatachannel_ext PRIVATE
+  USE_MBEDTLS
+)
+
 if(TARGET_OS STREQUAL "macos")
   set_target_properties(libdatachannel_ext PROPERTIES CXX_VISIBILITY_PRESET hidden)
 elseif(TARGET_OS STREQUAL "ubuntu")
