@@ -23,10 +23,6 @@
 // libdatachannel
 #include <rtc/rtc.hpp>
 
-// libdatachannel private header
-#include <impl/channel.hpp>
-#include <impl/peerconnection.hpp>
-
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace rtc;
@@ -58,26 +54,6 @@ struct type_caster<std::vector<std::byte>> {
 };
 }  // namespace detail
 }  // namespace nanobind
-
-template <class Impl>
-struct GetImpl : CheshireCat<Impl> {
-  impl_ptr<Impl> impl() { return CheshireCat<Impl>::impl(); }
-};
-
-template <class Impl, class T>
-impl_ptr<Impl> get_impl(T* p) {
-  return static_cast<GetImpl<Impl>*>(reinterpret_cast<CheshireCat<Impl>*>(p))
-      ->impl();
-}
-
-template <class... Args>
-struct GetCallback : synchronized_callback<Args...> {
-  std::function<void(Args...)>& get() { return this->callback; }
-};
-template <class... Args>
-std::function<void(Args...)>& get_callback(synchronized_callback<Args...>& v) {
-  return static_cast<GetCallback<Args...>&>(v).get();
-}
 
 // ---- configuration.hpp ----
 
@@ -753,47 +729,8 @@ void bind_rtppacketizer(nb::module_& m) {
 
 // ---- channel.hpp ----
 
-int channel_tp_traverse(PyObject* self, visitproc visit, void* arg) {
-#if PY_VERSION_HEX >= 0x03090000
-  Py_VISIT(Py_TYPE(self));
-#endif
-  if (!nb::inst_ready(self)) {
-    return 0;
-  }
-
-  auto p = nb::inst_ptr<Channel>(self);
-  auto impl = get_impl<impl::Channel>(p);
-  Py_VISIT(self);
-#define VISIT(v)                                            \
-  {                                                         \
-    nb::handle h = nb::find(v);                             \
-    std::cerr << #v << ": " << (void*)h.ptr() << std::endl; \
-    Py_VISIT(h.ptr());                                      \
-  }
-
-  VISIT(get_callback(impl->openCallback));
-
-#undef VISIT
-  std::cerr << "channel_tp_traverse" << std::endl;
-
-  return 0;
-}
-
-int channel_tp_clear(PyObject* self) {
-  std::cerr << "channel_tp_clear" << std::endl;
-  auto p = nb::inst_ptr<Channel>(self);
-  auto impl = get_impl<impl::Channel>(p);
-  impl->openCallback = nullptr;
-
-  return 0;
-}
-
-PyType_Slot channel_slots[] = {{Py_tp_traverse, (void*)channel_tp_traverse},
-                               {Py_tp_clear, (void*)channel_tp_clear},
-                               {0, 0}};
-
 void bind_channel(nb::module_& m) {
-  nb::class_<Channel>(m, "Channel", nb::type_slots(channel_slots))
+  nb::class_<Channel>(m, "Channel")
       // Core API
       .def("close", &Channel::close)
       .def("send", nb::overload_cast<message_variant>(&Channel::send), "data"_a)
@@ -872,60 +809,6 @@ void bind_track(nb::module_& m) {
 
 // ---- peerconnection.hpp ----
 
-int peer_connection_tp_traverse(PyObject* self, visitproc visit, void* arg) {
-#if PY_VERSION_HEX >= 0x03090000
-  Py_VISIT(Py_TYPE(self));
-#endif
-  if (!nb::inst_ready(self)) {
-    return 0;
-  }
-
-  auto p = nb::inst_ptr<PeerConnection>(self);
-  auto impl = get_impl<impl::PeerConnection>(p);
-  Py_VISIT(self);
-#define VISIT(v)                                            \
-  {                                                         \
-    nb::handle h = nb::find(v);                             \
-    std::cerr << #v << ": " << (void*)h.ptr() << std::endl; \
-    Py_VISIT(h.ptr());                                      \
-  }
-
-  VISIT(get_callback(impl->dataChannelCallback));
-  VISIT(get_callback(impl->trackCallback));
-  VISIT(get_callback(impl->localDescriptionCallback));
-  VISIT(get_callback(impl->localCandidateCallback));
-  VISIT(get_callback(impl->stateChangeCallback));
-  VISIT(get_callback(impl->iceStateChangeCallback));
-  VISIT(get_callback(impl->gatheringStateChangeCallback));
-  VISIT(get_callback(impl->signalingStateChangeCallback));
-
-#undef VISIT
-  std::cerr << "peer_connection_tp_traverse" << std::endl;
-
-  return 0;
-}
-
-int peer_connection_tp_clear(PyObject* self) {
-  std::cerr << "peer_connection_tp_clear" << std::endl;
-  auto p = nb::inst_ptr<PeerConnection>(self);
-  auto impl = get_impl<impl::PeerConnection>(p);
-  impl->dataChannelCallback = nullptr;
-  impl->trackCallback = nullptr;
-  impl->localDescriptionCallback = nullptr;
-  impl->localCandidateCallback = nullptr;
-  impl->stateChangeCallback = nullptr;
-  impl->iceStateChangeCallback = nullptr;
-  impl->gatheringStateChangeCallback = nullptr;
-  impl->signalingStateChangeCallback = nullptr;
-
-  return 0;
-}
-
-PyType_Slot peer_connection_slots[] = {
-    {Py_tp_traverse, (void*)peer_connection_tp_traverse},
-    {Py_tp_clear, (void*)peer_connection_tp_clear},
-    {0, 0}};
-
 void bind_peerconnection(nb::module_& m) {
   nb::class_<DataChannelInit>(m, "DataChannelInit")
       .def(nb::init<>())
@@ -939,8 +822,7 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
-  nb::class_<PeerConnection> pc(m, "PeerConnection",
-                                nb::type_slots(peer_connection_slots));
+  nb::class_<PeerConnection> pc(m, "PeerConnection");
 
   // PeerConnection 内の enum
   nb::enum_<PeerConnection::State>(pc, "State")
