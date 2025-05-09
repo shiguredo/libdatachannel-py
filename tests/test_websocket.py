@@ -49,4 +49,7 @@ def test_websocket():
     ws.close()
     time.sleep(1)
 
+    # これが無いとリークする
+    ws = None
+
     print("Success")

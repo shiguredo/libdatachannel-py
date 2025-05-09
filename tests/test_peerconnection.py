@@ -293,3 +293,7 @@ def test_leak():
     assert t1.is_open()
     assert t2[0] is not None
     assert t2[0].is_open()
+
+    # これが無いとリークする
+    pc1 = None
+    pc2 = None
