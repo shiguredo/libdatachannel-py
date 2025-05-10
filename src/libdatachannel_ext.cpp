@@ -988,6 +988,15 @@ void bind_h264depacketizer(nb::module_& m) {
       .def("incoming", &H264RtpDepacketizer::incoming);
 }
 
+// ---- pacinghandler.hpp ----
+
+void bind_pacinghandler(nb::module_& m) {
+  nb::class_<PacingHandler, MediaHandler>(m, "PacingHandler")
+      .def(nb::init<double, std::chrono::milliseconds>(), "bits_per_second"_a,
+           "send_interval"_a)
+      .def("outgoing", &PacingHandler::outgoing);
+}
+
 // ---- channel.hpp ----
 
 void bind_channel(nb::module_& m) {
