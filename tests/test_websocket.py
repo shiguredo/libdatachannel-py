@@ -11,7 +11,7 @@ def test_websocket():
     config.disable_tls_verification = True
     ws = WebSocket(config)
 
-    received = [False]
+    received = False
 
     def ws_on_open():
         print("WebSocket: Open")
@@ -24,9 +24,10 @@ def test_websocket():
         print("WebSocket: Closed")
 
     def ws_on_message(message):
+        nonlocal received
         if isinstance(message, str):
-            received[0] = message == my_message
-            if received[0]:
+            received = message == my_message
+            if received:
                 print("WebSocket: Received expected")
             else:
                 print("WebSocket: Received UNEXPECTED message")
@@ -39,12 +40,12 @@ def test_websocket():
     ws.open("wss://echo.websocket.org:443/")
 
     attempts = 20
-    while (not ws.is_open() or not received[0]) and attempts > 0:
+    while (not ws.is_open() or not received) and attempts > 0:
         attempts -= 1
         time.sleep(1)
 
     assert ws.is_open()
-    assert received[0]
+    assert received
 
     ws.close()
     time.sleep(1)

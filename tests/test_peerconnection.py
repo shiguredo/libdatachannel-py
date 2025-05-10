@@ -110,10 +110,11 @@ def test_track():
     pc2.on_state_change(pc2_on_state_change)
     pc2.on_gathering_state_change(pc2_on_gathering_state_change)
 
-    t2 = [None]
+    t2 = None
     new_track_mid = ""
 
     def pc2_on_track(t):
+        nonlocal t2
         mid = t.mid()
         print(f'Track 2: Received track with mid "{mid}"')
         if mid != new_track_mid:
@@ -128,7 +129,7 @@ def test_track():
 
         t.on_open(t_on_open)
         t.on_closed(t_on_closed)
-        t2[0] = t
+        t2 = t
 
     pc2.on_track(pc2_on_track)
 
@@ -149,7 +150,7 @@ def test_track():
     pc1.set_local_description()
 
     attempts = 10
-    while (not t1.is_open() or t2[0] is None or not t2[0].is_open()) and attempts > 0:
+    while (not t1.is_open() or t2 is None or not t2.is_open()) and attempts > 0:
         attempts -= 1
         time.sleep(1)
 
@@ -157,8 +158,8 @@ def test_track():
     assert pc2.state() == PeerConnection.State.Connected
 
     assert t1.is_open()
-    assert t2[0] is not None
-    assert t2[0].is_open()
+    assert t2 is not None
+    assert t2.is_open()
 
     # Test renegotiation
     new_track_mid = "added"
@@ -172,17 +173,17 @@ def test_track():
     #       track to be dropped (so it's SSRCs won't be on the description next time)
     t1 = pc1.add_track(media2)
 
-    t2[0] = None
+    t2 = None
     pc1.set_local_description()
 
     attempts = 10
-    while (not t1.is_open() or t2[0] is None or not t2[0].is_open()) and attempts > 0:
+    while (not t1.is_open() or t2 is None or not t2.is_open()) and attempts > 0:
         attempts -= 1
         time.sleep(1)
 
     assert t1.is_open()
-    assert t2[0] is not None
-    assert t2[0].is_open()
+    assert t2 is not None
+    assert t2.is_open()
 
     # Delay close of peer 2 to check closing works properly
     pc1.close()
@@ -191,7 +192,7 @@ def test_track():
     time.sleep(1)
 
     assert t1.is_closed()
-    assert t2[0].is_closed()
+    assert t2.is_closed()
 
     print("Success")
 
@@ -244,10 +245,11 @@ def test_leak():
     pc2.on_state_change(pc2_on_state_change)
     pc2.on_gathering_state_change(pc2_on_gathering_state_change)
 
-    t2 = [None]
+    t2 = None
     new_track_mid = ""
 
     def pc2_on_track(t):
+        nonlocal t2
         mid = t.mid()
         print(f'Track 2: Received track with mid "{mid}"')
         if mid != new_track_mid:
@@ -262,7 +264,7 @@ def test_leak():
 
         t.on_open(t_on_open)
         t.on_closed(t_on_closed)
-        t2[0] = t
+        t2 = t
 
     pc2.on_track(pc2_on_track)
 
@@ -283,7 +285,7 @@ def test_leak():
     pc1.set_local_description()
 
     attempts = 10
-    while (not t1.is_open() or t2[0] is None or not t2[0].is_open()) and attempts > 0:
+    while (not t1.is_open() or t2 is None or not t2.is_open()) and attempts > 0:
         attempts -= 1
         time.sleep(1)
 
@@ -291,8 +293,8 @@ def test_leak():
     assert pc2.state() == PeerConnection.State.Connected
 
     assert t1.is_open()
-    assert t2[0] is not None
-    assert t2[0].is_open()
+    assert t2 is not None
+    assert t2.is_open()
 
     # これが無いとリークする
     pc1 = None

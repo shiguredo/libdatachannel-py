@@ -36,11 +36,11 @@ struct type_caster<std::vector<std::byte>> {
 
   bool from_python(handle src, uint8_t flags, cleanup_list* cleanup) {
     if (PyBytes_Check(src.ptr()) == 0) {
+      PyErr_Clear();
       return false;
     }
-    nb::bytes pybytes(src);
-    size_t len = pybytes.size();
-    const char* data = pybytes.c_str();
+    size_t len = PyBytes_Size(src.ptr());
+    const char* data = PyBytes_AsString(src.ptr());
     value.assign(reinterpret_cast<const std::byte*>(data),
                  reinterpret_cast<const std::byte*>(data + len));
     return true;
@@ -49,7 +49,8 @@ struct type_caster<std::vector<std::byte>> {
   static handle from_cpp(const std::vector<std::byte>& vec,
                          rv_policy policy,
                          cleanup_list* cleanup) {
-    return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
+    return PyBytes_FromStringAndSize(reinterpret_cast<const char*>(vec.data()),
+                                     vec.size());
   }
 };
 }  // namespace detail
@@ -933,6 +934,17 @@ void bind_websocket(nb::module_& m) {
       .def("path", &WebSocket::path);
 }
 
+// ---- websocketserver.hpp ----
+
+void bind_websocketserver(nb::module_& m) {
+  nb::class_<WebSocketServer>(m, "WebSocketServer")
+      .def(nb::init<>())
+      .def(nb::init<WebSocketServer::Configuration>(), "config"_a)
+      .def("stop", &WebSocketServer::stop)
+      .def("port", &WebSocketServer::port)
+      .def("on_client", &WebSocketServer::onClient, "callback"_a);
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
@@ -948,4 +960,5 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_track(m);
   bind_peerconnection(m);
   bind_websocket(m);
+  bind_websocketserver(m);
 }
