@@ -979,6 +979,15 @@ void bind_h265rtppacketizer(nb::module_& m) {
       });
 }
 
+// ---- h264depacketizer.hpp ----
+
+void bind_h264depacketizer(nb::module_& m) {
+  nb::class_<H264RtpDepacketizer, MediaHandler>(m, "H264RtpDepacketizer")
+      .def(nb::init<NalUnit::Separator>(),
+           "separator"_a = NalUnit::Separator::LongStartSequence)
+      .def("incoming", &H264RtpDepacketizer::incoming);
+}
+
 // ---- channel.hpp ----
 
 void bind_channel(nb::module_& m) {
@@ -1211,6 +1220,7 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_av1rtppacketizer(m);
   bind_h264rtppacketizer(m);
   bind_h265rtppacketizer(m);
+  bind_h264depacketizer(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
