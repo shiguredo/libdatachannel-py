@@ -570,6 +570,208 @@ void bind_message(nb::module_& m) {
       "message"_a);
 }
 
+// ---- nalunit.hpp ----
+
+void bind_nalunit(nb::module_& m) {
+  // --- NalUnitHeader ---
+  nb::class_<NalUnitHeader>(m, "NalUnitHeader")
+      .def(nb::init<>())
+      .def("forbidden_bit", &NalUnitHeader::forbiddenBit)
+      .def("nri", &NalUnitHeader::nri)
+      .def("idc", &NalUnitHeader::idc)
+      .def("unit_type", &NalUnitHeader::unitType)
+      .def("set_forbidden_bit", &NalUnitHeader::setForbiddenBit)
+      .def("set_nri", &NalUnitHeader::setNRI)
+      .def("set_unit_type", &NalUnitHeader::setUnitType);
+
+  // --- NalUnitFragmentHeader ---
+  nb::class_<NalUnitFragmentHeader>(m, "NalUnitFragmentHeader")
+      .def(nb::init<>())
+      .def("is_start", &NalUnitFragmentHeader::isStart)
+      .def("reserved_bit6", &NalUnitFragmentHeader::reservedBit6)
+      .def("is_end", &NalUnitFragmentHeader::isEnd)
+      .def("unit_type", &NalUnitFragmentHeader::unitType)
+      .def("set_start", &NalUnitFragmentHeader::setStart)
+      .def("set_end", &NalUnitFragmentHeader::setEnd)
+      .def("set_reserved_bit6", &NalUnitFragmentHeader::setReservedBit6)
+      .def("set_unit_type", &NalUnitFragmentHeader::setUnitType);
+
+  // --- NalUnitStartSequenceMatch enum ---
+  nb::enum_<NalUnitStartSequenceMatch>(m, "NalUnitStartSequenceMatch")
+      .value("NoMatch", NUSM_noMatch)
+      .value("FirstZero", NUSM_firstZero)
+      .value("SecondZero", NUSM_secondZero)
+      .value("ThirdZero", NUSM_thirdZero)
+      .value("ShortMatch", NUSM_shortMatch)
+      .value("LongMatch", NUSM_longMatch);
+
+  // --- NalUnit::Separator ---
+  nb::class_<NalUnit> nalunit(m, "NalUnit");
+
+  nb::enum_<NalUnit::Type>(nalunit, "Type")
+      .value("H264", NalUnit::Type::H264)
+      .value("H265", NalUnit::Type::H265);
+
+  nb::enum_<NalUnit::Separator>(nalunit, "Separator")
+      .value("Length", NalUnit::Separator::Length)
+      .value("LongStartSequence", NalUnit::Separator::LongStartSequence)
+      .value("ShortStartSequence", NalUnit::Separator::ShortStartSequence)
+      .value("StartSequence", NalUnit::Separator::StartSequence);
+
+  nalunit.def(nb::init<>())
+      .def(nb::init<size_t, bool, NalUnit::Type>(), "size"_a,
+           "including_header"_a = true, "type"_a = NalUnit::Type::H264)
+      .def(nb::init<binary&&>())
+      .def("forbidden_bit", &NalUnit::forbiddenBit)
+      .def("nri", &NalUnit::nri)
+      .def("unit_type", &NalUnit::unitType)
+      .def("payload", &NalUnit::payload)
+      .def("set_forbidden_bit", &NalUnit::setForbiddenBit)
+      .def("set_nri", &NalUnit::setNRI)
+      .def("set_unit_type", &NalUnit::setUnitType)
+      .def("set_payload", &NalUnit::setPayload)
+      .def_static(
+          "start_sequence_match_succ",
+          [](NalUnitStartSequenceMatch match, int _byte,
+             NalUnit::Separator separator) {
+            return NalUnit::StartSequenceMatchSucc(match, (std::byte)_byte,
+                                                   separator);
+          },
+          "match"_a, "_byte"_a, "separator"_a);
+
+  nb::class_<NalUnitFragmentA, NalUnit> fragment(m, "NalUnitFragmentA");
+
+  // --- NalUnitFragmentA::FragmentType ---
+  nb::enum_<NalUnitFragmentA::FragmentType>(fragment, "FragmentType")
+      .value("Start", NalUnitFragmentA::FragmentType::Start)
+      .value("Middle", NalUnitFragmentA::FragmentType::Middle)
+      .value("End", NalUnitFragmentA::FragmentType::End);
+
+  // --- NalUnitFragmentA ---
+  fragment
+      .def(nb::init<NalUnitFragmentA::FragmentType, bool, uint8_t, uint8_t,
+                    binary>(),
+           "type"_a, "forbidden_bit"_a, "nri"_a, "unit_type"_a, "data"_a)
+      .def("unit_type", &NalUnitFragmentA::unitType)
+      .def("payload", &NalUnitFragmentA::payload)
+      .def("type", &NalUnitFragmentA::type)
+      .def("set_unit_type", &NalUnitFragmentA::setUnitType)
+      .def("set_payload", &NalUnitFragmentA::setPayload)
+      .def("set_fragment_type", &NalUnitFragmentA::setFragmentType)
+      .def_static("fragments_from", &NalUnitFragmentA::fragmentsFrom, "nalu"_a,
+                  "max_fragment_size"_a);
+
+  // --- NalUnits helper class ---
+  nb::class_<NalUnits>(m, "NalUnits")
+      .def(nb::init<>())
+      .def(
+          "generate_fragments",
+          [](NalUnits& v, uint16_t max_fragment_size) {
+            std::vector<std::shared_ptr<binary>> xs =
+                v.generateFragments(max_fragment_size);
+            std::vector<binary> result;
+            for (const auto& x : xs) {
+              result.push_back(*x);
+            }
+            return result;
+          },
+          "max_fragment_size"_a)
+      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
+        return NalUnits::defaultMaximumFragmentSize;
+      });
+}
+
+const uint16_t NalUnits_defaultMaximumFragmentSize =
+    NalUnits::defaultMaximumFragmentSize;
+
+// ---- h265nalunit.hpp ----
+
+void bind_h265nalunit(nb::module_& m) {
+  // --- H265NalUnitHeader ---
+  nb::class_<H265NalUnitHeader>(m, "H265NalUnitHeader")
+      .def(nb::init<>())
+      .def("forbidden_bit", &H265NalUnitHeader::forbiddenBit)
+      .def("unit_type", &H265NalUnitHeader::unitType)
+      .def("nuh_layer_id", &H265NalUnitHeader::nuhLayerId)
+      .def("nuh_temp_id_plus1", &H265NalUnitHeader::nuhTempIdPlus1)
+      .def("set_forbidden_bit", &H265NalUnitHeader::setForbiddenBit)
+      .def("set_unit_type", &H265NalUnitHeader::setUnitType)
+      .def("set_nuh_layer_id", &H265NalUnitHeader::setNuhLayerId)
+      .def("set_nuh_temp_id_plus1", &H265NalUnitHeader::setNuhTempIdPlus1);
+
+  // --- H265NalUnitFragmentHeader ---
+  nb::class_<H265NalUnitFragmentHeader>(m, "H265NalUnitFragmentHeader")
+      .def(nb::init<>())
+      .def("is_start", &H265NalUnitFragmentHeader::isStart)
+      .def("is_end", &H265NalUnitFragmentHeader::isEnd)
+      .def("unit_type", &H265NalUnitFragmentHeader::unitType)
+      .def("set_start", &H265NalUnitFragmentHeader::setStart)
+      .def("set_end", &H265NalUnitFragmentHeader::setEnd)
+      .def("set_unit_type", &H265NalUnitFragmentHeader::setUnitType);
+
+  // --- H265NalUnit ---
+  nb::class_<H265NalUnit, NalUnit>(m, "H265NalUnit")
+      .def(nb::init<>())
+      .def(nb::init<size_t, bool>(), "size"_a, "including_header"_a = true)
+      .def(nb::init<binary&&>(), "data"_a)
+      .def("forbidden_bit", &H265NalUnit::forbiddenBit)
+      .def("unit_type", &H265NalUnit::unitType)
+      .def("nuh_layer_id", &H265NalUnit::nuhLayerId)
+      .def("nuh_temp_id_plus1", &H265NalUnit::nuhTempIdPlus1)
+      .def("payload", &H265NalUnit::payload)
+      .def("set_forbidden_bit", &H265NalUnit::setForbiddenBit)
+      .def("set_unit_type", &H265NalUnit::setUnitType)
+      .def("set_nuh_layer_id", &H265NalUnit::setNuhLayerId)
+      .def("set_nuh_temp_id_plus1", &H265NalUnit::setNuhTempIdPlus1)
+      .def("set_payload", &H265NalUnit::setPayload);
+
+  nb::class_<H265NalUnitFragment, H265NalUnit> fragment(m,
+                                                        "H265NalUnitFragment");
+
+  // --- H265NalUnitFragment::FragmentType ---
+  nb::enum_<H265NalUnitFragment::FragmentType>(fragment, "FragmentType")
+      .value("Start", H265NalUnitFragment::FragmentType::Start)
+      .value("Middle", H265NalUnitFragment::FragmentType::Middle)
+      .value("End", H265NalUnitFragment::FragmentType::End);
+
+  // --- H265NalUnitFragment ---
+  fragment
+      .def(nb::init<H265NalUnitFragment::FragmentType, bool, uint8_t, uint8_t,
+                    uint8_t, binary>(),
+           "type"_a, "forbidden_bit"_a, "nuh_layer_id"_a, "nuh_temp_id_plus1"_a,
+           "unit_type"_a, "data"_a)
+      .def("unit_type", &H265NalUnitFragment::unitType)
+      .def("payload", &H265NalUnitFragment::payload)
+      .def("type", &H265NalUnitFragment::type)
+      .def("set_unit_type", &H265NalUnitFragment::setUnitType)
+      .def("set_payload", &H265NalUnitFragment::setPayload)
+      .def("set_fragment_type", &H265NalUnitFragment::setFragmentType)
+      .def_static("fragments_from", &H265NalUnitFragment::fragmentsFrom,
+                  "nalu"_a, "max_fragment_size"_a);
+
+  // --- H265NalUnits ---
+  nb::class_<H265NalUnits>(m, "H265NalUnits")
+      .def(nb::init<>())
+      .def(
+          "generate_fragments",
+          [](H265NalUnits& v, uint16_t max_fragment_size) {
+            std::vector<std::shared_ptr<binary>> xs =
+                v.generateFragments(max_fragment_size);
+            std::vector<binary> result;
+            for (const auto& x : xs) {
+              result.push_back(*x);
+            }
+            return result;
+          },
+          "max_fragment_size"_a)
+      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
+        return H265NalUnits::defaultMaximumFragmentSize;
+      });
+}
+
+const uint16_t H265NalUnits_defaultMaximumFragmentSize =
+    H265NalUnits::defaultMaximumFragmentSize;
+
 // ---- mediahandler.hpp ----
 
 class PyMediaHandler : public MediaHandler {};
@@ -741,10 +943,39 @@ void bind_av1rtppacketizer(nb::module_& m) {
   av1pkt
       .def(nb::init<AV1RtpPacketizer::Packetization,
                     std::shared_ptr<RtpPacketizationConfig>, uint16_t>(),
-           "packetization"_a, "rtp_config"_a, "max_fragment_size"_a = 1200)
+           "packetization"_a, "rtp_config"_a,
+           "max_fragment_size"_a = NalUnits_defaultMaximumFragmentSize)
       .def("outgoing", &AV1RtpPacketizer::outgoing)
       .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
         return AV1RtpPacketizer::defaultClockRate;
+      });
+}
+
+// ---- h264rtppacketizer.hpp ----
+
+void bind_h264rtppacketizer(nb::module_& m) {
+  nb::class_<H264RtpPacketizer, RtpPacketizer>(m, "H264RtpPacketizer")
+      .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
+                    uint16_t>(),
+           "separator"_a, "rtp_config"_a,
+           "max_fragment_size"_a = NalUnits_defaultMaximumFragmentSize)
+      .def("outgoing", &H264RtpPacketizer::outgoing)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return H264RtpPacketizer::defaultClockRate;
+      });
+}
+
+// ---- h265rtppacketizer.hpp ----
+
+void bind_h265rtppacketizer(nb::module_& m) {
+  nb::class_<H265RtpPacketizer, RtpPacketizer>(m, "H265RtpPacketizer")
+      .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
+                    uint16_t>(),
+           "separator"_a, "rtp_config"_a,
+           "max_fragment_size"_a = H265NalUnits_defaultMaximumFragmentSize)
+      .def("outgoing", &H265RtpPacketizer::outgoing)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return H265RtpPacketizer::defaultClockRate;
       });
 }
 
@@ -965,202 +1196,6 @@ void bind_websocketserver(nb::module_& m) {
       .def("on_client", &WebSocketServer::onClient, "callback"_a);
 }
 
-// ---- nalunit.hpp ----
-
-void bind_nalunit(nb::module_& m) {
-  // --- NalUnitHeader ---
-  nb::class_<NalUnitHeader>(m, "NalUnitHeader")
-      .def(nb::init<>())
-      .def("forbidden_bit", &NalUnitHeader::forbiddenBit)
-      .def("nri", &NalUnitHeader::nri)
-      .def("idc", &NalUnitHeader::idc)
-      .def("unit_type", &NalUnitHeader::unitType)
-      .def("set_forbidden_bit", &NalUnitHeader::setForbiddenBit)
-      .def("set_nri", &NalUnitHeader::setNRI)
-      .def("set_unit_type", &NalUnitHeader::setUnitType);
-
-  // --- NalUnitFragmentHeader ---
-  nb::class_<NalUnitFragmentHeader>(m, "NalUnitFragmentHeader")
-      .def(nb::init<>())
-      .def("is_start", &NalUnitFragmentHeader::isStart)
-      .def("reserved_bit6", &NalUnitFragmentHeader::reservedBit6)
-      .def("is_end", &NalUnitFragmentHeader::isEnd)
-      .def("unit_type", &NalUnitFragmentHeader::unitType)
-      .def("set_start", &NalUnitFragmentHeader::setStart)
-      .def("set_end", &NalUnitFragmentHeader::setEnd)
-      .def("set_reserved_bit6", &NalUnitFragmentHeader::setReservedBit6)
-      .def("set_unit_type", &NalUnitFragmentHeader::setUnitType);
-
-  // --- NalUnitStartSequenceMatch enum ---
-  nb::enum_<NalUnitStartSequenceMatch>(m, "NalUnitStartSequenceMatch")
-      .value("NoMatch", NUSM_noMatch)
-      .value("FirstZero", NUSM_firstZero)
-      .value("SecondZero", NUSM_secondZero)
-      .value("ThirdZero", NUSM_thirdZero)
-      .value("ShortMatch", NUSM_shortMatch)
-      .value("LongMatch", NUSM_longMatch);
-
-  // --- NalUnit::Separator ---
-  nb::class_<NalUnit> nalunit(m, "NalUnit");
-
-  nb::enum_<NalUnit::Type>(nalunit, "Type")
-      .value("H264", NalUnit::Type::H264)
-      .value("H265", NalUnit::Type::H265);
-
-  nb::enum_<NalUnit::Separator>(nalunit, "Separator")
-      .value("Length", NalUnit::Separator::Length)
-      .value("LongStartSequence", NalUnit::Separator::LongStartSequence)
-      .value("ShortStartSequence", NalUnit::Separator::ShortStartSequence)
-      .value("StartSequence", NalUnit::Separator::StartSequence);
-
-  nalunit.def(nb::init<>())
-      .def(nb::init<size_t, bool, NalUnit::Type>(), "size"_a,
-           "including_header"_a = true, "type"_a = NalUnit::Type::H264)
-      .def(nb::init<binary&&>())
-      .def("forbidden_bit", &NalUnit::forbiddenBit)
-      .def("nri", &NalUnit::nri)
-      .def("unit_type", &NalUnit::unitType)
-      .def("payload", &NalUnit::payload)
-      .def("set_forbidden_bit", &NalUnit::setForbiddenBit)
-      .def("set_nri", &NalUnit::setNRI)
-      .def("set_unit_type", &NalUnit::setUnitType)
-      .def("set_payload", &NalUnit::setPayload)
-      .def_static(
-          "start_sequence_match_succ",
-          [](NalUnitStartSequenceMatch match, int _byte,
-             NalUnit::Separator separator) {
-            return NalUnit::StartSequenceMatchSucc(match, (std::byte)_byte,
-                                                   separator);
-          },
-          "match"_a, "_byte"_a, "separator"_a);
-
-  nb::class_<NalUnitFragmentA, NalUnit> fragment(m, "NalUnitFragmentA");
-
-  // --- NalUnitFragmentA::FragmentType ---
-  nb::enum_<NalUnitFragmentA::FragmentType>(fragment, "FragmentType")
-      .value("Start", NalUnitFragmentA::FragmentType::Start)
-      .value("Middle", NalUnitFragmentA::FragmentType::Middle)
-      .value("End", NalUnitFragmentA::FragmentType::End);
-
-  // --- NalUnitFragmentA ---
-  fragment
-      .def(nb::init<NalUnitFragmentA::FragmentType, bool, uint8_t, uint8_t,
-                    binary>(),
-           "type"_a, "forbidden_bit"_a, "nri"_a, "unit_type"_a, "data"_a)
-      .def("unit_type", &NalUnitFragmentA::unitType)
-      .def("payload", &NalUnitFragmentA::payload)
-      .def("type", &NalUnitFragmentA::type)
-      .def("set_unit_type", &NalUnitFragmentA::setUnitType)
-      .def("set_payload", &NalUnitFragmentA::setPayload)
-      .def("set_fragment_type", &NalUnitFragmentA::setFragmentType)
-      .def_static("fragments_from", &NalUnitFragmentA::fragmentsFrom, "nalu"_a,
-                  "max_fragment_size"_a);
-
-  // --- NalUnits helper class ---
-  nb::class_<NalUnits>(m, "NalUnits")
-      .def(nb::init<>())
-      .def(
-          "generate_fragments",
-          [](NalUnits& v, uint16_t max_fragment_size) {
-            std::vector<std::shared_ptr<binary>> xs =
-                v.generateFragments(max_fragment_size);
-            std::vector<binary> result;
-            for (const auto& x : xs) {
-              result.push_back(*x);
-            }
-            return result;
-          },
-          "max_fragment_size"_a)
-      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
-        return NalUnits::defaultMaximumFragmentSize;
-      });
-}
-
-// ---- h265nalunit.hpp ----
-
-void bind_h265nalunit(nb::module_& m) {
-  // --- H265NalUnitHeader ---
-  nb::class_<H265NalUnitHeader>(m, "H265NalUnitHeader")
-      .def(nb::init<>())
-      .def("forbidden_bit", &H265NalUnitHeader::forbiddenBit)
-      .def("unit_type", &H265NalUnitHeader::unitType)
-      .def("nuh_layer_id", &H265NalUnitHeader::nuhLayerId)
-      .def("nuh_temp_id_plus1", &H265NalUnitHeader::nuhTempIdPlus1)
-      .def("set_forbidden_bit", &H265NalUnitHeader::setForbiddenBit)
-      .def("set_unit_type", &H265NalUnitHeader::setUnitType)
-      .def("set_nuh_layer_id", &H265NalUnitHeader::setNuhLayerId)
-      .def("set_nuh_temp_id_plus1", &H265NalUnitHeader::setNuhTempIdPlus1);
-
-  // --- H265NalUnitFragmentHeader ---
-  nb::class_<H265NalUnitFragmentHeader>(m, "H265NalUnitFragmentHeader")
-      .def(nb::init<>())
-      .def("is_start", &H265NalUnitFragmentHeader::isStart)
-      .def("is_end", &H265NalUnitFragmentHeader::isEnd)
-      .def("unit_type", &H265NalUnitFragmentHeader::unitType)
-      .def("set_start", &H265NalUnitFragmentHeader::setStart)
-      .def("set_end", &H265NalUnitFragmentHeader::setEnd)
-      .def("set_unit_type", &H265NalUnitFragmentHeader::setUnitType);
-
-  // --- H265NalUnit ---
-  nb::class_<H265NalUnit, NalUnit>(m, "H265NalUnit")
-      .def(nb::init<>())
-      .def(nb::init<size_t, bool>(), "size"_a, "including_header"_a = true)
-      .def(nb::init<binary&&>(), "data"_a)
-      .def("forbidden_bit", &H265NalUnit::forbiddenBit)
-      .def("unit_type", &H265NalUnit::unitType)
-      .def("nuh_layer_id", &H265NalUnit::nuhLayerId)
-      .def("nuh_temp_id_plus1", &H265NalUnit::nuhTempIdPlus1)
-      .def("payload", &H265NalUnit::payload)
-      .def("set_forbidden_bit", &H265NalUnit::setForbiddenBit)
-      .def("set_unit_type", &H265NalUnit::setUnitType)
-      .def("set_nuh_layer_id", &H265NalUnit::setNuhLayerId)
-      .def("set_nuh_temp_id_plus1", &H265NalUnit::setNuhTempIdPlus1)
-      .def("set_payload", &H265NalUnit::setPayload);
-
-  nb::class_<H265NalUnitFragment, H265NalUnit> fragment(m,
-                                                        "H265NalUnitFragment");
-
-  // --- H265NalUnitFragment::FragmentType ---
-  nb::enum_<H265NalUnitFragment::FragmentType>(fragment, "FragmentType")
-      .value("Start", H265NalUnitFragment::FragmentType::Start)
-      .value("Middle", H265NalUnitFragment::FragmentType::Middle)
-      .value("End", H265NalUnitFragment::FragmentType::End);
-
-  // --- H265NalUnitFragment ---
-  fragment
-      .def(nb::init<H265NalUnitFragment::FragmentType, bool, uint8_t, uint8_t,
-                    uint8_t, binary>(),
-           "type"_a, "forbidden_bit"_a, "nuh_layer_id"_a, "nuh_temp_id_plus1"_a,
-           "unit_type"_a, "data"_a)
-      .def("unit_type", &H265NalUnitFragment::unitType)
-      .def("payload", &H265NalUnitFragment::payload)
-      .def("type", &H265NalUnitFragment::type)
-      .def("set_unit_type", &H265NalUnitFragment::setUnitType)
-      .def("set_payload", &H265NalUnitFragment::setPayload)
-      .def("set_fragment_type", &H265NalUnitFragment::setFragmentType)
-      .def_static("fragments_from", &H265NalUnitFragment::fragmentsFrom,
-                  "nalu"_a, "max_fragment_size"_a);
-
-  // --- H265NalUnits ---
-  nb::class_<H265NalUnits>(m, "H265NalUnits")
-      .def(nb::init<>())
-      .def(
-          "generate_fragments",
-          [](H265NalUnits& v, uint16_t max_fragment_size) {
-            std::vector<std::shared_ptr<binary>> xs =
-                v.generateFragments(max_fragment_size);
-            std::vector<binary> result;
-            for (const auto& x : xs) {
-              result.push_back(*x);
-            }
-            return result;
-          },
-          "max_fragment_size"_a)
-      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
-        return H265NalUnits::defaultMaximumFragmentSize;
-      });
-}
-
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
@@ -1168,16 +1203,18 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_reliability(m);
   bind_frameinfo(m);
   bind_message(m);
+  bind_nalunit(m);
+  bind_h265nalunit(m);
   bind_mediahandler(m);
   bind_rtppacketizationconfig(m);
   bind_rtppacketizer(m);
   bind_av1rtppacketizer(m);
+  bind_h264rtppacketizer(m);
+  bind_h265rtppacketizer(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
   bind_peerconnection(m);
   bind_websocket(m);
   bind_websocketserver(m);
-  bind_nalunit(m);
-  bind_h265nalunit(m);
 }
