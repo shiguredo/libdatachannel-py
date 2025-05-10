@@ -1013,6 +1013,15 @@ void bind_plihandler(nb::module_& m) {
       .def("incoming", &PliHandler::incoming);
 }
 
+// ---- rtcpnackresponder.hpp ----
+
+void bind_rtcpnackresponder(nb::module_& m) {
+  nb::class_<RtcpNackResponder, MediaHandler>(m, "RtcpNackResponder")
+      .def(nb::init<size_t>(), "max_size"_a = RtcpNackResponder::DefaultMaxSize)
+      .def("incoming", &RtcpNackResponder::incoming)
+      .def("outgoing", &RtcpNackResponder::outgoing);
+}
+
 // ---- channel.hpp ----
 
 void bind_channel(nb::module_& m) {
@@ -1249,6 +1258,7 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_pacinghandler(m);
   bind_rembhandler(m);
   bind_plihandler(m);
+  bind_rtcpnackresponder(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
