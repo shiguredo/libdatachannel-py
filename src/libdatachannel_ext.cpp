@@ -1022,6 +1022,16 @@ void bind_rtcpnackresponder(nb::module_& m) {
       .def("outgoing", &RtcpNackResponder::outgoing);
 }
 
+// ---- rtcpreceivingsession.hpp ----
+
+void bind_rtcpreceivingsession(nb::module_& m) {
+  nb::class_<RtcpReceivingSession, MediaHandler>(m, "RtcpReceivingSession")
+      .def(nb::init<>())
+      .def("incoming", &RtcpReceivingSession::incoming)
+      .def("request_keyframe", &RtcpReceivingSession::requestKeyframe)
+      .def("request_bitrate", &RtcpReceivingSession::requestBitrate);
+}
+
 // ---- channel.hpp ----
 
 void bind_channel(nb::module_& m) {
@@ -1259,6 +1269,7 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_rembhandler(m);
   bind_plihandler(m);
   bind_rtcpnackresponder(m);
+  bind_rtcpreceivingsession(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
