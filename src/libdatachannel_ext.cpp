@@ -743,7 +743,9 @@ void bind_av1rtppacketizer(nb::module_& m) {
                     std::shared_ptr<RtpPacketizationConfig>, uint16_t>(),
            "packetization"_a, "rtp_config"_a, "max_fragment_size"_a = 1200)
       .def("outgoing", &AV1RtpPacketizer::outgoing)
-      .def_ro_static("DEFAULT_CLOCK_RATE", &AV1RtpPacketizer::defaultClockRate);
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return AV1RtpPacketizer::defaultClockRate;
+      });
 }
 
 // ---- channel.hpp ----
@@ -963,6 +965,114 @@ void bind_websocketserver(nb::module_& m) {
       .def("on_client", &WebSocketServer::onClient, "callback"_a);
 }
 
+// ---- nalunit.hpp ----
+
+void bind_nalunit(nb::module_& m) {
+  // --- NalUnitHeader ---
+  nb::class_<NalUnitHeader>(m, "NalUnitHeader")
+      .def(nb::init<>())
+      .def("forbidden_bit", &NalUnitHeader::forbiddenBit)
+      .def("nri", &NalUnitHeader::nri)
+      .def("idc", &NalUnitHeader::idc)
+      .def("unit_type", &NalUnitHeader::unitType)
+      .def("set_forbidden_bit", &NalUnitHeader::setForbiddenBit)
+      .def("set_nri", &NalUnitHeader::setNRI)
+      .def("set_unit_type", &NalUnitHeader::setUnitType);
+
+  // --- NalUnitFragmentHeader ---
+  nb::class_<NalUnitFragmentHeader>(m, "NalUnitFragmentHeader")
+      .def(nb::init<>())
+      .def("is_start", &NalUnitFragmentHeader::isStart)
+      .def("reserved_bit6", &NalUnitFragmentHeader::reservedBit6)
+      .def("is_end", &NalUnitFragmentHeader::isEnd)
+      .def("unit_type", &NalUnitFragmentHeader::unitType)
+      .def("set_start", &NalUnitFragmentHeader::setStart)
+      .def("set_end", &NalUnitFragmentHeader::setEnd)
+      .def("set_reserved_bit6", &NalUnitFragmentHeader::setReservedBit6)
+      .def("set_unit_type", &NalUnitFragmentHeader::setUnitType);
+
+  // --- NalUnitStartSequenceMatch enum ---
+  nb::enum_<NalUnitStartSequenceMatch>(m, "NalUnitStartSequenceMatch")
+      .value("NoMatch", NUSM_noMatch)
+      .value("FirstZero", NUSM_firstZero)
+      .value("SecondZero", NUSM_secondZero)
+      .value("ThirdZero", NUSM_thirdZero)
+      .value("ShortMatch", NUSM_shortMatch)
+      .value("LongMatch", NUSM_longMatch);
+
+  // --- NalUnit::Separator ---
+  nb::class_<NalUnit> nalunit(m, "NalUnit");
+
+  nb::enum_<NalUnit::Type>(nalunit, "Type")
+      .value("H264", NalUnit::Type::H264)
+      .value("H265", NalUnit::Type::H265);
+
+  nb::enum_<NalUnit::Separator>(nalunit, "Separator")
+      .value("Length", NalUnit::Separator::Length)
+      .value("LongStartSequence", NalUnit::Separator::LongStartSequence)
+      .value("ShortStartSequence", NalUnit::Separator::ShortStartSequence)
+      .value("StartSequence", NalUnit::Separator::StartSequence);
+
+  nalunit.def(nb::init<>())
+      .def(nb::init<size_t, bool, NalUnit::Type>(), "size"_a,
+           "including_header"_a = true, "type"_a = NalUnit::Type::H264)
+      .def(nb::init<binary&&>())
+      .def("forbidden_bit", &NalUnit::forbiddenBit)
+      .def("nri", &NalUnit::nri)
+      .def("unit_type", &NalUnit::unitType)
+      .def("payload", &NalUnit::payload)
+      .def("set_forbidden_bit", &NalUnit::setForbiddenBit)
+      .def("set_nri", &NalUnit::setNRI)
+      .def("set_unit_type", &NalUnit::setUnitType)
+      .def("set_payload", &NalUnit::setPayload)
+      .def_static(
+          "start_sequence_match_succ",
+          [](NalUnitStartSequenceMatch match, int _byte,
+             NalUnit::Separator separator) {
+            return NalUnit::StartSequenceMatchSucc(match, (std::byte)_byte,
+                                                   separator);
+          },
+          "match"_a, "_byte"_a, "separator"_a);
+
+  // --- NalUnitFragmentA ---
+  nb::class_<NalUnitFragmentA, NalUnit>(m, "NalUnitFragmentA")
+      .def(nb::init<NalUnitFragmentA::FragmentType, bool, uint8_t, uint8_t,
+                    binary>(),
+           "type"_a, "forbidden_bit"_a, "nri"_a, "unit_type"_a, "data"_a)
+      .def("unit_type", &NalUnitFragmentA::unitType)
+      .def("payload", &NalUnitFragmentA::payload)
+      .def("type", &NalUnitFragmentA::type)
+      .def("set_unit_type", &NalUnitFragmentA::setUnitType)
+      .def("set_payload", &NalUnitFragmentA::setPayload)
+      .def("set_fragment_type", &NalUnitFragmentA::setFragmentType)
+      .def_static("fragments_from", &NalUnitFragmentA::fragmentsFrom, "nalu"_a,
+                  "max_fragment_size"_a);
+
+  nb::enum_<NalUnitFragmentA::FragmentType>(m, "NalUnitFragmentType")
+      .value("Start", NalUnitFragmentA::FragmentType::Start)
+      .value("Middle", NalUnitFragmentA::FragmentType::Middle)
+      .value("End", NalUnitFragmentA::FragmentType::End);
+
+  // --- NalUnits helper class ---
+  nb::class_<NalUnits>(m, "NalUnits")
+      .def(nb::init<>())
+      .def(
+          "generate_fragments",
+          [](NalUnits& v, uint16_t max_fragment_size) {
+            std::vector<std::shared_ptr<binary>> xs =
+                v.generateFragments(max_fragment_size);
+            std::vector<binary> result;
+            for (const auto& x : xs) {
+              result.push_back(*x);
+            }
+            return result;
+          },
+          "max_fragment_size"_a)
+      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
+        return NalUnits::defaultMaximumFragmentSize;
+      });
+}
+
 NB_MODULE(libdatachannel_ext, m) {
   bind_configuration(m);
   bind_description(m);
@@ -980,4 +1090,5 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_peerconnection(m);
   bind_websocket(m);
   bind_websocketserver(m);
+  bind_nalunit(m);
 }
