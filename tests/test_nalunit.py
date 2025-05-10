@@ -2,7 +2,6 @@ from libdatachannel import (
     NalUnit,
     NalUnitFragmentA,
     NalUnitFragmentHeader,
-    NalUnitFragmentType,
     NalUnitHeader,
     NalUnits,
     NalUnitStartSequenceMatch,
@@ -50,18 +49,18 @@ def test_nal_unit_basic_fields():
 
 def test_nal_fragment_creation_and_fields():
     payload = b"\x01\x02\x03\x04"
-    frag = NalUnitFragmentA(NalUnitFragmentType.Start, True, 2, 7, payload)
+    frag = NalUnitFragmentA(NalUnitFragmentA.FragmentType.Start, True, 2, 7, payload)
 
-    assert frag.type() == NalUnitFragmentType.Start
+    assert frag.type() == NalUnitFragmentA.FragmentType.Start
     assert frag.unit_type() == 7
     assert frag.payload() == payload
 
     frag.set_unit_type(5)
-    frag.set_fragment_type(NalUnitFragmentType.End)
+    frag.set_fragment_type(NalUnitFragmentA.FragmentType.End)
     frag.set_payload(b"\xaa\xbb")
 
     assert frag.unit_type() == 5
-    assert frag.type() == NalUnitFragmentType.End
+    assert frag.type() == NalUnitFragmentA.FragmentType.End
     assert frag.payload() == b"\xaa\xbb"
 
 
