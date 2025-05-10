@@ -997,6 +997,22 @@ void bind_pacinghandler(nb::module_& m) {
       .def("outgoing", &PacingHandler::outgoing);
 }
 
+// ---- rembhandler.hpp ----
+
+void bind_rembhandler(nb::module_& m) {
+  nb::class_<RembHandler, MediaHandler>(m, "RembHandler")
+      .def(nb::init<std::function<void(unsigned int)>>(), "on_remb"_a)
+      .def("incoming", &RembHandler::incoming);
+}
+
+// ---- plihandler.hpp ----
+
+void bind_plihandler(nb::module_& m) {
+  nb::class_<PliHandler, MediaHandler>(m, "PliHandler")
+      .def(nb::init<std::function<void()>>(), "on_pli"_a)
+      .def("incoming", &PliHandler::incoming);
+}
+
 // ---- channel.hpp ----
 
 void bind_channel(nb::module_& m) {
@@ -1230,6 +1246,9 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_h264rtppacketizer(m);
   bind_h265rtppacketizer(m);
   bind_h264depacketizer(m);
+  bind_pacinghandler(m);
+  bind_rembhandler(m);
+  bind_plihandler(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
