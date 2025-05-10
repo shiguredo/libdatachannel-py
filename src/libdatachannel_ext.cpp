@@ -1015,9 +1015,15 @@ void bind_plihandler(nb::module_& m) {
 
 // ---- rtcpnackresponder.hpp ----
 
+const size_t RtcpNackResponder_DefaultMaxSize =
+    RtcpNackResponder::DefaultMaxSize;
+
 void bind_rtcpnackresponder(nb::module_& m) {
   nb::class_<RtcpNackResponder, MediaHandler>(m, "RtcpNackResponder")
-      .def(nb::init<size_t>(), "max_size"_a = RtcpNackResponder::DefaultMaxSize)
+      .def(nb::init<size_t>(), "max_size"_a = RtcpNackResponder_DefaultMaxSize)
+      .def_prop_ro_static(
+          "DEFAULT_MAX_SIZE",
+          [](nb::handle) { return RtcpNackResponder_DefaultMaxSize; })
       .def("incoming", &RtcpNackResponder::incoming)
       .def("outgoing", &RtcpNackResponder::outgoing);
 }
@@ -1028,8 +1034,23 @@ void bind_rtcpreceivingsession(nb::module_& m) {
   nb::class_<RtcpReceivingSession, MediaHandler>(m, "RtcpReceivingSession")
       .def(nb::init<>())
       .def("incoming", &RtcpReceivingSession::incoming)
-      .def("request_keyframe", &RtcpReceivingSession::requestKeyframe)
-      .def("request_bitrate", &RtcpReceivingSession::requestBitrate);
+      .def("request_keyframe", nb::overload_cast<const message_callback&>(
+                                   &RtcpReceivingSession::requestKeyframe))
+      .def("request_bitrate",
+           nb::overload_cast<unsigned int, const message_callback&>(
+               &RtcpReceivingSession::requestBitrate));
+}
+
+// ---- rtcpsrreporter.hpp ----
+
+void bind_rtcpsrreporter(nb::module_& m) {
+  nb::class_<RtcpSrReporter, MediaHandler>(m, "RtcpSrReporter")
+      .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
+      .def("last_reported_timestamp", &RtcpSrReporter::lastReportedTimestamp)
+      .def("set_needs_to_report", &RtcpSrReporter::setNeedsToReport)
+      .def("outgoing", &RtcpSrReporter::outgoing)
+      .def_prop_ro("rtp_config",
+                   [](const RtcpSrReporter& self) { return self.rtpConfig; });
 }
 
 // ---- channel.hpp ----
@@ -1270,6 +1291,7 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_plihandler(m);
   bind_rtcpnackresponder(m);
   bind_rtcpreceivingsession(m);
+  bind_rtcpsrreporter(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
