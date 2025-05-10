@@ -728,6 +728,24 @@ void bind_rtppacketizer(nb::module_& m) {
   //     .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a);
 }
 
+// ---- av1rtppacketizer.hpp ----
+
+void bind_av1rtppacketizer(nb::module_& m) {
+  nb::class_<AV1RtpPacketizer, RtpPacketizer> av1pkt(m, "AV1RtpPacketizer");
+
+  // Nested enum
+  nb::enum_<AV1RtpPacketizer::Packetization>(av1pkt, "Packetization")
+      .value("Obu", AV1RtpPacketizer::Packetization::Obu)
+      .value("TemporalUnit", AV1RtpPacketizer::Packetization::TemporalUnit);
+
+  av1pkt
+      .def(nb::init<AV1RtpPacketizer::Packetization,
+                    std::shared_ptr<RtpPacketizationConfig>, uint16_t>(),
+           "packetization"_a, "rtp_config"_a, "max_fragment_size"_a = 1200)
+      .def("outgoing", &AV1RtpPacketizer::outgoing)
+      .def_ro_static("DEFAULT_CLOCK_RATE", &AV1RtpPacketizer::defaultClockRate);
+}
+
 // ---- channel.hpp ----
 
 void bind_channel(nb::module_& m) {
@@ -955,6 +973,7 @@ NB_MODULE(libdatachannel_ext, m) {
   bind_mediahandler(m);
   bind_rtppacketizationconfig(m);
   bind_rtppacketizer(m);
+  bind_av1rtppacketizer(m);
   bind_channel(m);
   bind_datachannel(m);
   bind_track(m);
