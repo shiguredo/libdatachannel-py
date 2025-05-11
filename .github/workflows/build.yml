@@ -230,18 +230,18 @@ jobs:
         if: ${{ matrix.platform.name == 'macos-15_arm64' && matrix.python_version == '3.13' }}
 
       # テスト用
-      - name: Publish package to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          repository-url: https://test.pypi.org/legacy/
-          verbose: true
-
-      # 本番用
-      # - name: Publish package to PyPI
+      # - name: Publish package to TestPyPI
       #   uses: pypa/gh-action-pypi-publish@release/v1
       #   with:
-      #     password: ${{ secrets.PYPI_API_TOKEN }}
+      #     password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      #     repository-url: https://test.pypi.org/legacy/
+      #     verbose: true
+
+      # 本番用
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
       - name: Slack Notification
         if: failure()
