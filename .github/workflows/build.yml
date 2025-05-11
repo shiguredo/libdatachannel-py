@@ -5,7 +5,7 @@ on:
   push:
     paths-ignore:
       - "**.md"
-      - "tests/**"
+      # - "tests/**"
     branches-ignore:
       - "feature/e2e-test*"
     tags:
