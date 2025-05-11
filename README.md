@@ -18,7 +18,7 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## 優先実装
 
-優先実装とは Sora のライセンスを契約頂いているお客様向けに Sora Python SDK の実装予定機能を有償にて前倒しで実装することです。
+優先実装とは Sora / Sora Cloud の契約頂いているお客様向けに libdatachannel-py の実装予定機能を有償にて前倒しで実装することです。
 
 **詳細は Discord やメールなどでお気軽にお問い合わせください**
 
