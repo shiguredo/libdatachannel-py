@@ -55,7 +55,7 @@ dev = [
     { name = "build", specifier = ">=1.2.2.post1" },
     { name = "nanobind", specifier = ">=2.7.0" },
     { name = "pytest", specifier = ">=8.3.5" },
-    { name = "setuptools", specifier = ">=80.2" },
+    { name = "setuptools", specifier = ">=80.4" },
     { name = "wheel", specifier = ">=0.45.1" },
 ]
 
