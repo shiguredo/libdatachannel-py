@@ -4,7 +4,7 @@ version = "2025.1.0.dev0"
 description = "libdatachannel-py is a Python binding for libdatachannel."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 
 [project.urls]
 Source = "https://github.com/shiguredo/libdatachannel-py"
@@ -24,5 +24,5 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100

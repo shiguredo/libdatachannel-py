@@ -24,7 +24,10 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ### 優先実装が可能な機能一覧
 
-- Windows 対応
+- Windows 11 対応
+- Windows Server 2025 対応
+- Python 3.12 対応
+- Python 3.11 対応
 
 ## サポートについて
 
