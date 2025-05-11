@@ -16,6 +16,16 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## 特徴
 
+## 優先実装
+
+優先実装とは Sora のライセンスを契約頂いているお客様向けに Sora Python SDK の実装予定機能を有償にて前倒しで実装することです。
+
+**詳細は Discord やメールなどでお気軽にお問い合わせください**
+
+### 優先実装が可能な機能一覧
+
+- Windows 対応
+
 ## サポートについて
 
 ### Discord
