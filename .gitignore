@@ -10,3 +10,5 @@ __pycache__
 /src/libdatachannel/*.pyi
 /src/libdatachannel/py.typed
 /src/*.egg-info
+
+/dist

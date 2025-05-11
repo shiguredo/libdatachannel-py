@@ -16,6 +16,28 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## 特徴
 
+## 優先実装
+
+優先実装とは Sora / Sora Cloud の契約頂いているお客様向けに libdatachannel-py の実装予定機能を有償にて前倒しで実装することです。
+
+**詳細は Discord やメールなどでお気軽にお問い合わせください**
+
+### 優先実装が可能な機能一覧
+
+- Ubuntu 22.04 対応
+  - x86_64
+  - arm64
+- macOS 14 対応
+  - arm64
+- Windows 11 対応
+  - x86_64
+  - arm64
+- Windows Server 2025 対応
+  - x86_64
+  - arm64
+- Python 3.12 対応
+- Python 3.11 対応
+
 ## サポートについて
 
 ### Discord
