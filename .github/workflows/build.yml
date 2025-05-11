@@ -206,7 +206,7 @@ jobs:
       matrix:
         platform:
           - name: ubuntu-24.04_x86_64
-          - name: ubuntu-24.04_arm64v8
+          - name: ubuntu-24.04_armv8
           - name: macos-15_arm64
           # - name: macos-14_arm64
           # - name: windows-2025
