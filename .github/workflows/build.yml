@@ -137,34 +137,34 @@ jobs:
       - run: |
           uv run pytest
 
-  # build_windows:
-  #   needs: [build_pyi] 
-  #   runs-on: windows-2025
-  #   timeout-minutes: 15
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       python_version:
-  #         # - "3.11"
-  #         # - "3.12"
-  #         - "3.13"
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         name: libdatachannel
-  #         path: libdatachannel/
+  build_windows:
+    needs: [build_pyi] 
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version:
+          # - "3.11"
+          # - "3.12"
+          - "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: libdatachannel
+          path: libdatachannel/
 
-  #     - run: |
-  #         cp libdatachannel/py.typed src/libdatachannel/py.typed
-  #         cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
-  #     - uses: astral-sh/setup-uv@v6
-  #       with:
-  #         enable-cache: false
-  #     - run: |
-  #         uv python pin ${{ matrix.python_version }}
-  #         uv sync
-  #         uv run python run.py windows_x86_64
+      - run: |
+          cp libdatachannel/py.typed src/libdatachannel/py.typed
+          cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - run: |
+          uv python pin ${{ matrix.python_version }}
+          uv sync
+          uv run python run.py windows_x86_64
 
   slack_notify_failed:
     needs: [build_ubuntu, build_macos]
