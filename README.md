@@ -1,6 +1,9 @@
 # libdatachannel-py
 
+[![PyPI](https://img.shields.io/pypi/v/libdatachannel-py)](https://pypi.org/project/libdatachannel-py/)
+[![image](https://img.shields.io/pypi/pyversions/libdatachannel-py.svg)](https://pypi.python.org/pypi/libdatachannel-py)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Actions status](https://github.com/shiguredo/libdatachannel-py/workflows/build/badge.svg)](https://github.com/shiguredo/sora-python-sdk/actions)
 
 ## About Shiguredo's open source software
 
