@@ -14,7 +14,11 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## libdatachannel-py について
 
+[libdatachannel](https://github.com/paullouisageneau/libdatachannel) の Python バインディングです。
+
 ## 特徴
+
+- [nanobind](https://github.com/wjakob/nanobind) を利用しています
 
 ## 優先実装
 
