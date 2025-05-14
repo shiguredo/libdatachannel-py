@@ -55,6 +55,7 @@ nanobind_add_module(
   libdatachannel_ext
   NB_STATIC
   src/libdatachannel_ext.cpp
+  src/bind_libdatachannel.cpp
 )
 
 if (LIBDATACHANNEL_PY_GEN_PYI)
