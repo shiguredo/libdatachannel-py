@@ -17,16 +17,38 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/download-artifact@v4
+    - name: Download artifact (release)
+      if: inputs.debug == 'false'
+      uses: actions/download-artifact@v4
       with:
-        name: ${{ inputs.platform }}_python-${{ inputs.python_version }}${{ inputs.debug == 'true' && '_debug' || '' }}
-        path: ${{ inputs.debug == 'true' && 'dist_debug/' || '' }}${{ inputs.platform }}_python-${{ inputs.python_version }}${{ inputs.debug == 'true' && '_debug' || '' }}
+        name: ${{ inputs.platform }}_python-${{ inputs.python_version }}
+        path: ${{ inputs.platform }}_python-${{ inputs.python_version }}
       env:
-        ACTIONS_STEP_DEBUG: ${{ inputs.debug }}
-    - name: Append path to package_paths.env
+        ACTIONS_STEP_DEBUG: false
+
+    - name: Download artifact (debug)
+      if: inputs.debug == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.platform }}_python-${{ inputs.python_version }}${{ !contains(inputs.python_version, '+debug') && '_debug' || '' }}
+        path: dist_debug/${{ inputs.platform }}_python-${{ inputs.python_version }}${{ !contains(inputs.python_version, '+debug') && '_debug' || '' }}
+      env:
+        ACTIONS_STEP_DEBUG: true
+
+    - name: Append path to package_paths.env (release)
+      if: inputs.debug == 'false'
       shell: bash
       run: |
-        DOWNLOAD_DIR="${{ inputs.debug == 'true' && 'dist_debug/' || '' }}${{ inputs.platform }}_python-${{ inputs.python_version }}${{ inputs.debug == 'true' && '_debug' || '' }}"
+        DOWNLOAD_DIR="${{ inputs.platform }}_python-${{ inputs.python_version }}"
+        PACKAGE_NAME=$(basename `ls -1 "$DOWNLOAD_DIR"/*.whl`)
+        mv "$DOWNLOAD_DIR"/*.whl ./
+        echo "$PACKAGE_NAME" >> package_paths.env
+
+    - name: Append path to package_paths.env (debug)
+      if: inputs.debug == 'true'
+      shell: bash
+      run: |
+        DOWNLOAD_DIR="dist_debug/${{ inputs.platform }}_python-${{ inputs.python_version }}${{ !contains(inputs.python_version, '+debug') && '_debug' || '' }}"
         PACKAGE_NAME=$(basename `ls -1 "$DOWNLOAD_DIR"/*.whl`)
         mv "$DOWNLOAD_DIR"/*.whl ./
         echo "$PACKAGE_NAME" >> package_paths.env
