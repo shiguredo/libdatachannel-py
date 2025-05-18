@@ -58,6 +58,7 @@ nanobind_add_module(
   src/bind_libdatachannel.cpp
   src/bind_video_codec.cpp
   src/openh264_video_encoder.cpp
+  src/video_codec.cpp
 )
 
 if (LIBDATACHANNEL_PY_GEN_PYI)
