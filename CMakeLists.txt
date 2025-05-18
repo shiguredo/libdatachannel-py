@@ -78,6 +78,10 @@ set_target_properties(libdatachannel_ext PROPERTIES POSITION_INDEPENDENT_CODE ON
 
 if(TARGET_OS STREQUAL "macos")
   set_target_properties(libdatachannel_ext PROPERTIES CXX_VISIBILITY_PRESET hidden)
+  target_link_libraries(libdatachannel_ext
+    PRIVATE
+      "-framework VideoToolbox"
+  )
 elseif(TARGET_OS STREQUAL "ubuntu")
 elseif(TARGET_OS STREQUAL "jetson")
 elseif(TARGET_OS STREQUAL "windows")
