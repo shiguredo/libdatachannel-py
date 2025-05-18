@@ -12,6 +12,9 @@
 // plog
 #include <plog/Log.h>
 
+// nanobind
+#include <nanobind/nanobind.h>
+
 // デストラクタで指定した関数を呼ぶだけのクラス
 class Resource {
  public:
@@ -63,7 +66,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
         nullptr,  // use default allocator
         settings.width, settings.height,
         codec_type_ == VideoCodecType::H264 ? kCMVideoCodecType_H264
-                                           : kCMVideoCodecType_HEVC,
+                                            : kCMVideoCodecType_HEVC,
         encoder_specs,  // use hardware accelerated encoder if available
         source_attr,
         nullptr,  // use default compressed data allocator
@@ -235,6 +238,8 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
     params->encoder = this;
     params->timestamp = frame.timestamp;
 
+    nanobind::gil_scoped_release release;
+
     if (OSStatus err = VTCompressionSessionEncodeFrame(
             vtref_, pixel_buffer, timestamp, kCMTimeInvalid, frame_properties,
             params.release(), nullptr);
@@ -262,6 +267,8 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
       // If there are pending callbacks when the encoder is destroyed, this can happen.
       return;
     }
+    nanobind::gil_scoped_acquire acquire;
+
     std::unique_ptr<EncodeParams> p((EncodeParams*)params);
     p->encoder->OnEncode(status, infoFlags, sampleBuffer, p->timestamp);
   }

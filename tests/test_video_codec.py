@@ -2,8 +2,8 @@ import os
 import time
 from datetime import timedelta
 
-import pytest
 import numpy as np
+import pytest
 
 from libdatachannel import (
     EncodedImage,
@@ -104,6 +104,7 @@ def test_encoded_image_properties():
 
 def test_openh264():
     openh264 = os.environ.get("OPENH264_PATH")
+    assert openh264 is not None
     encoder = create_openh264_video_encoder(openh264)
     settings = VideoEncoder.Settings()
     settings.codec_type = VideoCodecType.H264
@@ -120,6 +121,7 @@ def test_openh264():
     frame.timestamp = timedelta(microseconds=1234567)
 
     on_encoded_called = False
+
     def on_encoded(encoded_image):
         nonlocal on_encoded_called
         assert encoded_image.data.size > 0
@@ -133,8 +135,10 @@ def test_openh264():
     assert on_encoded_called
 
 
-@pytest.mark.skipif(os.environ.get("ENABLE_VIDEOTOOLBOX") is None, reason="macOS の場合だけ実行する")
-def test_openh264():
+@pytest.mark.skipif(
+    os.environ.get("ENABLE_VIDEOTOOLBOX") is None, reason="macOS の場合だけ実行する"
+)
+def test_videotoolbox():
     encoder = create_videotoolbox_video_encoder()
     settings = VideoEncoder.Settings()
     settings.codec_type = VideoCodecType.H264
@@ -151,6 +155,7 @@ def test_openh264():
     frame.timestamp = timedelta(microseconds=1234567)
 
     on_encoded_called = False
+
     def on_encoded(encoded_image):
         nonlocal on_encoded_called
         assert encoded_image.data.size > 0
