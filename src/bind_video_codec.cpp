@@ -15,6 +15,7 @@
 
 #include "openh264_video_encoder.h"
 #include "video_codec.h"
+#include "videotoolbox_video_encoder.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -98,4 +99,5 @@ void bind_video_codec(nb::module_& m) {
 
   m.def("create_openh264_video_encoder", &CreateOpenH264VideoEncoder,
         "openh264"_a);
+  m.def("create_videotoolbox_video_encoder", &CreateVideoToolboxVideoEncoder);
 }

@@ -1,6 +1,8 @@
 import os
+import time
 from datetime import timedelta
 
+import pytest
 import numpy as np
 
 from libdatachannel import (
@@ -116,11 +118,47 @@ def test_openh264():
     frame.base_height = 480
     frame.timestamp = timedelta(microseconds=1234567)
 
+    on_encoded_called = False
     def on_encoded(encoded_image):
+        nonlocal on_encoded_called
         assert encoded_image.data.size > 0
         assert encoded_image.timestamp == frame.timestamp
         assert encoded_image.rid == frame.rid
+        on_encoded_called = True
 
     encoder.set_on_encoded(on_encoded)
     encoder.encode(frame)
     encoder.release()
+    assert on_encoded_called
+
+
+@pytest.mark.skipif(os.environ.get("ENABLE_VIDEOTOOLBOX") is None, reason="macOS の場合だけ実行する")
+def test_openh264():
+    encoder = create_videotoolbox_video_encoder()
+    settings = VideoEncoder.Settings()
+    settings.codec_type = VideoCodecType.H264
+    settings.width = 640
+    settings.height = 480
+    settings.bitrate = 1000000
+    success = encoder.init(settings)
+    assert success
+    frame = VideoFrame()
+    frame.i420_buffer = VideoFrameBufferI420.create(640, 360)
+    frame.format = ImageFormat.I420
+    frame.base_width = 640
+    frame.base_height = 480
+    frame.timestamp = timedelta(microseconds=1234567)
+
+    on_encoded_called = False
+    def on_encoded(encoded_image):
+        nonlocal on_encoded_called
+        assert encoded_image.data.size > 0
+        assert encoded_image.timestamp == frame.timestamp
+        assert encoded_image.rid == frame.rid
+        on_encoded_called = True
+
+    encoder.set_on_encoded(on_encoded)
+    encoder.encode(frame)
+    time.sleep(1)
+    encoder.release()
+    assert on_encoded_called
