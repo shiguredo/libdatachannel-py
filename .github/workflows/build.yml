@@ -55,9 +55,13 @@ jobs:
           - name: ubuntu-24.04_x86_64
             target: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
+            openh264_version: "2.6.0"
+            openh264_arch: "linux64"
           - name: ubuntu-24.04_armv8
             target: ubuntu-24.04_armv8
             runs_on: ubuntu-24.04-arm
+            openh264_version: "2.6.0"
+            openh264_arch: "linux-arm64"
         python_version:
           # - "3.11"
           # - "3.12"
@@ -90,7 +94,12 @@ jobs:
           uv run python -m build
 
       - run: |
-          uv run pytest -v
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.8.so.bz2
+          bunzip2 libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.8.so.bz2
+
+      - run: |
+          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.8.so
+          uv run pytest tests/ -v
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -109,6 +118,8 @@ jobs:
             os: macos
             python_host_platform: "macosx-15.0-arm64"
             archflags: "-arch arm64"
+            openh264_version: "2.6.0"
+            openh264_arch: "mac-arm64"
           # - name: macos-14_arm64
           #   target: macos_arm64
           #   runs_on: macos-14
@@ -142,7 +153,13 @@ jobs:
         env:
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
           ARCHFLAGS: ${{ matrix.platform.archflags }}
+
       - run: |
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.dylib.bz2
+          bunzip2 libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.dylib.bz2
+
+      - run: |
+          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.dylib
           uv run pytest -v
 
       - name: Upload Artifact
