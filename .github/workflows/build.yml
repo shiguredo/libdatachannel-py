@@ -152,7 +152,12 @@ jobs:
           BUILD_PROFILE: debug
 
       - run: |
-          uv run pytest -v
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+
+      - run: |
+          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so
+          uv run pytest tests/ -v
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -266,7 +271,13 @@ jobs:
           BUILD_PROFILE: debug
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
           ARCHFLAGS: ${{ matrix.platform.archflags }}
+
       - run: |
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+
+      - run: |
+          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib
           uv run pytest -v
 
       - name: Upload Artifact
