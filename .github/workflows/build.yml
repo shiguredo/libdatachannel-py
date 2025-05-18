@@ -285,6 +285,7 @@ jobs:
 
       - run: |
           export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib
+          export ENABLE_VIDEOTOOLBOX=1
           uv run pytest -v
 
       - name: Upload Artifact

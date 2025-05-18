@@ -15,6 +15,7 @@ from libdatachannel import (
     VideoFrameBufferI420,
     VideoFrameBufferNV12,
     create_openh264_video_encoder,
+    create_videotoolbox_video_encoder,
 )
 
 
