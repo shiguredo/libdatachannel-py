@@ -144,8 +144,8 @@ def test_openh264():
     success = encoder.init(settings)
     assert success
     frame = VideoFrame()
-    frame.i420_buffer = VideoFrameBufferI420.create(640, 360)
-    frame.format = ImageFormat.I420
+    frame.i420_buffer = VideoFrameBufferNV12.create(640, 360)
+    frame.format = ImageFormat.NV12
     frame.base_width = 640
     frame.base_height = 480
     frame.timestamp = timedelta(microseconds=1234567)
