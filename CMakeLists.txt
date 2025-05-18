@@ -80,6 +80,9 @@ if(TARGET_OS STREQUAL "macos")
   set_target_properties(libdatachannel_ext PROPERTIES CXX_VISIBILITY_PRESET hidden)
   target_link_libraries(libdatachannel_ext
     PRIVATE
+      "-framework CoreFoundation"
+      "-framework CoreVideo"
+      "-framework CoreMedia"
       "-framework VideoToolbox"
   )
 elseif(TARGET_OS STREQUAL "ubuntu")
