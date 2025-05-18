@@ -16,6 +16,10 @@ def run_setup(build_platform, target_platform):
     with open(os.path.join(BASE_DIR, "VERSION"), "r") as f:
         version = f.read().strip()
 
+    build_profile = os.getenv("BUILD_PROFILE")
+    if build_profile == "debug":
+        version += "+debug"
+
     plat = None
     if target_platform.os == "jetson":
         plat = "manylinux_2_17_aarch64.manylinux2014_aarch64"
