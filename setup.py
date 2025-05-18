@@ -13,6 +13,9 @@ from buildbase import PlatformTarget, cd, get_build_platform  # noqa: E402
 
 
 def run_setup(build_platform, target_platform):
+    with open(os.path.join(BASE_DIR, "VERSION"), "r") as f:
+        version = f.read().strip()
+
     plat = None
     if target_platform.os == "jetson":
         plat = "manylinux_2_17_aarch64.manylinux2014_aarch64"
@@ -35,6 +38,7 @@ def run_setup(build_platform, target_platform):
             return impl, impl, plat if plat is not None else plat2
 
     setup(
+        version=version,
         url="https://github.com/shiguredo/libdatachannel-py",
         packages=["libdatachannel"],
         package_dir={"": "src"},

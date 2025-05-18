@@ -1,6 +1,6 @@
 [project]
 name = "libdatachannel-py"
-version = "2025.1.0.dev2"
+dynamic = ["version"]
 description = "libdatachannel-py is a Python binding for libdatachannel."
 readme = "README.md"
 license = "Apache-2.0"

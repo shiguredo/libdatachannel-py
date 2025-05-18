@@ -36,7 +36,6 @@ wheels = [
 
 [[package]]
 name = "libdatachannel-py"
-version = "2025.1.0.dev2"
 source = { editable = "." }
 
 [package.dev-dependencies]

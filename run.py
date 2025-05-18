@@ -33,7 +33,7 @@ def install_deps(
     install_dir,
     debug,
 ):
-    version = read_version_file("VERSION")
+    version = read_version_file("DEPS")
 
     # CMake
     install_cmake_args = {
