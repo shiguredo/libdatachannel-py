@@ -1,4 +1,4 @@
-#include "videotoolbox_video_encoder.hpp"
+#include "videotoolbox_video_encoder.h"
 
 #if defined(__APPLE__)
 
