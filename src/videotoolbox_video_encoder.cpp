@@ -32,7 +32,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
   bool Init(const Settings& settings) override {
     Release();
 
-    auto codec_type = settings.codec_type;
+    codec_type_ = settings.codec_type;
 
     OSType pixel_format_value = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
     CFNumberRef pixel_format = CFNumberCreate(
@@ -62,7 +62,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
     OSStatus err = VTCompressionSessionCreate(
         nullptr,  // use default allocator
         settings.width, settings.height,
-        codec_type == VideoCodecType::H264 ? kCMVideoCodecType_H264
+        codec_type_ == VideoCodecType::H264 ? kCMVideoCodecType_H264
                                            : kCMVideoCodecType_HEVC,
         encoder_specs,  // use hardware accelerated encoder if available
         source_attr,
@@ -79,7 +79,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
       PLOG_ERROR << "Failed to set real-time property: err=" << err;
       return false;
     }
-    if (codec_type == VideoCodecType::H264) {
+    if (codec_type_ == VideoCodecType::H264) {
       if (OSStatus err = VTSessionSetProperty(
               vtref_, kVTCompressionPropertyKey_ProfileLevel,
               kVTProfileLevel_H264_Baseline_3_1);
@@ -99,7 +99,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
 
     // ビットレート
     {
-      int value = settings.bitrate.count();
+      int value = settings.bitrate;
       CFNumberRef cfnum =
           CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &value);
       Resource cfnum_resource([cfnum]() { CFRelease(cfnum); });
@@ -188,12 +188,12 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
 
     // NV12 の内容をコピーする
     int dst_stride_uv = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1);
-    const uint8_t* src_y = frame.nv12_buffer->y.get();
-    int src_stride_y = frame.nv12_buffer->stride_y;
-    const uint8_t* src_uv = frame.nv12_buffer->uv.get();
-    int src_stride_uv = frame.nv12_buffer->stride_uv;
-    int width = frame.nv12_buffer->width;
-    int height = frame.nv12_buffer->height;
+    const uint8_t* src_y = frame.nv12_buffer->y.data();
+    int src_stride_y = frame.nv12_buffer->stride_y();
+    const uint8_t* src_uv = frame.nv12_buffer->uv.data();
+    int src_stride_uv = frame.nv12_buffer->stride_uv();
+    int width = frame.nv12_buffer->width();
+    int height = frame.nv12_buffer->height();
     int chroma_width = (width + 1) / 2 * 2;
     int chroma_height = (height + 1) / 2;
     for (int i = 0; i < height; ++i) {
@@ -308,7 +308,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
         int nalu_header_size = 0;
         size_t param_set_count = 0;
         if (OSStatus status =
-                codec_type == VideoCodecType::H264
+                codec_type_ == VideoCodecType::H264
                     ? CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
                           description, 0, nullptr, nullptr, &param_set_count,
                           &nalu_header_size)
@@ -320,7 +320,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           return;
         }
         assert(nalu_header_size == NAL_SIZE);
-        if (codec_type == VideoCodecType::H264) {
+        if (codec_type_ == VideoCodecType::H264) {
           assert(param_set_count == 2);
         } else {
           assert(param_set_count == 3);
@@ -332,7 +332,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           size_t param_set_size = 0;
           const uint8_t* param_set = nullptr;
           if (OSStatus status =
-                  codec_type == VideoCodecType::H264
+                  codec_type_ == VideoCodecType::H264
                       ? CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
                             description, i, &param_set, &param_set_size,
                             nullptr, nullptr)
@@ -352,7 +352,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           size_t param_set_size = 0;
           const uint8_t* param_set = nullptr;
           if (OSStatus status =
-                  codec_type == VideoCodecType::H264
+                  codec_type_ == VideoCodecType::H264
                       ? CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
                             description, i, &param_set, &param_set_size,
                             nullptr, nullptr)
@@ -409,6 +409,8 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
     VideoToolboxVideoEncoder* encoder;
     std::chrono::microseconds timestamp;
   };
+
+  VideoCodecType codec_type_;
 
   VTCompressionSessionRef vtref_ = nullptr;
   std::function<void(const EncodedImage&)> on_encoded_;
