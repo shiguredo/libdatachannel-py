@@ -289,7 +289,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
 
     EncodedImage encoded;
     encoded.timestamp = timestamp;
-    // CMSampleBufferRef を encoded.buf に詰める
+    // CMSampleBufferRef を encoded.data に詰める
     {
       const char NAL_BYTES[4] = {0, 0, 0, 1};
       const size_t NAL_SIZE = sizeof(NAL_BYTES);
@@ -346,9 +346,8 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           header_size += NAL_SIZE + param_set_size;
         }
         // 実際にヘッダーをコピーする
-        encoded.buf.reset(new uint8_t[header_size + block_buffer_size]);
-        encoded.size = header_size + block_buffer_size;
-        dst = encoded.buf.get();
+        encoded.data = CreateBuffer(header_size + block_buffer_size);
+        dst = encoded.data.data();
         for (size_t i = 0; i < param_set_count; ++i) {
           size_t param_set_size = 0;
           const uint8_t* param_set = nullptr;
@@ -372,9 +371,8 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           dst += param_set_size;
         }
       } else {
-        encoded.buf.reset(new uint8_t[block_buffer_size]);
-        encoded.size = block_buffer_size;
-        dst = encoded.buf.get();
+        encoded.data.reset(new uint8_t[block_buffer_size]);
+        dst = encoded.data.data();
       }
 
       size_t buf_pos = 0;
