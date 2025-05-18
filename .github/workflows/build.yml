@@ -94,11 +94,11 @@ jobs:
           uv run python -m build
 
       - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.8.so.bz2
-          bunzip2 libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.8.so.bz2
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
 
       - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.8.so
+          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so
           uv run pytest tests/ -v
 
       - name: Upload Artifact
@@ -155,11 +155,11 @@ jobs:
           ARCHFLAGS: ${{ matrix.platform.archflags }}
 
       - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.dylib.bz2
-          bunzip2 libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.dylib.bz2
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
 
       - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.openh264_version }}-${{ matrix.openh264_arch }}.dylib
+          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib
           uv run pytest -v
 
       - name: Upload Artifact
