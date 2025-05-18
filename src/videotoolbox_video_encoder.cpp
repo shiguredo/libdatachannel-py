@@ -371,7 +371,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           dst += param_set_size;
         }
       } else {
-        encoded.data.reset(new uint8_t[block_buffer_size]);
+        encoded.data = CreateBuffer(block_buffer_size);
         dst = encoded.data.data();
       }
 
