@@ -55,6 +55,9 @@ nanobind_add_module(
   libdatachannel_ext
   NB_STATIC
   src/libdatachannel_ext.cpp
+  src/bind_libdatachannel.cpp
+  src/bind_video_codec.cpp
+  src/openh264_video_encoder.cpp
 )
 
 if (LIBDATACHANNEL_PY_GEN_PYI)
@@ -93,7 +96,15 @@ elseif(TARGET_OS STREQUAL "windows")
   )
 endif()
 
-target_link_libraries(libdatachannel_ext PRIVATE LibDataChannel::LibDataChannelStatic)
+target_include_directories(libdatachannel_ext
+  PRIVATE
+    ${OPENH264_DIR}/include
+)
+target_link_libraries(libdatachannel_ext
+  PRIVATE
+    LibDataChannel::LibDataChannelStatic
+    $<BUILD_INTERFACE:plog::plog>
+)
 target_link_libraries(nanobind-static PRIVATE LibDataChannel::LibDataChannelStatic)
 
 install(TARGETS libdatachannel_ext LIBRARY DESTINATION .)

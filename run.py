@@ -18,6 +18,7 @@ from buildbase import (
     git_clone_shallow,
     install_cmake,
     install_mbedtls,
+    install_openh264,
     mkdir_p,
     read_version_file,
 )
@@ -104,6 +105,16 @@ def install_deps(
     }
     install_mbedtls(**install_mbedtls_args)
 
+    # OpenH264
+    install_openh264_args = {
+        "version": version["OPENH264_VERSION"],
+        "version_file": os.path.join(install_dir, "openh264.version"),
+        "source_dir": source_dir,
+        "install_dir": install_dir,
+        "is_windows": platform.target.os == "windows",
+    }
+    install_openh264(**install_openh264_args)
+
 
 AVAILABLE_TARGETS = [
     "windows_x86_64",
@@ -184,6 +195,9 @@ def main():
         cmake_args.append("-DUSE_NICE=OFF")
         cmake_args.append("-DNO_TESTS=ON")
         cmake_args.append("-DNO_EXAMPLES=ON")
+
+        # OpenH264
+        cmake_args.append(f"-DOPENH264_DIR={cmake_path(os.path.join(install_dir, 'openh264'))}")
 
         if platform.target.os == "macos":
             sysroot = cmdcap(["xcrun", "--sdk", "macosx", "--show-sdk-path"])
