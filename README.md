@@ -22,6 +22,8 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 ## 特徴
 
 - [nanobind](https://github.com/wjakob/nanobind) を利用しています
+- [OpenH264](https://www.openh264.org/) を利用した H.264 ソフトウェアエンコード/デコードに対応しています
+- [Apple Video Toolbox](https://developer.apple.com/documentation/videotoolbox) を利用した H.264/H.265 ハードウェアエンコード/デコードに対応しています
 
 ## 優先実装
 
