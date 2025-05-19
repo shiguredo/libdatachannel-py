@@ -120,19 +120,19 @@ def test_openh264():
     frame.base_height = 480
     frame.timestamp = timedelta(microseconds=1234567)
 
-    on_encoded_called = False
+    on_encode_called = False
 
-    def on_encoded(encoded_image):
-        nonlocal on_encoded_called
+    def on_encode(encoded_image):
+        nonlocal on_encode_called
         assert encoded_image.data.size > 0
         assert encoded_image.timestamp == frame.timestamp
         assert encoded_image.rid == frame.rid
-        on_encoded_called = True
+        on_encode_called = True
 
-    encoder.set_on_encoded(on_encoded)
+    encoder.set_on_encode(on_encode)
     encoder.encode(frame)
     encoder.release()
-    assert on_encoded_called
+    assert on_encode_called
 
 
 @pytest.mark.skipif(
@@ -154,17 +154,17 @@ def test_videotoolbox():
     frame.base_height = 480
     frame.timestamp = timedelta(microseconds=1234567)
 
-    on_encoded_called = False
+    on_encode_called = False
 
-    def on_encoded(encoded_image):
-        nonlocal on_encoded_called
+    def on_encode(encoded_image):
+        nonlocal on_encode_called
         assert encoded_image.data.size > 0
         assert encoded_image.timestamp == frame.timestamp
         assert encoded_image.rid == frame.rid
-        on_encoded_called = True
+        on_encode_called = True
 
-    encoder.set_on_encoded(on_encoded)
+    encoder.set_on_encode(on_encode)
     encoder.encode(frame)
     time.sleep(1)
     encoder.release()
-    assert on_encoded_called
+    assert on_encode_called

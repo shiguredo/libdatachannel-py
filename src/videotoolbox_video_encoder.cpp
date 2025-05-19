@@ -148,9 +148,9 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
     return true;
   }
 
-  void SetOnEncoded(
-      std::function<void(const EncodedImage&)> on_encoded) override {
-    on_encoded_ = on_encoded;
+  void SetOnEncode(
+      std::function<void(const EncodedImage&)> on_encode) override {
+    on_encode_ = on_encode;
   }
 
   void Encode(const VideoFrame& frame) override {
@@ -408,7 +408,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
       }
     }
 
-    on_encoded_(encoded);
+    on_encode_(encoded);
   }
 
  private:
@@ -420,7 +420,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
   VideoCodecType codec_type_;
 
   VTCompressionSessionRef vtref_ = nullptr;
-  std::function<void(const EncodedImage&)> on_encoded_;
+  std::function<void(const EncodedImage&)> on_encode_;
 
   std::atomic<bool> next_iframe_;
 };

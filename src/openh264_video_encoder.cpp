@@ -177,7 +177,7 @@ class OpenH264VideoEncoder : public VideoEncoder {
 
   void ForceIntraNextFrame() override { next_iframe_ = true; }
 
-  void SetOnEncoded(
+  void SetOnEncode(
       std::function<void(const EncodedImage&)> on_encoded) override {
     on_encoded_ = on_encoded;
   }

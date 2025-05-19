@@ -109,8 +109,8 @@ class VideoEncoder {
   virtual void Release() = 0;
   virtual void Encode(const VideoFrame& frame) = 0;
   virtual void ForceIntraNextFrame() = 0;
-  virtual void SetOnEncoded(
-      std::function<void(const EncodedImage&)> on_encoded) = 0;
+  virtual void SetOnEncode(
+      std::function<void(const EncodedImage&)> on_encode) = 0;
 };
 
 #endif

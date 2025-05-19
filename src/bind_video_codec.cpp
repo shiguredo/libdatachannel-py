@@ -87,7 +87,7 @@ void bind_video_codec(nb::module_& m) {
       .def("release", &VideoEncoder::Release)
       .def("encode", &VideoEncoder::Encode)
       .def("force_intra_next_frame", &VideoEncoder::ForceIntraNextFrame)
-      .def("set_on_encoded", &VideoEncoder::SetOnEncoded);
+      .def("set_on_encode", &VideoEncoder::SetOnEncode);
 
   // VideoEncoder::Settings
   nb::class_<VideoEncoder::Settings>(encoder, "Settings")
