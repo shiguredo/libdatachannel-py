@@ -15,6 +15,9 @@ on:
     # 1-5 で 月曜日から金曜日
     - cron: "0 1 * * 1-5"
 
+env:
+  OPENH264_VERSION: "2.6.0"
+
 permissions:
   contents: write
 
@@ -55,12 +58,10 @@ jobs:
           - name: ubuntu-24.04_x86_64
             target: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
-            openh264_version: "2.6.0"
             openh264_arch: "linux64"
           - name: ubuntu-24.04_armv8
             target: ubuntu-24.04_armv8
             runs_on: ubuntu-24.04-arm
-            openh264_version: "2.6.0"
             openh264_arch: "linux-arm64"
         python_version:
           # - "3.11"
@@ -94,11 +95,11 @@ jobs:
           uv run python -m build
 
       - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
-          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
 
       - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so
+          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so
           uv run pytest tests/ -v
 
       - name: Upload Artifact
@@ -115,12 +116,10 @@ jobs:
           - name: ubuntu-24.04_x86_64
             target: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
-            openh264_version: "2.6.0"
             openh264_arch: "linux64"
           - name: ubuntu-24.04_armv8
             target: ubuntu-24.04_armv8
             runs_on: ubuntu-24.04-arm
-            openh264_version: "2.6.0"
             openh264_arch: "linux-arm64"
         python_version:
           # - "3.11"
@@ -156,11 +155,11 @@ jobs:
           BUILD_PROFILE: debug
 
       - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
-          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
 
       - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.8.so
+          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so
           uv run pytest tests/ -v
 
       - name: Upload Artifact
@@ -180,7 +179,6 @@ jobs:
             os: macos
             python_host_platform: "macosx-15.0-arm64"
             archflags: "-arch arm64"
-            openh264_version: "2.6.0"
             openh264_arch: "mac-arm64"
           # - name: macos-14_arm64
           #   target: macos_arm64
@@ -217,11 +215,11 @@ jobs:
           ARCHFLAGS: ${{ matrix.platform.archflags }}
 
       - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
-          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
 
       - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib
+          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib
           export ENABLE_VIDEOTOOLBOX=1
           uv run pytest -v
 
@@ -242,7 +240,6 @@ jobs:
             os: macos
             python_host_platform: "macosx-15.0-arm64"
             archflags: "-arch arm64"
-            openh264_version: "2.6.0"
             openh264_arch: "mac-arm64"
           # - name: macos-14_arm64
           #   target: macos_arm64
@@ -280,11 +277,11 @@ jobs:
           ARCHFLAGS: ${{ matrix.platform.archflags }}
 
       - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
-          bunzip2 libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
 
       - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ matrix.platform.openh264_version }}-${{ matrix.platform.openh264_arch }}.dylib
+          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib
           export ENABLE_VIDEOTOOLBOX=1
           uv run pytest -v
 
@@ -421,25 +418,41 @@ jobs:
           platform: "ubuntu-24.04_armv8"
           python_version: "3.13"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "macos-15_arm64", "python_version": "3.11" }
+      #   with:
+      #     platform: "macos-15_arm64"
+      #     python_version: "3.11"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "macos-15_arm64", "python_version": "3.12" }
+      #   with:
+      #     platform: "macos-15_arm64"
+      #     python_version: "3.12"
       - uses: ./.github/actions/download
         with:
           platform: "macos-15_arm64"
           python_version: "3.13"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "macos-14_arm64", "python_version": "3.11" }
+      #   with:
+      #     platform: "macos-14_arm64"
+      #     python_version: "3.11"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "macos-14_arm64", "python_version": "3.12" }
+      #   with:
+      #     platform: "macos-14_arm64"
+      #     python_version: "3.12"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "macos-14_arm64", "python_version": "3.13" }
+      #   with:
+      #     platform: "macos-14_arm64"
+      #     python_version: "3.13"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "windows-2025", "python_version": "3.11" }
+      #   with:
+      #     platform: "windows-2025"
+      #     python_version: "3.11"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "windows-2025", "python_version": "3.12" }
+      #   with:
+      #     platform: "windows-2025"
+      #     python_version: "3.12"
       # - uses: ./.github/actions/download
-      #   with: { "platform": "windows-2025", "python_version": "3.13" }
+      #   with:
+      #     platform: "windows-2025"
+      #     python_version: "3.13"
 
       - name: Download Ubuntu x86_64 Debug Artifact
         uses: ./.github/actions/download
