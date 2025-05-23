@@ -23,12 +23,12 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "nanobind>=2.7.0",
-    "pytest>=8.3.5",
+    "nanobind>=2.7",
+    "pytest>=8",
     "setuptools>=80.4",
     "build>=1.2.2.post1",
     "wheel>=0.45.1",
-    "numpy>=2.2.5",
+    "numpy>=2.2",
 ]
 
 [tool.ruff]
