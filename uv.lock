@@ -56,7 +56,7 @@ dev = [
     { name = "nanobind", specifier = ">=2.7" },
     { name = "numpy", specifier = ">=2.2" },
     { name = "pytest", specifier = ">=8" },
-    { name = "setuptools", specifier = ">=80.4" },
+    { name = "setuptools", specifier = ">=80.8" },
     { name = "wheel", specifier = ">=0.45.1" },
 ]
 
