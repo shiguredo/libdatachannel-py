@@ -62,7 +62,7 @@ nanobind_add_module(
   libdatachannel_ext
   NB_STATIC
   src/audio_codec.cpp
-  src/bind_codecs.cpp
+  src/bind_codec.cpp
   src/bind_libdatachannel.cpp
   src/bind_libyuv.cpp
   src/libdatachannel_ext.cpp
@@ -80,6 +80,13 @@ if (LIBDATACHANNEL_PY_GEN_PYI)
     PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
     DEPENDS libdatachannel_ext
     MARKER_FILE py.typed
+  )
+  nanobind_add_stub(
+    libdatachannel_ext_codec_stub
+    MODULE libdatachannel_ext.codec
+    OUTPUT codec/__init__.pyi
+    PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
+    DEPENDS libdatachannel_ext
   )
   nanobind_add_stub(
     libdatachannel_ext_libyuv_stub

@@ -315,6 +315,13 @@ def main():
                     os.path.join(libdatachannelpy_src_dir, "libyuv", file),
                 )
 
+        for file in os.listdir(os.path.join(libdatachannelpy_build_target_dir, "codec")):
+            if file in ("__init__.pyi",):
+                shutil.copyfile(
+                    os.path.join(libdatachannelpy_build_target_dir, "codec", file),
+                    os.path.join(libdatachannelpy_src_dir, "codec", file),
+                )
+
 
 if __name__ == "__main__":
     main()

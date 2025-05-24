@@ -1,6 +1,6 @@
 import numpy as np
 
-from libdatachannel import VideoFrameBufferBGR888, VideoFrameBufferI420, VideoFrameBufferNV12
+from libdatachannel.codec import VideoFrameBufferBGR888, VideoFrameBufferI420, VideoFrameBufferNV12
 from libdatachannel.libyuv import (
     FilterMode,
     FourCC,

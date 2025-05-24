@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import numpy as np
 
-from libdatachannel import (
+from libdatachannel.codec import (
     AudioCodecType,
     AudioEncoder,
     AudioFrame,

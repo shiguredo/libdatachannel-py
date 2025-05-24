@@ -5,7 +5,7 @@ from datetime import timedelta
 import numpy as np
 import pytest
 
-from libdatachannel import (
+from libdatachannel.codec import (
     EncodedImage,
     ImageFormat,
     VideoCodecType,

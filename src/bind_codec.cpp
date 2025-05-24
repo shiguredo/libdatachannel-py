@@ -144,7 +144,7 @@ void bind_audio_codec(nb::module_& m) {
 
 }  // namespace
 
-void bind_codecs(nb::module_& m) {
+void bind_codec(nb::module_& m) {
   bind_video_codec(m);
   bind_audio_codec(m);
 }
