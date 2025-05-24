@@ -221,7 +221,7 @@ jobs:
       - run: |
           export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib
           export ENABLE_VIDEOTOOLBOX=1
-          uv run pytest -v
+          uv run pytest tests/ -v
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -283,7 +283,7 @@ jobs:
       - run: |
           export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib
           export ENABLE_VIDEOTOOLBOX=1
-          uv run pytest -v
+          uv run pytest tests/ -v
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
