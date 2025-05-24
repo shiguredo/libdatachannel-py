@@ -378,7 +378,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           dst += param_set_size;
         }
       } else {
-        encoded.data = CreateBuffer(block_buffer_size);
+        encoded.data = CreateVideoBuffer(block_buffer_size);
         dst = encoded.data.data();
       }
 
