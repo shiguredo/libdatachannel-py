@@ -12,7 +12,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 
-using buffer_type = nanobind::
+using video_buffer_type = nanobind::
     ndarray<nanobind::numpy, uint8_t, nanobind::shape<-1>, nanobind::c_contig>;
 
 using image_type = nanobind::ndarray<nanobind::numpy,
@@ -25,8 +25,8 @@ using image_type_n = nanobind::ndarray<nanobind::numpy,
                                        nanobind::shape<-1, -1, N>,
                                        nanobind::c_contig>;
 
-buffer_type CreateBuffer(int size);
-image_type CreateImage(int width, int height, int stride);
+video_buffer_type CreateVideoBuffer(int size);
+image_type CreateVideoImage(int width, int height, int stride);
 
 enum class VideoCodecType {
   H264,
@@ -89,7 +89,7 @@ struct VideoFrame {
 };
 
 struct EncodedImage {
-  buffer_type data;
+  video_buffer_type data;
   std::chrono::microseconds timestamp;
   std::optional<std::string> rid;
 };

@@ -13,12 +13,16 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/trampoline.h>
 
+#include "audio_codec.h"
 #include "openh264_video_encoder.h"
+#include "opus_audio_encoder.h"
 #include "video_codec.h"
 #include "videotoolbox_video_encoder.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
+
+namespace {
 
 void bind_video_codec(nb::module_& m) {
   nb::enum_<VideoCodecType>(m, "VideoCodecType")
@@ -100,4 +104,47 @@ void bind_video_codec(nb::module_& m) {
   m.def("create_openh264_video_encoder", &CreateOpenH264VideoEncoder,
         "openh264"_a);
   m.def("create_videotoolbox_video_encoder", &CreateVideoToolboxVideoEncoder);
+}
+
+void bind_audio_codec(nb::module_& m) {
+  nb::enum_<AudioCodecType>(m, "AudioCodecType")
+      .value("OPUS", AudioCodecType::OPUS);
+
+  nb::class_<AudioFrame>(m, "AudioFrame")
+      .def(nb::init<>())
+      .def_rw("sample_rate", &AudioFrame::sample_rate)
+      .def_rw("pcm", &AudioFrame::pcm, nb::rv_policy::reference)
+      .def_rw("timestamp", &AudioFrame::timestamp)
+      .def("channels", &AudioFrame::channels)
+      .def("samples", &AudioFrame::samples);
+
+  nb::class_<EncodedAudio>(m, "EncodedAudio")
+      .def(nb::init<>())
+      .def_rw("data", &EncodedAudio::data, nb::rv_policy::reference)
+      .def_rw("timestamp", &EncodedAudio::timestamp);
+
+  // AudioEncoder
+  nb::class_<AudioEncoder> encoder(m, "AudioEncoder");
+  encoder.def("init", &AudioEncoder::Init)
+      .def("release", &AudioEncoder::Release)
+      .def("encode", &AudioEncoder::Encode)
+      .def("set_on_encode", &AudioEncoder::SetOnEncode);
+
+  // AudioEncoder::Settings
+  nb::class_<AudioEncoder::Settings>(encoder, "Settings")
+      .def(nb::init<>())
+      .def_rw("codec_type", &AudioEncoder::Settings::codec_type)
+      .def_rw("sample_rate", &AudioEncoder::Settings::sample_rate)
+      .def_rw("channels", &AudioEncoder::Settings::channels)
+      .def_rw("bitrate", &AudioEncoder::Settings::bitrate)
+      .def_rw("frame_duration_ms", &AudioEncoder::Settings::frame_duration_ms);
+
+  m.def("create_opus_audio_encoder", &CreateOpusAudioEncoder);
+}
+
+}  // namespace
+
+void bind_codecs(nb::module_& m) {
+  bind_video_codec(m);
+  bind_audio_codec(m);
 }

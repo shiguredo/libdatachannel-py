@@ -19,6 +19,7 @@ from buildbase import (
     install_cmake,
     install_mbedtls,
     install_openh264,
+    install_opus,
     mkdir_p,
     read_version_file,
 )
@@ -115,6 +116,18 @@ def install_deps(
     }
     install_openh264(**install_openh264_args)
 
+    # Opus
+    install_opus_args = {
+        "version": version["OPUS_VERSION"],
+        "version_file": os.path.join(install_dir, "opus.version"),
+        "source_dir": source_dir,
+        "build_dir": build_dir,
+        "install_dir": install_dir,
+        "configuration": "Debug" if debug else "Release",
+        "cmake_args": macos_cmake_args + ["-DCMAKE_POSITION_INDEPENDENT_CODE=ON"],
+    }
+    install_opus(**install_opus_args)
+
 
 AVAILABLE_TARGETS = [
     "windows_x86_64",
@@ -198,6 +211,9 @@ def main():
 
         # OpenH264
         cmake_args.append(f"-DOPENH264_DIR={cmake_path(os.path.join(install_dir, 'openh264'))}")
+
+        # Opus
+        cmake_args.append(f"-DOPUS_DIR={cmake_path(os.path.join(install_dir, 'opus'))}")
 
         if platform.target.os == "macos":
             sysroot = cmdcap(["xcrun", "--sdk", "macosx", "--show-sdk-path"])

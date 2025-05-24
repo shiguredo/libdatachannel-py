@@ -353,7 +353,7 @@ class VideoToolboxVideoEncoder : public VideoEncoder {
           header_size += NAL_SIZE + param_set_size;
         }
         // 実際にヘッダーをコピーする
-        encoded.data = CreateBuffer(header_size + block_buffer_size);
+        encoded.data = CreateVideoBuffer(header_size + block_buffer_size);
         dst = encoded.data.data();
         for (size_t i = 0; i < param_set_count; ++i) {
           size_t param_set_size = 0;

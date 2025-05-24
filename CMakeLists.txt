@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.23)
 
-project(libdatachannel-py)
-
 # Only interpret if() arguments as variables or keywords when unquoted.
 cmake_policy(SET CMP0054 NEW)
 # MSVC runtime library flags are selected by an abstraction.
 cmake_policy(SET CMP0091 NEW)
+
+project(libdatachannel-py)
+
+list(APPEND CMAKE_PREFIX_PATH ${OPUS_DIR}/lib/cmake)
 
 if (NOT CMAKE_CROSSCOMPILING)
   set(Python_VERSION "${PYTHON_VERSION_STRING}")
@@ -47,6 +49,7 @@ set(TARGET_OS "" CACHE STRING "ビルド対象の動作する OS。\n有効な�
 set(LIBDATACHANNEL_DIR "" CACHE PATH "libdatachannel のルートディレクトリ")
 
 find_package(nanobind CONFIG REQUIRED)
+find_package(Opus REQUIRED)
 
 add_subdirectory(${LIBDATACHANNEL_DIR} libdatachannel EXCLUDE_FROM_ALL)
 add_subdirectory(${LIBDATACHANNEL_DIR}/deps/json json EXCLUDE_FROM_ALL)
@@ -54,10 +57,12 @@ add_subdirectory(${LIBDATACHANNEL_DIR}/deps/json json EXCLUDE_FROM_ALL)
 nanobind_add_module(
   libdatachannel_ext
   NB_STATIC
-  src/libdatachannel_ext.cpp
+  src/audio_codec.cpp
+  src/bind_codecs.cpp
   src/bind_libdatachannel.cpp
-  src/bind_video_codec.cpp
+  src/libdatachannel_ext.cpp
   src/openh264_video_encoder.cpp
+  src/opus_audio_encoder.cpp
   src/video_codec.cpp
   src/videotoolbox_video_encoder.cpp
 )
@@ -112,6 +117,7 @@ target_include_directories(libdatachannel_ext
 target_link_libraries(libdatachannel_ext
   PRIVATE
     LibDataChannel::LibDataChannelStatic
+    Opus::opus
     $<BUILD_INTERFACE:plog::plog>
 )
 target_link_libraries(nanobind-static PRIVATE LibDataChannel::LibDataChannelStatic)

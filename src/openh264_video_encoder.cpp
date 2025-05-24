@@ -159,7 +159,7 @@ class OpenH264VideoEncoder : public VideoEncoder {
         size += layer.pNalLengthInByte[j];
       }
     }
-    encoded.data = CreateBuffer(size);
+    encoded.data = CreateVideoBuffer(size);
     int offset = 0;
     for (int i = 0; i < info.iLayerNum; ++i) {
       const SLayerBSInfo& layer = info.sLayerInfo[i];

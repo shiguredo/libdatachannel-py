@@ -1,10 +1,10 @@
 #include "video_codec.h"
 
-buffer_type CreateBuffer(int size) {
+video_buffer_type CreateVideoBuffer(int size) {
   auto ptr = new uint8_t[size]();
   nanobind::capsule owner(
       ptr, [](void* ptr) noexcept { delete[] static_cast<uint8_t*>(ptr); });
-  return buffer_type(ptr, {(size_t)size}, owner, {(int64_t)1});
+  return video_buffer_type(ptr, {(size_t)size}, owner, {(int64_t)1});
 }
 
 image_type CreateImage(int width, int height, int stride) {
