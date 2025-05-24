@@ -17,6 +17,8 @@ from buildbase import (
     get_windows_osver,
     git_clone_shallow,
     install_cmake,
+    install_libjpeg_turbo,
+    install_libyuv,
     install_mbedtls,
     install_openh264,
     install_opus,
@@ -124,9 +126,32 @@ def install_deps(
         "build_dir": build_dir,
         "install_dir": install_dir,
         "configuration": "Debug" if debug else "Release",
-        "cmake_args": macos_cmake_args + ["-DCMAKE_POSITION_INDEPENDENT_CODE=ON"],
+        "cmake_args": macos_cmake_args,
     }
     install_opus(**install_opus_args)
+
+    # libjpeg-turbo
+    install_libjpeg_turbo_args = {
+        "version": version["LIBJPEG_TURBO_VERSION"],
+        "version_file": os.path.join(install_dir, "libjpeg-turbo.version"),
+        "source_dir": source_dir,
+        "build_dir": build_dir,
+        "install_dir": install_dir,
+        "cmake_args": macos_cmake_args,
+    }
+    install_libjpeg_turbo(**install_libjpeg_turbo_args)
+
+    # libyuv
+    install_libyuv_args = {
+        "version": version["LIBYUV_VERSION"],
+        "version_file": os.path.join(install_dir, "libyuv.version"),
+        "source_dir": source_dir,
+        "build_dir": build_dir,
+        "install_dir": install_dir,
+        "libjpeg_turbo_dir": os.path.join(install_dir, "libjpeg-turbo"),
+        "cmake_args": macos_cmake_args,
+    }
+    install_libyuv(**install_libyuv_args)
 
 
 AVAILABLE_TARGETS = [
@@ -215,6 +240,12 @@ def main():
         # Opus
         cmake_args.append(f"-DOPUS_DIR={cmake_path(os.path.join(install_dir, 'opus'))}")
 
+        # Libyuv
+        cmake_args.append(
+            f"-DLIBJPEG_TURBO_DIR={cmake_path(os.path.join(install_dir, 'libjpeg-turbo'))}"
+        )
+        cmake_args.append(f"-DLIBYUV_DIR={cmake_path(os.path.join(install_dir, 'libyuv'))}")
+
         if platform.target.os == "macos":
             sysroot = cmdcap(["xcrun", "--sdk", "macosx", "--show-sdk-path"])
             cmake_args += [
@@ -275,6 +306,13 @@ def main():
                 shutil.copyfile(
                     os.path.join(libdatachannelpy_build_target_dir, file),
                     os.path.join(libdatachannelpy_src_dir, file),
+                )
+
+        for file in os.listdir(os.path.join(libdatachannelpy_build_target_dir, "libyuv")):
+            if file in ("__init__.pyi",):
+                shutil.copyfile(
+                    os.path.join(libdatachannelpy_build_target_dir, "libyuv", file),
+                    os.path.join(libdatachannelpy_src_dir, "libyuv", file),
                 )
 
 

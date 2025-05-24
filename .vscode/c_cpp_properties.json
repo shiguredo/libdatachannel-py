@@ -1,6 +1,7 @@
 {
     "configurations": [
         {
+            "name": "ubuntu-24.04_x86_64",
             "includePath": [
                 "${workspaceFolder}/_source/ubuntu-24.04_x86_64/libdatachannel/include",
                 "${workspaceFolder}/_source/ubuntu-24.04_x86_64/libdatachannel/deps/json/include",

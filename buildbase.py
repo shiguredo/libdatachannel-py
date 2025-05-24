@@ -702,8 +702,8 @@ def build_and_install_boost(
 ):
     version_underscore = version.replace(".", "_")
     archive = download(
-        # 公式サイトに負荷をかけないための時雨堂による R2 ミラー
-        f"https://pub-31f2ce80536a4322af33196843feefc2.r2.dev/boost_{version_underscore}.tar.gz",
+        # 公式サイトに負荷をかけないための時雨堂によるミラー
+        f"https://oss-mirrors.shiguredo.jp/boost_{version_underscore}.tar.gz",
         # Boost 公式のミラー
         # f"https://archives.boost.io/release/{version}/source/boost_{version_underscore}.tar.gz",
         source_dir,
@@ -1748,6 +1748,7 @@ def install_opus(
                 "cmake",
                 f"-DCMAKE_INSTALL_PREFIX={cmake_path(opus_install_dir)}",
                 f"-DCMAKE_BUILD_TYPE={configuration}",
+                "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
                 "-DOPUS_BUILD_SHARED_LIBRARY=OFF",
                 "-DOPUS_BUILD_TESTING=OFF",
                 "-DOPUS_BUILD_PROGRAMS=OFF",
@@ -1839,6 +1840,84 @@ def install_mbedtls(version, source_dir, build_dir, install_dir, debug, cmake_ar
             ]
         )
         cmd(["cmake", "--install", os.path.join(build_dir, "mbedtls")])
+
+
+@versioned
+def install_libjpeg_turbo(version, source_dir, build_dir, install_dir, cmake_args):
+    libjpeg_source_dir = os.path.join(source_dir, "libjpeg-turbo")
+    libjpeg_build_dir = os.path.join(build_dir, "libjpeg-turbo")
+    libjpeg_install_dir = os.path.join(install_dir, "libjpeg-turbo")
+    rm_rf(libjpeg_source_dir)
+    rm_rf(libjpeg_build_dir)
+    rm_rf(libjpeg_install_dir)
+    git_clone_shallow(
+        "https://github.com/libjpeg-turbo/libjpeg-turbo.git",
+        version,
+        libjpeg_source_dir,
+    )
+    mkdir_p(libjpeg_build_dir)
+    with cd(libjpeg_build_dir):
+        cmd(
+            [
+                "cmake",
+                libjpeg_source_dir,
+                f"-DCMAKE_INSTALL_PREFIX={libjpeg_install_dir}",
+                "-DENABLE_SHARED=FALSE",
+                "-DENABLE_STATIC=TRUE",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            ]
+            + cmake_args
+        )
+        cmd(
+            [
+                "cmake",
+                "--build",
+                libjpeg_build_dir,
+                f"-j{multiprocessing.cpu_count()}",
+                "--config",
+                "Release",
+            ]
+        )
+        cmd(["cmake", "--install", libjpeg_build_dir])
+
+
+@versioned
+def install_libyuv(version, source_dir, build_dir, install_dir, libjpeg_turbo_dir, cmake_args):
+    libyuv_source_dir = os.path.join(source_dir, "libyuv")
+    libyuv_build_dir = os.path.join(build_dir, "libyuv")
+    libyuv_install_dir = os.path.join(install_dir, "libyuv")
+    rm_rf(libyuv_source_dir)
+    rm_rf(libyuv_build_dir)
+    rm_rf(libyuv_install_dir)
+    git_clone_shallow(
+        "https://chromium.googlesource.com/libyuv/libyuv",
+        version,
+        libyuv_source_dir,
+    )
+    mkdir_p(libyuv_build_dir)
+    with cd(libyuv_build_dir):
+        cmd(
+            [
+                "cmake",
+                libyuv_source_dir,
+                f"-DCMAKE_INSTALL_PREFIX={cmake_path(libyuv_install_dir)}",
+                "-DCMAKE_BUILD_TYPE=Release",
+                f"-DCMAKE_PREFIX_PATH={cmake_path(libjpeg_turbo_dir)}",
+                *cmake_args,
+            ]
+        )
+        cmd(
+            [
+                "cmake",
+                "--build",
+                libyuv_build_dir,
+                f"-j{multiprocessing.cpu_count()}",
+                "--config",
+                "Release",
+            ]
+        )
+        cmd(["cmake", "--install", libyuv_build_dir])
 
 
 class PlatformTarget(object):
