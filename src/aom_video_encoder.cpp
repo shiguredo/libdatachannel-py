@@ -18,24 +18,13 @@
 // text の定義を全て展開した上で文字列化する。
 // 単純に #text とした場合、全て展開する前に文字列化されてしまう
 #if defined(_WIN32)
-#define SORAC_STRINGIZE(text) SORAC_STRINGIZE_((text))
-#define SORAC_STRINGIZE_(x) SORAC_STRINGIZE_I x
+#define STRINGIZE(text) STRINGIZE_((text))
+#define STRINGIZE_(x) STRINGIZE_I x
 #else
-#define SORAC_STRINGIZE(x) SORAC_STRINGIZE_I(x)
+#define STRINGIZE(x) STRINGIZE_I(x)
 #endif
 
-#define SORAC_STRINGIZE_I(text) #text
-
-// a と b の定義を全て展開した上で結合する
-// 単純に a ## b とした場合、全て展開する前に結合されてしまう
-#define SORAC_CAT(a, b) SORAC_CAT_I(a, b)
-
-#if defined(_WIN32)
-#define SORAC_CAT_I(a, b) a##b
-#else
-#define SORAC_CAT_I(a, b) SORAC_CAT_II(a##b)
-#define SORAC_CAT_II(res) res
-#endif
+#define STRINGIZE_I(text) #text
 
 class AOMVideoEncoder : public VideoEncoder {
  public:
@@ -102,15 +91,15 @@ class AOMVideoEncoder : public VideoEncoder {
     }
     init_ctx_ = true;
 
-#define SET_PARAM(param_id, param_value)                       \
-  do {                                                         \
-    ret = aom_codec_control(&ctx_, param_id, param_value);     \
-    if (ret != AOM_CODEC_OK) {                                 \
-      PLOG_ERROR << "Failed to aom_codec_control: ret=" << ret \
-                 << ", param_id=" << SORAC_STRINGIZE(param_id) \
-                 << ", param_value=" << param_value;           \
-      return false;                                            \
-    }                                                          \
+#define SET_PARAM(param_id, param_value)                                    \
+  do {                                                                      \
+    ret = aom_codec_control(&ctx_, param_id, param_value);                  \
+    if (ret != AOM_CODEC_OK) {                                              \
+      PLOG_ERROR << "Failed to aom_codec_control: ret=" << ret              \
+                 << ", param_id="                                           \
+                 << STRINGIZE(param_id) << ", param_value=" << param_value; \
+      return false;                                                         \
+    }                                                                       \
   } while (0)
 
     // Set control parameters
