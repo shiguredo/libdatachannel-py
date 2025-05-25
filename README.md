@@ -23,6 +23,7 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 - [nanobind](https://github.com/wjakob/nanobind) を利用しています
 - [Opus](https://opus-codec.org/) を利用した Opus ソフトウェアエンコード/デコードに対応しています
+- [libaom](https://aomedia.googlesource.com/aom/) を利用した AV1 ソフトウェアエンコード/デコードに対応しています
 - [OpenH264](https://www.openh264.org/) を利用した H.264 ソフトウェアエンコード/デコードに対応しています
 - [Apple Video Toolbox](https://developer.apple.com/documentation/videotoolbox) を利用した H.264/H.265 ハードウェアエンコード/デコードに対応しています
 
