@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          sudo apt-get -y install libx11-dev
+          sudo apt-get -y install libx11-dev nasm
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
@@ -82,7 +82,7 @@ jobs:
       # libx11-dev は Ubuntu 24.04 の時に必要になる
       - run: |
           sudo apt-get update
-          sudo apt-get -y install libx11-dev
+          sudo apt-get -y install libx11-dev nasm
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
@@ -140,7 +140,7 @@ jobs:
       # libx11-dev は Ubuntu 24.04 の時に必要になる
       - run: |
           sudo apt-get update
-          sudo apt-get -y install libx11-dev
+          sudo apt-get -y install libx11-dev nasm
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
@@ -202,6 +202,8 @@ jobs:
       - run: |
           cp libdatachannel/py.typed src/libdatachannel/py.typed
           cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
+      - run: |
+          brew install nasm
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
@@ -263,6 +265,8 @@ jobs:
       - run: |
           cp libdatachannel/py.typed src/libdatachannel/py.typed
           cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
+      - run: |
+          brew install nasm
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
