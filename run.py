@@ -16,6 +16,7 @@ from buildbase import (
     get_macos_osver,
     get_windows_osver,
     git_clone_shallow,
+    install_aom,
     install_cmake,
     install_libjpeg_turbo,
     install_libyuv,
@@ -137,6 +138,7 @@ def install_deps(
         "source_dir": source_dir,
         "build_dir": build_dir,
         "install_dir": install_dir,
+        "configuration": "Debug" if debug else "Release",
         "cmake_args": macos_cmake_args,
     }
     install_libjpeg_turbo(**install_libjpeg_turbo_args)
@@ -149,9 +151,22 @@ def install_deps(
         "build_dir": build_dir,
         "install_dir": install_dir,
         "libjpeg_turbo_dir": os.path.join(install_dir, "libjpeg-turbo"),
+        "configuration": "Debug" if debug else "Release",
         "cmake_args": macos_cmake_args,
     }
     install_libyuv(**install_libyuv_args)
+
+    # AOM
+    install_aom_args = {
+        "version": version["AOM_VERSION"],
+        "version_file": os.path.join(install_dir, "aom.version"),
+        "source_dir": source_dir,
+        "build_dir": build_dir,
+        "install_dir": install_dir,
+        "configuration": "Debug" if debug else "Release",
+        "cmake_args": macos_cmake_args,
+    }
+    install_aom(**install_aom_args)
 
 
 AVAILABLE_TARGETS = [
@@ -245,6 +260,9 @@ def main():
             f"-DLIBJPEG_TURBO_DIR={cmake_path(os.path.join(install_dir, 'libjpeg-turbo'))}"
         )
         cmake_args.append(f"-DLIBYUV_DIR={cmake_path(os.path.join(install_dir, 'libyuv'))}")
+
+        # AOM
+        cmake_args.append(f"-DAOM_DIR={cmake_path(os.path.join(install_dir, 'aom'))}")
 
         if platform.target.os == "macos":
             sysroot = cmdcap(["xcrun", "--sdk", "macosx", "--show-sdk-path"])

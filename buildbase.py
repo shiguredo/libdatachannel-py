@@ -1843,7 +1843,7 @@ def install_mbedtls(version, source_dir, build_dir, install_dir, debug, cmake_ar
 
 
 @versioned
-def install_libjpeg_turbo(version, source_dir, build_dir, install_dir, cmake_args):
+def install_libjpeg_turbo(version, source_dir, build_dir, install_dir, configuration, cmake_args):
     libjpeg_source_dir = os.path.join(source_dir, "libjpeg-turbo")
     libjpeg_build_dir = os.path.join(build_dir, "libjpeg-turbo")
     libjpeg_install_dir = os.path.join(install_dir, "libjpeg-turbo")
@@ -1862,6 +1862,7 @@ def install_libjpeg_turbo(version, source_dir, build_dir, install_dir, cmake_arg
                 "cmake",
                 libjpeg_source_dir,
                 f"-DCMAKE_INSTALL_PREFIX={libjpeg_install_dir}",
+                f"-DCMAKE_BUILD_TYPE={configuration}",
                 "-DENABLE_SHARED=FALSE",
                 "-DENABLE_STATIC=TRUE",
                 "-DCMAKE_BUILD_TYPE=Release",
@@ -1883,7 +1884,9 @@ def install_libjpeg_turbo(version, source_dir, build_dir, install_dir, cmake_arg
 
 
 @versioned
-def install_libyuv(version, source_dir, build_dir, install_dir, libjpeg_turbo_dir, cmake_args):
+def install_libyuv(
+    version, source_dir, build_dir, install_dir, libjpeg_turbo_dir, configuration, cmake_args
+):
     libyuv_source_dir = os.path.join(source_dir, "libyuv")
     libyuv_build_dir = os.path.join(build_dir, "libyuv")
     libyuv_install_dir = os.path.join(install_dir, "libyuv")
@@ -1902,7 +1905,7 @@ def install_libyuv(version, source_dir, build_dir, install_dir, libjpeg_turbo_di
                 "cmake",
                 libyuv_source_dir,
                 f"-DCMAKE_INSTALL_PREFIX={cmake_path(libyuv_install_dir)}",
-                "-DCMAKE_BUILD_TYPE=Release",
+                f"-DCMAKE_BUILD_TYPE={configuration}",
                 f"-DCMAKE_PREFIX_PATH={cmake_path(libjpeg_turbo_dir)}",
                 *cmake_args,
             ]
@@ -1918,6 +1921,45 @@ def install_libyuv(version, source_dir, build_dir, install_dir, libjpeg_turbo_di
             ]
         )
         cmd(["cmake", "--install", libyuv_build_dir])
+
+
+@versioned
+def install_aom(version, source_dir, build_dir, install_dir, configuration, cmake_args):
+    aom_source_dir = os.path.join(source_dir, "aom")
+    aom_build_dir = os.path.join(build_dir, "aom")
+    aom_install_dir = os.path.join(install_dir, "aom")
+    rm_rf(aom_source_dir)
+    rm_rf(aom_build_dir)
+    rm_rf(aom_install_dir)
+    git_clone_shallow(
+        "https://aomedia.googlesource.com/aom",
+        version,
+        aom_source_dir,
+    )
+    with cd(aom_source_dir):
+        cmd(
+            [
+                "cmake",
+                "-B",
+                aom_build_dir,
+                f"-DCMAKE_INSTALL_PREFIX={cmake_path(aom_install_dir)}",
+                f"-DCMAKE_BUILD_TYPE={configuration}",
+                "-DENABLE_DOCS=OFF",
+                "-DENABLE_TESTS=OFF",
+                *cmake_args,
+            ]
+        )
+        cmd(
+            [
+                "cmake",
+                "--build",
+                aom_build_dir,
+                f"-j{multiprocessing.cpu_count()}",
+                "--config",
+                "Release",
+            ]
+        )
+        cmd(["cmake", "--install", aom_build_dir])
 
 
 class PlatformTarget(object):

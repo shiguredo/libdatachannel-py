@@ -13,6 +13,7 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/trampoline.h>
 
+#include "aom_video_encoder.h"
 #include "audio_codec.h"
 #include "openh264_video_encoder.h"
 #include "opus_audio_encoder.h"
@@ -75,6 +76,7 @@ void bind_video_codec(nb::module_& m) {
       .def_rw("rid", &VideoFrame::rid)
       .def_rw("base_width", &VideoFrame::base_width)
       .def_rw("base_height", &VideoFrame::base_height)
+      .def_rw("frame_number", &VideoFrame::frame_number)
       .def("width", &VideoFrame::width)
       .def("height", &VideoFrame::height);
 
@@ -99,11 +101,13 @@ void bind_video_codec(nb::module_& m) {
       .def_rw("codec_type", &VideoEncoder::Settings::codec_type)
       .def_rw("width", &VideoEncoder::Settings::width)
       .def_rw("height", &VideoEncoder::Settings::height)
-      .def_rw("bitrate", &VideoEncoder::Settings::bitrate);
+      .def_rw("bitrate", &VideoEncoder::Settings::bitrate)
+      .def_rw("fps", &VideoEncoder::Settings::fps);
 
   m.def("create_openh264_video_encoder", &CreateOpenH264VideoEncoder,
         "openh264"_a);
   m.def("create_videotoolbox_video_encoder", &CreateVideoToolboxVideoEncoder);
+  m.def("create_aom_video_encoder", &CreateAOMVideoEncoder);
 }
 
 void bind_audio_codec(nb::module_& m) {

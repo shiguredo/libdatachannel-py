@@ -76,14 +76,18 @@ struct VideoFrameBufferBGR888 {
 };
 
 struct VideoFrame {
-  ImageFormat format;
+  ImageFormat format = ImageFormat::I420;
   std::shared_ptr<VideoFrameBufferI420> i420_buffer;
   std::shared_ptr<VideoFrameBufferNV12> nv12_buffer;
   std::shared_ptr<VideoFrameBufferBGR888> bgr888_buffer;
   std::chrono::microseconds timestamp;
   std::optional<std::string> rid;
-  int base_width;
-  int base_height;
+  int base_width = 0;
+  int base_height = 0;
+  // サイマルキャストで DD を利用する時にフレーム番号を全体で同じにする必要があるため
+  // ここにフレーム番号を持たせる
+  int frame_number = 0;
+
   int width() const;
   int height() const;
 };
@@ -92,6 +96,7 @@ struct EncodedImage {
   video_buffer_type data;
   std::chrono::microseconds timestamp;
   std::optional<std::string> rid;
+  // std::shared_ptr<rtc::DependencyDescriptorContext> dependency_descriptor_context;
 };
 
 class VideoEncoder {
@@ -101,6 +106,7 @@ class VideoEncoder {
     int width;
     int height;
     size_t bitrate;
+    int fps = 30;
   };
 
   virtual ~VideoEncoder() = default;

@@ -14,6 +14,7 @@ from libdatachannel.codec import (
     VideoFrameBufferBGR888,
     VideoFrameBufferI420,
     VideoFrameBufferNV12,
+    create_aom_video_encoder,
     create_openh264_video_encoder,
     create_videotoolbox_video_encoder,
 )
@@ -166,5 +167,36 @@ def test_videotoolbox():
     encoder.set_on_encode(on_encode)
     encoder.encode(frame)
     time.sleep(1)
+    encoder.release()
+    assert on_encode_called
+
+
+def test_aom():
+    encoder = create_aom_video_encoder()
+    settings = VideoEncoder.Settings()
+    settings.codec_type = VideoCodecType.H264
+    settings.width = 640
+    settings.height = 480
+    settings.bitrate = 1000000
+    success = encoder.init(settings)
+    assert success
+    frame = VideoFrame()
+    frame.i420_buffer = VideoFrameBufferI420.create(640, 360)
+    frame.format = ImageFormat.I420
+    frame.base_width = 640
+    frame.base_height = 480
+    frame.timestamp = timedelta(microseconds=1234567)
+
+    on_encode_called = False
+
+    def on_encode(encoded_image):
+        nonlocal on_encode_called
+        assert encoded_image.data.size > 0
+        assert encoded_image.timestamp == frame.timestamp
+        assert encoded_image.rid == frame.rid
+        on_encode_called = True
+
+    encoder.set_on_encode(on_encode)
+    encoder.encode(frame)
     encoder.release()
     assert on_encode_called

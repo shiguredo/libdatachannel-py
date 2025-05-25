@@ -61,6 +61,7 @@ add_subdirectory(${LIBDATACHANNEL_DIR}/deps/json json EXCLUDE_FROM_ALL)
 nanobind_add_module(
   libdatachannel_ext
   NB_STATIC
+  src/aom_video_encoder.cpp
   src/audio_codec.cpp
   src/bind_codec.cpp
   src/bind_libdatachannel.cpp
@@ -150,6 +151,16 @@ target_link_libraries(libdatachannel_ext
   PRIVATE
     ${LIBYUV_DIR}/lib/libyuv.a
     libjpeg-turbo::turbojpeg-static
+)
+
+# AOM も同様
+target_include_directories(libdatachannel_ext
+  PRIVATE
+    ${AOM_DIR}/include
+)
+target_link_libraries(libdatachannel_ext
+  PRIVATE
+    ${AOM_DIR}/lib/libaom.a
 )
 
 install(TARGETS libdatachannel_ext LIBRARY DESTINATION .)
