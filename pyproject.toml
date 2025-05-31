@@ -31,6 +31,9 @@ dev = [
     "numpy>=2.2",
 ]
 
+[tool.uv.workspace]
+members = ["examples"]
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
