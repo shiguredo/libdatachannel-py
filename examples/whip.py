@@ -1,7 +1,7 @@
 import argparse
-import asyncio
 import logging
 import re
+import time
 from typing import List, Optional
 from urllib.parse import urljoin
 
@@ -167,7 +167,7 @@ class WHIPClient:
 
         return ice_servers
 
-    async def connect(self):
+    def connect(self):
         """Connect to WHIP server"""
         logger.info(f"Connecting to WHIP endpoint: {self.whip_url}")
 
@@ -206,14 +206,14 @@ class WHIPClient:
 
         # Send offer to WHIP server
         logger.info("Sending offer to WHIP server...")
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0) as client:
             headers = {
                 "Content-Type": "application/sdp",
             }
             if self.bearer_token:
                 headers["Authorization"] = f"Bearer {self.bearer_token}"
 
-            response = await client.post(
+            response = client.post(
                 self.whip_url,
                 content=str(local_sdp),
                 headers=headers,
@@ -334,7 +334,7 @@ class WHIPClient:
             except Exception as e:
                 logger.error(f"Error sending audio: {e}")
 
-    async def send_frames(self, duration: Optional[int] = None):
+    def send_frames(self, duration: Optional[int] = None):
         """Send test video and audio frames"""
         logger.info("Starting to send frames...")
 
@@ -344,11 +344,11 @@ class WHIPClient:
 
         # Wait for connection
         timeout = 10.0
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.time()
         while self.pc.state() != PeerConnection.State.Connected:
-            if asyncio.get_event_loop().time() - start_time > timeout:
+            if time.time() - start_time > timeout:
                 raise Exception("Connection timeout")
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
 
         logger.info("Connection established, sending frames")
 
@@ -356,36 +356,32 @@ class WHIPClient:
         video_interval = 1.0 / self.video_fps
         audio_interval = 0.02  # 20ms
 
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.time()
         next_video_time = start_time
         next_audio_time = start_time
 
-        try:
-            while True:
-                current_time = asyncio.get_event_loop().time()
+        while True:
+            current_time = time.time()
 
-                # Check duration
-                if duration and current_time - start_time >= duration:
-                    break
+            # Check duration
+            if duration and current_time - start_time >= duration:
+                break
 
-                # Send video frame
-                if current_time >= next_video_time:
-                    self._send_video_frame()
-                    next_video_time += video_interval
+            # Send video frame
+            if current_time >= next_video_time:
+                self._send_video_frame()
+                next_video_time += video_interval
 
-                # Send audio frame
-                if current_time >= next_audio_time:
-                    self._send_audio_frame()
-                    next_audio_time += audio_interval
+            # Send audio frame
+            if current_time >= next_audio_time:
+                self._send_audio_frame()
+                next_audio_time += audio_interval
 
-                # Sleep until next frame
-                next_time = min(next_video_time, next_audio_time)
-                sleep_time = max(0, next_time - asyncio.get_event_loop().time())
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-        except asyncio.CancelledError:
-            logger.info("Frame sending cancelled")
-            raise
+            # Sleep until next frame
+            next_time = min(next_video_time, next_audio_time)
+            sleep_time = max(0, next_time - time.time())
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     def _send_video_frame(self):
         """Send a black video frame"""
@@ -442,7 +438,7 @@ class WHIPClient:
         self.audio_encoder.encode(frame)
         self.audio_timestamp_ms += 20
 
-    async def disconnect(self):
+    def disconnect(self):
         """Disconnect from WHIP server with graceful shutdown"""
         logger.info("Starting graceful shutdown...")
 
@@ -450,12 +446,12 @@ class WHIPClient:
         if self.session_url:
             logger.info("Sending DELETE request to WHIP server...")
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                with httpx.Client(timeout=5.0) as client:
                     headers = {}
                     if self.bearer_token:
                         headers["Authorization"] = f"Bearer {self.bearer_token}"
 
-                    response = await client.delete(self.session_url, headers=headers)
+                    response = client.delete(self.session_url, headers=headers)
                     if response.status_code in [200, 204]:
                         logger.info("WHIP session terminated successfully")
                     else:
@@ -469,7 +465,7 @@ class WHIPClient:
 
         # Wait a bit for graceful shutdown
         logger.info("Waiting for graceful shutdown...")
-        await asyncio.sleep(0.5)
+        time.sleep(0.5)
 
         # Clean up resources in proper order
         logger.info("Cleaning up resources...")
@@ -519,7 +515,7 @@ class WHIPClient:
         self._cleaned_up = True
 
 
-async def main():
+def main():
     parser = argparse.ArgumentParser(description="Minimal WHIP client")
     parser.add_argument("--url", required=True, help="WHIP endpoint URL")
     parser.add_argument("--token", help="Bearer token for authentication")
@@ -529,35 +525,11 @@ async def main():
 
     client = WHIPClient(args.url, args.token)
 
-    # Flag to track if we're shutting down
-    shutting_down = False
-
-    # Set up signal handler for graceful shutdown
-    loop = asyncio.get_event_loop()
-    send_task = None
-
-    def signal_handler(sig):
-        nonlocal shutting_down
-        if not shutting_down:
-            shutting_down = True
-            logger.info(f"Received signal {sig.name}, initiating graceful shutdown...")
-            if send_task and not send_task.done():
-                send_task.cancel()
-
-    # Register signal handlers
-    import signal
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
-
     try:
-        await client.connect()
-        send_task = asyncio.create_task(client.send_frames(args.duration))
-        await send_task
+        client.connect()
+        client.send_frames(args.duration)
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
-    except asyncio.CancelledError:
-        logger.info("Task cancelled")
     except Exception as e:
         logger.error(f"Error: {e}")
         import traceback
@@ -567,14 +539,10 @@ async def main():
         # Always disconnect gracefully
         logger.info("Ensuring disconnect is called...")
         try:
-            await client.disconnect()
+            client.disconnect()
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
 
-        # Remove signal handlers
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
-
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
