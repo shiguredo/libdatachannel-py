@@ -1,12 +1,16 @@
 import argparse
 import logging
+import queue
 import re
+import threading
 import time
 from typing import List, Optional
 from urllib.parse import urljoin
 
+import cv2
 import httpx
 import numpy as np
+import sounddevice as sd
 
 from libdatachannel import (
     AV1RtpPacketizer,
@@ -32,6 +36,12 @@ from libdatachannel.codec import (
     VideoFrameBufferI420,
     create_aom_video_encoder,
     create_opus_audio_encoder,
+)
+from libdatachannel.libyuv import (
+    FourCC,
+    RotationMode,
+    convert_to_i420,
+    rgb24_to_i420,
 )
 
 logging.basicConfig(
@@ -79,6 +89,14 @@ class WHIPClient:
         # Key frame interval settings
         self.key_frame_interval_seconds = 2.0
         self.last_key_frame_time = None
+
+        # Camera and audio capture
+        self.camera = None
+        self.camera_thread = None
+        self.audio_thread = None
+        self.audio_queue = queue.Queue(maxsize=100)
+        self.video_queue = queue.Queue(maxsize=30)
+        self.capture_active = False
 
     def _parse_link_header(self, link_header: str) -> List[IceServer]:
         """Parse Link header for ICE servers"""
@@ -315,8 +333,85 @@ class WHIPClient:
 
         self.audio_encoder.set_on_encode(on_encoded)
 
-    def send_frames(self, duration: Optional[int] = None):
-        """Send test video and audio frames"""
+    def _capture_camera(self):
+        """Capture video from camera"""
+        logger.info("Starting camera capture...")
+        
+        # Open camera (0 for default camera)
+        self.camera = cv2.VideoCapture(0)
+        if not self.camera.isOpened():
+            logger.error("Failed to open camera")
+            return
+            
+        # Set camera properties
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.video_width)
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.video_height)
+        self.camera.set(cv2.CAP_PROP_FPS, self.video_fps)
+        
+        # Get actual camera properties
+        actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
+        logger.info(f"Camera opened: {actual_width}x{actual_height} @ {actual_fps} fps")
+        
+        while self.capture_active:
+            ret, frame = self.camera.read()
+            if ret:
+                try:
+                    self.video_queue.put_nowait(frame)
+                except queue.Full:
+                    # Drop frame if queue is full
+                    pass
+            else:
+                logger.error("Failed to read frame from camera")
+                time.sleep(0.1)
+        
+        self.camera.release()
+        logger.info("Camera capture stopped")
+
+    def _capture_audio(self):
+        """Capture audio from microphone"""
+        logger.info("Starting audio capture...")
+        
+        # Audio callback
+        def audio_callback(indata, frames, time_info, status):
+            if status:
+                logger.warning(f"Audio callback status: {status}")
+            
+            # Convert to mono if needed
+            if indata.shape[1] > 1:
+                audio_data = np.mean(indata, axis=1)
+            else:
+                audio_data = indata[:, 0]
+            
+            # Convert to stereo for Opus encoder
+            stereo_data = np.column_stack((audio_data, audio_data))
+            
+            try:
+                self.audio_queue.put_nowait(stereo_data.astype(np.float32))
+            except queue.Full:
+                # Drop audio if queue is full
+                pass
+        
+        # Start audio stream
+        try:
+            with sd.InputStream(
+                samplerate=self.audio_sample_rate,
+                channels=1,  # Capture mono
+                callback=audio_callback,
+                blocksize=int(self.audio_sample_rate * 0.02),  # 20ms blocks
+                dtype='float32'
+            ):
+                logger.info(f"Audio capture started at {self.audio_sample_rate} Hz")
+                while self.capture_active:
+                    time.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Audio capture error: {e}")
+        
+        logger.info("Audio capture stopped")
+
+    def send_frames(self, duration: Optional[int] = None, use_camera: bool = False, use_mic: bool = False):
+        """Send video and audio frames from camera/mic or dummy data"""
         if not self.pc:
             raise RuntimeError("PeerConnection not initialized. Call connect() first.")
 
@@ -328,7 +423,24 @@ class WHIPClient:
                 raise Exception("Connection timeout")
             time.sleep(0.1)
 
-        logger.info("Connection established, sending frames")
+        logger.info("Connection established")
+
+        # Start capture threads if needed
+        if use_camera or use_mic:
+            self.capture_active = True
+            
+            if use_camera:
+                self.camera_thread = threading.Thread(target=self._capture_camera)
+                self.camera_thread.start()
+                logger.info("Started camera capture thread")
+            
+            if use_mic:
+                self.audio_thread = threading.Thread(target=self._capture_audio)
+                self.audio_thread.start()
+                logger.info("Started audio capture thread")
+            
+            # Give capture threads time to start
+            time.sleep(1.0)
 
         # Frame intervals
         video_interval = 1.0 / self.video_fps
@@ -338,31 +450,147 @@ class WHIPClient:
         next_video_time = start_time
         next_audio_time = start_time
 
-        while True:
-            current_time = time.time()
+        try:
+            while True:
+                current_time = time.time()
 
-            # Check duration
-            if duration and current_time - start_time >= duration:
-                break
+                # Check duration
+                if duration and current_time - start_time >= duration:
+                    break
 
-            # Send video frame
-            if current_time >= next_video_time:
-                self._send_video_frame()
-                next_video_time += video_interval
+                # Send video frame
+                if current_time >= next_video_time:
+                    if use_camera:
+                        self._send_video_frame()
+                    else:
+                        self._send_dummy_video_frame()
+                    next_video_time += video_interval
 
-            # Send audio frame
-            if current_time >= next_audio_time:
-                self._send_audio_frame()
-                next_audio_time += audio_interval
+                # Send audio frame
+                if current_time >= next_audio_time:
+                    if use_mic:
+                        self._send_audio_frame()
+                    else:
+                        self._send_dummy_audio_frame()
+                    next_audio_time += audio_interval
 
-            # Sleep until next frame
-            next_time = min(next_video_time, next_audio_time)
-            sleep_time = max(0, next_time - time.time())
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                # Sleep until next frame
+                next_time = min(next_video_time, next_audio_time)
+                sleep_time = max(0, next_time - time.time())
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+        finally:
+            if use_camera or use_mic:
+                # Stop capture threads
+                self.capture_active = False
+                if use_camera and self.camera_thread:
+                    self.camera_thread.join(timeout=2.0)
+                if use_mic and self.audio_thread:
+                    self.audio_thread.join(timeout=2.0)
+                logger.info("Stopped capture threads")
 
     def _send_video_frame(self):
-        """Send a black video frame"""
+        """Send a video frame from camera"""
+        if not self.video_encoder:
+            return
+
+        try:
+            # Get frame from queue (non-blocking)
+            bgr_frame = self.video_queue.get_nowait()
+        except queue.Empty:
+            # No frame available, skip this iteration
+            return
+
+        # Keep OpenCV's BGR format and pass it directly
+        # rgb24_to_i420 might actually expect BGR despite its name
+        frame = bgr_frame
+        
+        # Ensure frame is the expected size
+        if frame.shape[:2] != (self.video_height, self.video_width):
+            frame = cv2.resize(frame, (self.video_width, self.video_height))
+        
+        # Ensure the frame is contiguous in memory
+        frame = np.ascontiguousarray(frame)
+        
+        # Create I420 buffer
+        buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
+        
+        # Convert BGR to I420 using libyuv (despite the name rgb24_to_i420)
+        rgb24_to_i420(
+            frame,
+            self.video_width * 3,  # RGB stride
+            buffer.y,
+            buffer.u,
+            buffer.v,
+            buffer.stride_y(),
+            buffer.stride_u(),
+            buffer.stride_v(),
+            self.video_width,
+            self.video_height
+        )
+        
+        # Create video frame
+        frame = VideoFrame()
+        frame.format = ImageFormat.I420
+        frame.i420_buffer = buffer
+        frame.timestamp = self.video_frame_number / self.video_fps
+        frame.frame_number = self.video_frame_number
+
+        # Encode frame
+        try:
+            self.video_encoder.encode(frame)
+        except Exception as e:
+            logger.error(f"Error encoding frame: {e}")
+
+        self.video_frame_number += 1
+
+        # Check if it's time to request a key frame (AFTER encoding the frame)
+        current_time = time.time()
+
+        # Initialize last_key_frame_time if this is the first frame
+        if self.last_key_frame_time is None:
+            self.last_key_frame_time = current_time
+        time_since_last_key = current_time - self.last_key_frame_time
+
+        # Request key frame every 2 seconds
+        if time_since_last_key >= self.key_frame_interval_seconds:
+            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
+            try:
+                # Force the encoder to generate a key frame (intra frame)
+                self.video_encoder.force_intra_next_frame()
+            except Exception as e:
+                logger.error(f"Error requesting keyframe: {e}")
+            self.last_key_frame_time = current_time
+
+        # Debug log every 30 frames (1 second)
+        if self.video_frame_number % 30 == 0:
+            logger.info(f"Frame {self.video_frame_number}: total frames sent")
+
+    def _send_audio_frame(self):
+        """Send an audio frame from microphone"""
+        if not self.audio_encoder:
+            return
+
+        try:
+            # Get audio data from queue (non-blocking)
+            audio_data = self.audio_queue.get_nowait()
+        except queue.Empty:
+            # No audio available, send silence
+            samples = int(self.audio_sample_rate * 0.02)  # 960 samples
+            audio_data = np.zeros((samples, self.audio_channels), dtype=np.float32)
+
+        # Create audio frame
+        frame = AudioFrame()
+        frame.sample_rate = self.audio_sample_rate
+        frame.pcm = audio_data
+        frame.timestamp = self.audio_timestamp_ms / 1000.0
+
+        # Encode frame
+        self.audio_encoder.encode(frame)
+        self.audio_timestamp_ms += 20
+
+    def _send_dummy_video_frame(self):
+        """Send a black dummy video frame"""
         if not self.video_encoder:
             return
 
@@ -400,30 +628,22 @@ class WHIPClient:
 
         self.video_frame_number += 1
 
-        # Check if it's time to request a key frame (AFTER encoding the frame)
+        # Check if it's time to request a key frame
         current_time = time.time()
-
-        # Initialize last_key_frame_time if this is the first frame
         if self.last_key_frame_time is None:
             self.last_key_frame_time = current_time
         time_since_last_key = current_time - self.last_key_frame_time
 
-        # Request key frame every 2 seconds
         if time_since_last_key >= self.key_frame_interval_seconds:
             logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
             try:
-                # Force the encoder to generate a key frame (intra frame)
                 self.video_encoder.force_intra_next_frame()
             except Exception as e:
                 logger.error(f"Error requesting keyframe: {e}")
             self.last_key_frame_time = current_time
 
-        # Debug log every 30 frames (1 second)
-        if self.video_frame_number % 30 == 0:
-            logger.info(f"Frame {self.video_frame_number}: total frames sent")
-
-    def _send_audio_frame(self):
-        """Send a silent audio frame"""
+    def _send_dummy_audio_frame(self):
+        """Send a silent dummy audio frame"""
         if not self.audio_encoder:
             return
 
@@ -471,6 +691,14 @@ class WHIPClient:
         logger.info("Waiting for graceful shutdown...")
         time.sleep(0.5)
 
+        # Stop capture if active
+        self.capture_active = False
+        
+        # Release camera if open
+        if self.camera and self.camera.isOpened():
+            self.camera.release()
+            logger.info("Camera released")
+        
         # Clean up resources in proper order
         logger.info("Cleaning up resources...")
 
@@ -516,18 +744,31 @@ class WHIPClient:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Minimal WHIP client")
+    parser = argparse.ArgumentParser(description="WHIP client with camera/microphone support")
     parser.add_argument("--url", required=True, help="WHIP endpoint URL")
     parser.add_argument("--token", help="Bearer token for authentication")
     parser.add_argument("--duration", type=int, help="Duration in seconds")
+    parser.add_argument("--camera", action="store_true", help="Use camera for video capture")
+    parser.add_argument("--mic", action="store_true", help="Use microphone for audio capture")
 
     args = parser.parse_args()
+
+    # Log what sources are being used
+    video_source = "camera" if args.camera else "dummy (black video)"
+    audio_source = "microphone" if args.mic else "dummy (silence)"
+    logger.info(f"Video source: {video_source}")
+    logger.info(f"Audio source: {audio_source}")
+    
+    if args.camera:
+        logger.info("Make sure you have a camera connected")
+    if args.mic:
+        logger.info("Make sure you have microphone permissions enabled")
 
     client = WHIPClient(args.url, args.token)
 
     try:
         client.connect()
-        client.send_frames(args.duration)
+        client.send_frames(args.duration, use_camera=args.camera, use_mic=args.mic)
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
     except Exception as e:
