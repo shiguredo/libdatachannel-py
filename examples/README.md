@@ -20,7 +20,7 @@ examples は UV のワークスペース機能を使用しているため、`uv 
 uv run python whip.py --url https://example.com/whip --duration 30
 
 # ルートディレクトリから実行
-uv run --package libdatachannel-py-examples python examples/whip.py --url https://example.com/whip
+uv run --package examples python examples/whip.py --url https://example.com/whip
 ```
 
 ## サンプル一覧
@@ -59,7 +59,8 @@ uv run python whip.py --camera --microphone --debug
 ```
 
 オプション：
-- `--url`: WHIP エンドポイントの URL（デフォルト: https://example.com/whip）
+
+- `--url`: WHIP エンドポイントの URL（デフォルト: <https://example.com/whip）>
 - `--duration`: 配信時間（秒）（指定しない場合は無期限に配信）
 - `--camera`: カメラを使用（デフォルト: テストパターン）
 - `--microphone`: マイクを使用（デフォルト: テストトーン）
