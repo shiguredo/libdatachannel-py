@@ -17,6 +17,7 @@
 #include "audio_codec.h"
 #include "openh264_video_encoder.h"
 #include "opus_audio_encoder.h"
+#include "opus_audio_decoder.h"
 #include "video_codec.h"
 #include "videotoolbox_video_encoder.h"
 
@@ -144,6 +145,22 @@ void bind_audio_codec(nb::module_& m) {
       .def_rw("frame_duration_ms", &AudioEncoder::Settings::frame_duration_ms);
 
   m.def("create_opus_audio_encoder", &CreateOpusAudioEncoder);
+
+  // AudioDecoder
+  nb::class_<AudioDecoder> decoder(m, "AudioDecoder");
+  decoder.def("init", &AudioDecoder::Init)
+      .def("release", &AudioDecoder::Release)
+      .def("decode", &AudioDecoder::Decode)
+      .def("set_on_decode", &AudioDecoder::SetOnDecode);
+
+  // AudioDecoder::Settings
+  nb::class_<AudioDecoder::Settings>(decoder, "Settings")
+      .def(nb::init<>())
+      .def_rw("codec_type", &AudioDecoder::Settings::codec_type)
+      .def_rw("sample_rate", &AudioDecoder::Settings::sample_rate)
+      .def_rw("channels", &AudioDecoder::Settings::channels);
+
+  m.def("create_opus_audio_decoder", &CreateOpusAudioDecoder);
 }
 
 }  // namespace
