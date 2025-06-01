@@ -13,6 +13,7 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/trampoline.h>
 
+#include "aom_video_decoder.h"
 #include "aom_video_encoder.h"
 #include "audio_codec.h"
 #include "openh264_video_encoder.h"
@@ -125,6 +126,7 @@ void bind_video_codec(nb::module_& m) {
 
   m.def("create_openh264_video_decoder", &CreateOpenH264VideoDecoder,
         "openh264"_a);
+  m.def("create_aom_video_decoder", &CreateAomVideoDecoder);
 }
 
 void bind_audio_codec(nb::module_& m) {
