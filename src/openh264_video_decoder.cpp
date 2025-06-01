@@ -16,6 +16,9 @@
 #include <wels/codec_app_def.h>
 #include <wels/codec_def.h>
 
+// libyuv
+#include <libyuv.h>
+
 class OpenH264VideoDecoder : public VideoDecoder {
  public:
   OpenH264VideoDecoder(const std::string& openh264);
@@ -60,19 +63,19 @@ bool OpenH264VideoDecoder::InitOpenH264(const std::string& openh264) {
     PLOG_ERROR << "Failed to open OpenH264 library: " << dlerror();
     return false;
   }
-  
+
   create_decoder_ = (CreateDecoderFunc)dlsym(handle, "WelsCreateDecoder");
   if (create_decoder_ == nullptr) {
     dlclose(handle);
     return false;
   }
-  
+
   destroy_decoder_ = (DestroyDecoderFunc)dlsym(handle, "WelsDestroyDecoder");
   if (destroy_decoder_ == nullptr) {
     dlclose(handle);
     return false;
   }
-  
+
   openh264_handle_ = handle;
   return true;
 }
@@ -131,12 +134,14 @@ void OpenH264VideoDecoder::Decode(const EncodedImage& encoded_image) {
   uint8_t* dst[3] = {nullptr, nullptr, nullptr};
   SBufferInfo dst_info = {0};
 
-  PLOG_INFO << "OpenH264VideoDecoder: Decoding " << encoded_image.data.size() << " bytes";
+  PLOG_DEBUG << "OpenH264VideoDecoder: Decoding " << encoded_image.data.size()
+             << " bytes";
 
-  DECODING_STATE rv = decoder_->DecodeFrame2(
+  DECODING_STATE rv = decoder_->DecodeFrameNoDelay(
       encoded_image.data.data(), encoded_image.data.size(), dst, &dst_info);
 
-  PLOG_INFO << "OpenH264VideoDecoder: DecodeFrame2 returned " << rv << ", iBufferStatus=" << dst_info.iBufferStatus;
+  PLOG_DEBUG << "OpenH264VideoDecoder: DecodeFrameNoDelay returned " << rv
+             << ", iBufferStatus=" << dst_info.iBufferStatus;
 
   if (rv != dsErrorFree && rv != dsNoParamSets) {
     PLOG_WARNING << "OpenH264VideoDecoder: Decode error: " << rv;
@@ -145,50 +150,35 @@ void OpenH264VideoDecoder::Decode(const EncodedImage& encoded_image) {
 
   // バッファステータスが0の場合は、デコードが完了していない（パラメータセットのみ等）
   if (dst_info.iBufferStatus == 0) {
-    PLOG_INFO << "OpenH264VideoDecoder: No frame output yet (buffering)";
+    PLOG_DEBUG << "OpenH264VideoDecoder: No frame output yet (buffering)";
     return;
   }
 
-  if (dst_info.iBufferStatus == 1) {
-    // デコード成功
-    int width = dst_info.UsrData.sSystemBuffer.iWidth;
-    int height = dst_info.UsrData.sSystemBuffer.iHeight;
-    int y_stride = dst_info.UsrData.sSystemBuffer.iStride[0];
-    int uv_stride = dst_info.UsrData.sSystemBuffer.iStride[1];
+  // デコード成功
+  int width = dst_info.UsrData.sSystemBuffer.iWidth;
+  int height = dst_info.UsrData.sSystemBuffer.iHeight;
+  int y_stride = dst_info.UsrData.sSystemBuffer.iStride[0];
+  int uv_stride = dst_info.UsrData.sSystemBuffer.iStride[1];
 
-    auto i420_buffer = VideoFrameBufferI420::Create(width, height);
+  auto i420_buffer = VideoFrameBufferI420::Create(width, height);
 
-    // Y平面のコピー
-    uint8_t* src_y = dst[0];
-    uint8_t* dst_y = (uint8_t*)i420_buffer->y.data();
-    for (int i = 0; i < height; i++) {
-      memcpy(dst_y + i * width, src_y + i * y_stride, width);
-    }
+  libyuv::I420Copy(dst[0], y_stride,   // Y平面
+                   dst[1], uv_stride,  // U平面
+                   dst[2], uv_stride,  // V平面
+                   i420_buffer->y.data(), i420_buffer->stride_y(),
+                   i420_buffer->u.data(), i420_buffer->stride_u(),
+                   i420_buffer->v.data(), i420_buffer->stride_v(), width,
+                   height);
 
-    // U平面のコピー
-    uint8_t* src_u = dst[1];
-    uint8_t* dst_u = (uint8_t*)i420_buffer->u.data();
-    for (int i = 0; i < height / 2; i++) {
-      memcpy(dst_u + i * width / 2, src_u + i * uv_stride, width / 2);
-    }
+  VideoFrame frame;
+  frame.format = ImageFormat::I420;
+  frame.i420_buffer = i420_buffer;
+  frame.timestamp = encoded_image.timestamp;
+  frame.rid = encoded_image.rid;
+  frame.base_width = width;
+  frame.base_height = height;
 
-    // V平面のコピー
-    uint8_t* src_v = dst[2];
-    uint8_t* dst_v = (uint8_t*)i420_buffer->v.data();
-    for (int i = 0; i < height / 2; i++) {
-      memcpy(dst_v + i * width / 2, src_v + i * uv_stride, width / 2);
-    }
-
-    VideoFrame frame;
-    frame.format = ImageFormat::I420;
-    frame.i420_buffer = i420_buffer;
-    frame.timestamp = encoded_image.timestamp;
-    frame.rid = encoded_image.rid;
-    frame.base_width = width;
-    frame.base_height = height;
-
-    on_decode_(frame);
-  }
+  on_decode_(frame);
 }
 
 void OpenH264VideoDecoder::SetOnDecode(

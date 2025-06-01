@@ -243,26 +243,24 @@ def test_openh264_encode_decode():
     frame.format = ImageFormat.I420
     frame.base_width = width
     frame.base_height = height
-    frame.timestamp = timedelta(microseconds=0)
+    frame.timestamp = timedelta(microseconds=1000)
 
     encoded_frames = []
 
     def on_encode(encoded_image):
-        encoded_frames.append(
-            {"data": encoded_image.data.copy(), "timestamp": encoded_image.timestamp}
-        )
+        encoded_frames.append(encoded_image)
         assert encoded_image.data.size > 0
 
     encoder.set_on_encode(on_encode)
     encoder.force_intra_next_frame()  # キーフレームを生成
     encoder.encode(frame)
 
-    # 2フレーム目も送信（デコーダーが最初のフレームを出力するため）
-    frame.timestamp = timedelta(microseconds=33333)  # 30fps
+    # 2フレーム目も送信
+    frame.timestamp = timedelta(microseconds=1000 + 33333)  # 30fps
     encoder.encode(frame)
     encoder.release()
 
-    assert len(encoded_frames) >= 1
+    assert len(encoded_frames) == 2
     print(f"Encoded {len(encoded_frames)} frames")
 
     # デコーダーでデコード
@@ -272,11 +270,11 @@ def test_openh264_encode_decode():
     success = decoder.init(decoder_settings)
     assert success
 
-    decoded_frame = None
+    decoded_frames = []
 
     def on_decode(video_frame):
-        nonlocal decoded_frame
-        decoded_frame = video_frame
+        nonlocal decoded_frames
+        decoded_frames.append(video_frame)
         print(f"Decoded frame: {video_frame.width()}x{video_frame.height()}")
 
     decoder.set_on_decode(on_decode)
@@ -284,23 +282,26 @@ def test_openh264_encode_decode():
     # すべてのエンコード済みフレームをデコード
     for i, encoded in enumerate(encoded_frames):
         encoded_image = EncodedImage()
-        encoded_image.data = encoded["data"]
-        encoded_image.timestamp = encoded["timestamp"]
-        print(f"Decoding frame {i+1}: {encoded_image.data.size} bytes...")
+        encoded_image.data = encoded.data
+        encoded_image.timestamp = encoded.timestamp
+        print(f"Decoding frame {i + 1}: {encoded_image.data.size} bytes...")
         decoder.decode(encoded_image)
 
     decoder.release()
 
-    assert decoded_frame is not None
-    assert decoded_frame.width() == width
-    assert decoded_frame.height() == height
-    assert decoded_frame.format == ImageFormat.I420
-    # タイムスタンプは最初か2番目のフレームのもの
-    assert decoded_frame.timestamp in [timedelta(microseconds=0), timedelta(microseconds=33333)]
+    assert len(decoded_frames) == 2
+    assert decoded_frames[0].width() == width
+    assert decoded_frames[0].height() == height
+    assert decoded_frames[0].format == ImageFormat.I420
+    assert decoded_frames[0].timestamp == timedelta(microseconds=1000)
+    assert decoded_frames[1].width() == width
+    assert decoded_frames[1].height() == height
+    assert decoded_frames[1].format == ImageFormat.I420
+    assert decoded_frames[1].timestamp == timedelta(microseconds=1000 + 33333)
 
     # デコードされたフレームの内容を簡単に検証
     # Y平面の最初と最後の値がグラデーションになっているか確認
-    decoded_y = decoded_frame.i420_buffer.y.reshape(height, width)
+    decoded_y = decoded_frames[0].i420_buffer.y.reshape(height, width)
     assert decoded_y[0, 0] < decoded_y[0, -1]  # 左端より右端の方が明るい
 
 
@@ -338,41 +339,42 @@ def test_openh264_with_nal_units():
     frame.format = ImageFormat.I420
     frame.base_width = width
     frame.base_height = height
-    frame.timestamp = timedelta(microseconds=0)
+    frame.timestamp = timedelta(microseconds=1000)
 
     encoded_frames = []
 
     def on_encode(encoded_image):
-        encoded_frames.append(
-            {"data": encoded_image.data.copy(), "timestamp": encoded_image.timestamp}
-        )
+        encoded_frames.append(encoded_image)
 
     encoder.set_on_encode(on_encode)
     encoder.force_intra_next_frame()  # キーフレームを生成
     encoder.encode(frame)
 
     # 2フレーム目も送信
-    frame.timestamp = timedelta(microseconds=33333)
+    frame.timestamp = timedelta(microseconds=1000 + 33333)
     encoder.encode(frame)
     encoder.release()
 
-    assert len(encoded_frames) >= 1
+    assert len(encoded_frames) == 2
     print(f"Encoded {len(encoded_frames)} frames")
 
     # 最初のフレームのNALユニットを解析
-    first_encoded = encoded_frames[0]["data"]
+    first_encoded = encoded_frames[0].data
     print(f"First frame size: {first_encoded.size} bytes")
 
-    # NALユニットを作成して解析
-    nal_unit = NalUnit()
-    nal_unit.set_payload(bytes(first_encoded))
+    # NALユニットを分割して作成
+    nal_units_byte = bytes(first_encoded).split(b"\x00\x00\x00\x01")[1:]
+    nal_units = list(map(lambda b: NalUnit(b), nal_units_byte))
 
     # NALユニットのヘッダー情報を検証
-    unit_type = nal_unit.unit_type()
-    print(f"NAL unit type: {unit_type}")
+    assert len(nal_units) == 3
+    assert nal_units[0].unit_type() == 7  # SPS
+    assert nal_units[1].unit_type() == 8  # PPS
+    assert nal_units[2].unit_type() == 5  # IDR
 
     # 複数のNALユニットに分割（フラグメント化）のテスト
-    fragments = NalUnitFragmentA.fragments_from(nal_unit, max_fragment_size=100)
+    fragments = NalUnitFragmentA.fragments_from(nal_units[2], max_fragment_size=100)
+    assert len(fragments) == 5
     print(f"Generated {len(fragments)} fragments")
 
     # デコーダーでデコード
@@ -382,11 +384,11 @@ def test_openh264_with_nal_units():
     success = decoder.init(decoder_settings)
     assert success
 
-    decoded_frame = None
+    decoded_frames = []
 
     def on_decode(video_frame):
-        nonlocal decoded_frame
-        decoded_frame = video_frame
+        nonlocal decoded_frames
+        decoded_frames.append(video_frame)
         print(f"Decoded frame: {video_frame.width()}x{video_frame.height()}")
 
     decoder.set_on_decode(on_decode)
@@ -394,20 +396,24 @@ def test_openh264_with_nal_units():
     # すべてのエンコード済みフレームをデコード
     for i, encoded in enumerate(encoded_frames):
         encoded_image = EncodedImage()
-        encoded_image.data = encoded["data"]
-        encoded_image.timestamp = encoded["timestamp"]
-        print(f"Decoding frame {i+1}: {encoded_image.data.size} bytes...")
+        encoded_image.data = encoded.data
+        encoded_image.timestamp = encoded.timestamp
+        print(f"Decoding frame {i + 1}: {encoded_image.data.size} bytes...")
         decoder.decode(encoded_image)
 
     decoder.release()
 
     # デコード結果の検証
-    assert decoded_frame is not None
-    assert decoded_frame.width() == width
-    assert decoded_frame.height() == height
+    assert len(decoded_frames) == 2
+    assert decoded_frames[0].width() == width
+    assert decoded_frames[0].height() == height
+    assert decoded_frames[0].timestamp == timedelta(microseconds=1000)
+    assert decoded_frames[1].width() == width
+    assert decoded_frames[1].height() == height
+    assert decoded_frames[1].timestamp == timedelta(microseconds=1000 + 33333)
 
     # デコードされたフレームの内容を簡単に検証
-    decoded_y = decoded_frame.i420_buffer.y.reshape(height, width)
+    decoded_y = decoded_frames[0].i420_buffer.y.reshape(height, width)
     assert decoded_y[0, 0] < decoded_y[0, -1]  # 左端より右端の方が明るい
 
 

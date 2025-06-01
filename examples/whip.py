@@ -1,7 +1,7 @@
 import argparse
-import asyncio
 import logging
 import re
+import time
 from typing import List, Optional
 from urllib.parse import urljoin
 
@@ -15,6 +15,8 @@ from libdatachannel import (
     IceServer,
     OpusRtpPacketizer,
     PeerConnection,
+    PliHandler,
+    RtcpNackResponder,
     RtcpSrReporter,
     RtpPacketizationConfig,
     Track,
@@ -58,6 +60,8 @@ class WHIPClient:
         self.audio_packetizer = None
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
+        self.pli_handler = None
+        self.nack_responder = None
 
         # Frame counters
         self.video_frame_number = 0
@@ -72,40 +76,9 @@ class WHIPClient:
         self.audio_sample_rate = 48000
         self.audio_channels = 2
 
-        # Track if we've already cleaned up
-        self._cleaned_up = False
-
-    def __del__(self):
-        """Destructor to ensure resources are cleaned up"""
-        if not self._cleaned_up:
-            logger.warning("WHIPClient being destroyed without proper cleanup!")
-            # Synchronous cleanup in destructor
-            # Clear tracks
-            self.video_track = None
-            self.audio_track = None
-
-            # Close PeerConnection
-            if self.pc:
-                try:
-                    self.pc.close()
-                except Exception:
-                    pass
-            self.pc = None
-
-            # Release encoders
-            if self.video_encoder:
-                try:
-                    self.video_encoder.release()
-                except Exception:
-                    pass
-            self.video_encoder = None
-
-            if self.audio_encoder:
-                try:
-                    self.audio_encoder.release()
-                except Exception:
-                    pass
-            self.audio_encoder = None
+        # Key frame interval settings
+        self.key_frame_interval_seconds = 2.0
+        self.last_key_frame_time = None
 
     def _parse_link_header(self, link_header: str) -> List[IceServer]:
         """Parse Link header for ICE servers"""
@@ -163,11 +136,11 @@ class WHIPClient:
                 ice_servers.append(ice_server)
                 logger.info(f"Added ICE server from Link header: {url}")
                 if hasattr(ice_server, "username") and ice_server.username:
-                    logger.debug(f"  with username: {ice_server.username}")
+                    logger.info(f"  with username: {ice_server.username}")
 
         return ice_servers
 
-    async def connect(self):
+    def connect(self):
         """Connect to WHIP server"""
         logger.info(f"Connecting to WHIP endpoint: {self.whip_url}")
 
@@ -206,14 +179,14 @@ class WHIPClient:
 
         # Send offer to WHIP server
         logger.info("Sending offer to WHIP server...")
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0) as client:
             headers = {
                 "Content-Type": "application/sdp",
             }
             if self.bearer_token:
                 headers["Authorization"] = f"Bearer {self.bearer_token}"
 
-            response = await client.post(
+            response = client.post(
                 self.whip_url,
                 content=str(local_sdp),
                 headers=headers,
@@ -273,13 +246,33 @@ class WHIPClient:
         self.video_sr_reporter = RtcpSrReporter(video_config)
         self.video_packetizer.add_to_chain(self.video_sr_reporter)
 
+        # Add PLI handler
+        def on_pli():
+            logger.info("PLI received - Picture Loss Indication")
+        
+        self.pli_handler = PliHandler(on_pli)
+        self.video_packetizer.add_to_chain(self.pli_handler)
+
+        # Add NACK responder for retransmission
+        self.nack_responder = RtcpNackResponder()
+        self.video_packetizer.add_to_chain(self.nack_responder)
+        logger.info("NACK responder added for video track")
+
         # Set packetizer on track
         if not self.video_track:
             raise RuntimeError("Video track not initialized")
         self.video_track.set_media_handler(self.video_packetizer)
 
         # Set encoder callback
-        self.video_encoder.set_on_encode(self._on_video_encoded)
+        def on_encoded(encoded_image):
+            if self.video_track and self.video_track.is_open():
+                try:
+                    data = encoded_image.data.tobytes()
+                    self.video_track.send(data)
+                except Exception as e:
+                    logger.error(f"Error sending encoded video: {e}")
+
+        self.video_encoder.set_on_encode(on_encoded)
 
     def _setup_audio_encoder(self):
         """Set up Opus audio encoder"""
@@ -312,43 +305,28 @@ class WHIPClient:
         self.audio_track.set_media_handler(self.audio_packetizer)
 
         # Set encoder callback
-        self.audio_encoder.set_on_encode(self._on_audio_encoded)
+        def on_encoded(encoded_audio):
+            if self.audio_track and self.audio_track.is_open():
+                try:
+                    data = encoded_audio.data.tobytes()
+                    self.audio_track.send(data)
+                except Exception as e:
+                    logger.error(f"Error sending encoded audio: {e}")
 
-    def _on_video_encoded(self, encoded_image):
-        """Handle encoded video frame"""
-        if self.video_track and self.video_track.is_open():
-            try:
-                data = encoded_image.data.tobytes()
-                self.video_track.send(data)
-                logger.debug(f"Sent video frame: {len(data)} bytes")
-            except Exception as e:
-                logger.error(f"Error sending video: {e}")
+        self.audio_encoder.set_on_encode(on_encoded)
 
-    def _on_audio_encoded(self, encoded_audio):
-        """Handle encoded audio frame"""
-        if self.audio_track and self.audio_track.is_open():
-            try:
-                data = encoded_audio.data.tobytes()
-                self.audio_track.send(data)
-                logger.debug(f"Sent audio frame: {len(data)} bytes")
-            except Exception as e:
-                logger.error(f"Error sending audio: {e}")
-
-    async def send_frames(self, duration: Optional[int] = None):
+    def send_frames(self, duration: Optional[int] = None):
         """Send test video and audio frames"""
-        logger.info("Starting to send frames...")
-
-        # Check if PeerConnection exists
         if not self.pc:
             raise RuntimeError("PeerConnection not initialized. Call connect() first.")
 
         # Wait for connection
         timeout = 10.0
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.time()
         while self.pc.state() != PeerConnection.State.Connected:
-            if asyncio.get_event_loop().time() - start_time > timeout:
+            if time.time() - start_time > timeout:
                 raise Exception("Connection timeout")
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
 
         logger.info("Connection established, sending frames")
 
@@ -356,36 +334,32 @@ class WHIPClient:
         video_interval = 1.0 / self.video_fps
         audio_interval = 0.02  # 20ms
 
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.time()
         next_video_time = start_time
         next_audio_time = start_time
 
-        try:
-            while True:
-                current_time = asyncio.get_event_loop().time()
+        while True:
+            current_time = time.time()
 
-                # Check duration
-                if duration and current_time - start_time >= duration:
-                    break
+            # Check duration
+            if duration and current_time - start_time >= duration:
+                break
 
-                # Send video frame
-                if current_time >= next_video_time:
-                    self._send_video_frame()
-                    next_video_time += video_interval
+            # Send video frame
+            if current_time >= next_video_time:
+                self._send_video_frame()
+                next_video_time += video_interval
 
-                # Send audio frame
-                if current_time >= next_audio_time:
-                    self._send_audio_frame()
-                    next_audio_time += audio_interval
+            # Send audio frame
+            if current_time >= next_audio_time:
+                self._send_audio_frame()
+                next_audio_time += audio_interval
 
-                # Sleep until next frame
-                next_time = min(next_video_time, next_audio_time)
-                sleep_time = max(0, next_time - asyncio.get_event_loop().time())
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-        except asyncio.CancelledError:
-            logger.info("Frame sending cancelled")
-            raise
+            # Sleep until next frame
+            next_time = min(next_video_time, next_audio_time)
+            sleep_time = max(0, next_time - time.time())
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     def _send_video_frame(self):
         """Send a black video frame"""
@@ -419,8 +393,34 @@ class WHIPClient:
         frame.frame_number = self.video_frame_number
 
         # Encode frame
-        self.video_encoder.encode(frame)
+        try:
+            self.video_encoder.encode(frame)
+        except Exception as e:
+            logger.error(f"Error encoding frame: {e}")
+
         self.video_frame_number += 1
+
+        # Check if it's time to request a key frame (AFTER encoding the frame)
+        current_time = time.time()
+
+        # Initialize last_key_frame_time if this is the first frame
+        if self.last_key_frame_time is None:
+            self.last_key_frame_time = current_time
+        time_since_last_key = current_time - self.last_key_frame_time
+
+        # Request key frame every 2 seconds
+        if time_since_last_key >= self.key_frame_interval_seconds:
+            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
+            try:
+                # Force the encoder to generate a key frame (intra frame)
+                self.video_encoder.force_intra_next_frame()
+            except Exception as e:
+                logger.error(f"Error requesting keyframe: {e}")
+            self.last_key_frame_time = current_time
+
+        # Debug log every 30 frames (1 second)
+        if self.video_frame_number % 30 == 0:
+            logger.info(f"Frame {self.video_frame_number}: total frames sent")
 
     def _send_audio_frame(self):
         """Send a silent audio frame"""
@@ -442,7 +442,7 @@ class WHIPClient:
         self.audio_encoder.encode(frame)
         self.audio_timestamp_ms += 20
 
-    async def disconnect(self):
+    def disconnect(self):
         """Disconnect from WHIP server with graceful shutdown"""
         logger.info("Starting graceful shutdown...")
 
@@ -450,12 +450,12 @@ class WHIPClient:
         if self.session_url:
             logger.info("Sending DELETE request to WHIP server...")
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                with httpx.Client(timeout=5.0) as client:
                     headers = {}
                     if self.bearer_token:
                         headers["Authorization"] = f"Bearer {self.bearer_token}"
 
-                    response = await client.delete(self.session_url, headers=headers)
+                    response = client.delete(self.session_url, headers=headers)
                     if response.status_code in [200, 204]:
                         logger.info("WHIP session terminated successfully")
                     else:
@@ -469,7 +469,7 @@ class WHIPClient:
 
         # Wait a bit for graceful shutdown
         logger.info("Waiting for graceful shutdown...")
-        await asyncio.sleep(0.5)
+        time.sleep(0.5)
 
         # Clean up resources in proper order
         logger.info("Cleaning up resources...")
@@ -479,18 +479,17 @@ class WHIPClient:
         self.audio_packetizer = None
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
-        logger.debug("RTP components cleared")
+        self.pli_handler = None
+        self.nack_responder = None
 
         # Close tracks before closing PeerConnection
         self.video_track = None
         self.audio_track = None
-        logger.debug("Tracks cleared")
 
         # Close PeerConnection
         if self.pc:
             try:
                 self.pc.close()
-                logger.debug("PeerConnection closed")
             except Exception as e:
                 logger.error(f"Error closing PeerConnection: {e}")
             finally:
@@ -500,7 +499,6 @@ class WHIPClient:
         if self.video_encoder:
             try:
                 self.video_encoder.release()
-                logger.debug("Video encoder released")
             except Exception as e:
                 logger.error(f"Error releasing video encoder: {e}")
             finally:
@@ -509,17 +507,15 @@ class WHIPClient:
         if self.audio_encoder:
             try:
                 self.audio_encoder.release()
-                logger.debug("Audio encoder released")
             except Exception as e:
                 logger.error(f"Error releasing audio encoder: {e}")
             finally:
                 self.audio_encoder = None
 
         logger.info("Graceful shutdown completed")
-        self._cleaned_up = True
 
 
-async def main():
+def main():
     parser = argparse.ArgumentParser(description="Minimal WHIP client")
     parser.add_argument("--url", required=True, help="WHIP endpoint URL")
     parser.add_argument("--token", help="Bearer token for authentication")
@@ -529,35 +525,11 @@ async def main():
 
     client = WHIPClient(args.url, args.token)
 
-    # Flag to track if we're shutting down
-    shutting_down = False
-
-    # Set up signal handler for graceful shutdown
-    loop = asyncio.get_event_loop()
-    send_task = None
-
-    def signal_handler(sig):
-        nonlocal shutting_down
-        if not shutting_down:
-            shutting_down = True
-            logger.info(f"Received signal {sig.name}, initiating graceful shutdown...")
-            if send_task and not send_task.done():
-                send_task.cancel()
-
-    # Register signal handlers
-    import signal
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
-
     try:
-        await client.connect()
-        send_task = asyncio.create_task(client.send_frames(args.duration))
-        await send_task
+        client.connect()
+        client.send_frames(args.duration)
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
-    except asyncio.CancelledError:
-        logger.info("Task cancelled")
     except Exception as e:
         logger.error(f"Error: {e}")
         import traceback
@@ -565,16 +537,11 @@ async def main():
         traceback.print_exc()
     finally:
         # Always disconnect gracefully
-        logger.info("Ensuring disconnect is called...")
         try:
-            await client.disconnect()
+            client.disconnect()
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
 
-        # Remove signal handlers
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
-
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
