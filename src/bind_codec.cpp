@@ -16,6 +16,7 @@
 #include "aom_video_encoder.h"
 #include "audio_codec.h"
 #include "openh264_video_encoder.h"
+#include "openh264_video_decoder.h"
 #include "opus_audio_encoder.h"
 #include "video_codec.h"
 #include "videotoolbox_video_encoder.h"
@@ -108,6 +109,21 @@ void bind_video_codec(nb::module_& m) {
         "openh264"_a);
   m.def("create_videotoolbox_video_encoder", &CreateVideoToolboxVideoEncoder);
   m.def("create_aom_video_encoder", &CreateAOMVideoEncoder);
+
+  // VideoDecoder
+  nb::class_<VideoDecoder> decoder(m, "VideoDecoder");
+  decoder.def("init", &VideoDecoder::Init)
+      .def("release", &VideoDecoder::Release)
+      .def("decode", &VideoDecoder::Decode)
+      .def("set_on_decode", &VideoDecoder::SetOnDecode);
+
+  // VideoDecoder::Settings
+  nb::class_<VideoDecoder::Settings>(decoder, "Settings")
+      .def(nb::init<>())
+      .def_rw("codec_type", &VideoDecoder::Settings::codec_type);
+
+  m.def("create_openh264_video_decoder", &CreateOpenH264VideoDecoder,
+        "openh264"_a);
 }
 
 void bind_audio_codec(nb::module_& m) {

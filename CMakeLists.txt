@@ -68,6 +68,7 @@ nanobind_add_module(
   src/bind_libyuv.cpp
   src/libdatachannel_ext.cpp
   src/openh264_video_encoder.cpp
+  src/openh264_video_decoder.cpp
   src/opus_audio_encoder.cpp
   src/video_codec.cpp
   src/videotoolbox_video_encoder.cpp

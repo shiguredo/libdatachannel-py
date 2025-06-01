@@ -119,4 +119,19 @@ class VideoEncoder {
       std::function<void(const EncodedImage&)> on_encode) = 0;
 };
 
+class VideoDecoder {
+ public:
+  struct Settings {
+    VideoCodecType codec_type;
+  };
+
+  virtual ~VideoDecoder() = default;
+
+  virtual bool Init(const Settings& settings) = 0;
+  virtual void Release() = 0;
+  virtual void Decode(const EncodedImage& encoded_image) = 0;
+  virtual void SetOnDecode(
+      std::function<void(const VideoFrame&)> on_decode) = 0;
+};
+
 #endif
