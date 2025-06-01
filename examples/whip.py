@@ -72,40 +72,9 @@ class WHIPClient:
         self.audio_sample_rate = 48000
         self.audio_channels = 2
 
-        # Track if we've already cleaned up
-        self._cleaned_up = False
-
-    def __del__(self):
-        """Destructor to ensure resources are cleaned up"""
-        if not self._cleaned_up:
-            logger.warning("WHIPClient being destroyed without proper cleanup!")
-            # Synchronous cleanup in destructor
-            # Clear tracks
-            self.video_track = None
-            self.audio_track = None
-
-            # Close PeerConnection
-            if self.pc:
-                try:
-                    self.pc.close()
-                except Exception:
-                    pass
-            self.pc = None
-
-            # Release encoders
-            if self.video_encoder:
-                try:
-                    self.video_encoder.release()
-                except Exception:
-                    pass
-            self.video_encoder = None
-
-            if self.audio_encoder:
-                try:
-                    self.audio_encoder.release()
-                except Exception:
-                    pass
-            self.audio_encoder = None
+        # Key frame interval settings
+        self.key_frame_interval_seconds = 2.0
+        self.last_key_frame_time = None
 
     def _parse_link_header(self, link_header: str) -> List[IceServer]:
         """Parse Link header for ICE servers"""
@@ -163,7 +132,7 @@ class WHIPClient:
                 ice_servers.append(ice_server)
                 logger.info(f"Added ICE server from Link header: {url}")
                 if hasattr(ice_server, "username") and ice_server.username:
-                    logger.debug(f"  with username: {ice_server.username}")
+                    logger.info(f"  with username: {ice_server.username}")
 
         return ice_servers
 
@@ -279,7 +248,15 @@ class WHIPClient:
         self.video_track.set_media_handler(self.video_packetizer)
 
         # Set encoder callback
-        self.video_encoder.set_on_encode(self._on_video_encoded)
+        def on_encoded(encoded_image):
+            if self.video_track and self.video_track.is_open():
+                try:
+                    data = encoded_image.data.tobytes()
+                    self.video_track.send(data)
+                except Exception as e:
+                    logger.error(f"Error sending encoded video: {e}")
+
+        self.video_encoder.set_on_encode(on_encoded)
 
     def _setup_audio_encoder(self):
         """Set up Opus audio encoder"""
@@ -312,33 +289,18 @@ class WHIPClient:
         self.audio_track.set_media_handler(self.audio_packetizer)
 
         # Set encoder callback
-        self.audio_encoder.set_on_encode(self._on_audio_encoded)
+        def on_encoded(encoded_audio):
+            if self.audio_track and self.audio_track.is_open():
+                try:
+                    data = encoded_audio.data.tobytes()
+                    self.audio_track.send(data)
+                except Exception as e:
+                    logger.error(f"Error sending encoded audio: {e}")
 
-    def _on_video_encoded(self, encoded_image):
-        """Handle encoded video frame"""
-        if self.video_track and self.video_track.is_open():
-            try:
-                data = encoded_image.data.tobytes()
-                self.video_track.send(data)
-                logger.debug(f"Sent video frame: {len(data)} bytes")
-            except Exception as e:
-                logger.error(f"Error sending video: {e}")
-
-    def _on_audio_encoded(self, encoded_audio):
-        """Handle encoded audio frame"""
-        if self.audio_track and self.audio_track.is_open():
-            try:
-                data = encoded_audio.data.tobytes()
-                self.audio_track.send(data)
-                logger.debug(f"Sent audio frame: {len(data)} bytes")
-            except Exception as e:
-                logger.error(f"Error sending audio: {e}")
+        self.audio_encoder.set_on_encode(on_encoded)
 
     def send_frames(self, duration: Optional[int] = None):
         """Send test video and audio frames"""
-        logger.info("Starting to send frames...")
-
-        # Check if PeerConnection exists
         if not self.pc:
             raise RuntimeError("PeerConnection not initialized. Call connect() first.")
 
@@ -415,8 +377,34 @@ class WHIPClient:
         frame.frame_number = self.video_frame_number
 
         # Encode frame
-        self.video_encoder.encode(frame)
+        try:
+            self.video_encoder.encode(frame)
+        except Exception as e:
+            logger.error(f"Error encoding frame: {e}")
+
         self.video_frame_number += 1
+
+        # Check if it's time to request a key frame (AFTER encoding the frame)
+        current_time = time.time()
+
+        # Initialize last_key_frame_time if this is the first frame
+        if self.last_key_frame_time is None:
+            self.last_key_frame_time = current_time
+        time_since_last_key = current_time - self.last_key_frame_time
+
+        # Request key frame every 2 seconds
+        if time_since_last_key >= self.key_frame_interval_seconds:
+            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
+            try:
+                # Force the encoder to generate a key frame (intra frame)
+                self.video_encoder.force_intra_next_frame()
+            except Exception as e:
+                logger.error(f"Error requesting keyframe: {e}")
+            self.last_key_frame_time = current_time
+
+        # Debug log every 30 frames (1 second)
+        if self.video_frame_number % 30 == 0:
+            logger.info(f"Frame {self.video_frame_number}: total frames sent")
 
     def _send_audio_frame(self):
         """Send a silent audio frame"""
@@ -475,6 +463,8 @@ class WHIPClient:
         self.audio_packetizer = None
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
+        self.debug_handler = None
+        self.pli_handler = None
         logger.debug("RTP components cleared")
 
         # Close tracks before closing PeerConnection
@@ -512,7 +502,6 @@ class WHIPClient:
                 self.audio_encoder = None
 
         logger.info("Graceful shutdown completed")
-        self._cleaned_up = True
 
 
 def main():
@@ -537,7 +526,6 @@ def main():
         traceback.print_exc()
     finally:
         # Always disconnect gracefully
-        logger.info("Ensuring disconnect is called...")
         try:
             client.disconnect()
         except Exception as e:
