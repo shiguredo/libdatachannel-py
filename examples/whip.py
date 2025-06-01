@@ -15,6 +15,7 @@ from libdatachannel import (
     IceServer,
     OpusRtpPacketizer,
     PeerConnection,
+    PliHandler,
     RtcpSrReporter,
     RtpPacketizationConfig,
     Track,
@@ -58,6 +59,7 @@ class WHIPClient:
         self.audio_packetizer = None
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
+        self.pli_handler = None
 
         # Frame counters
         self.video_frame_number = 0
@@ -241,6 +243,13 @@ class WHIPClient:
         # Add RTCP SR reporter
         self.video_sr_reporter = RtcpSrReporter(video_config)
         self.video_packetizer.add_to_chain(self.video_sr_reporter)
+
+        # Add PLI handler
+        def on_pli():
+            logger.info("PLI received - Picture Loss Indication")
+        
+        self.pli_handler = PliHandler(on_pli)
+        self.video_packetizer.add_to_chain(self.pli_handler)
 
         # Set packetizer on track
         if not self.video_track:
@@ -463,20 +472,16 @@ class WHIPClient:
         self.audio_packetizer = None
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
-        self.debug_handler = None
         self.pli_handler = None
-        logger.debug("RTP components cleared")
 
         # Close tracks before closing PeerConnection
         self.video_track = None
         self.audio_track = None
-        logger.debug("Tracks cleared")
 
         # Close PeerConnection
         if self.pc:
             try:
                 self.pc.close()
-                logger.debug("PeerConnection closed")
             except Exception as e:
                 logger.error(f"Error closing PeerConnection: {e}")
             finally:
@@ -486,7 +491,6 @@ class WHIPClient:
         if self.video_encoder:
             try:
                 self.video_encoder.release()
-                logger.debug("Video encoder released")
             except Exception as e:
                 logger.error(f"Error releasing video encoder: {e}")
             finally:
@@ -495,7 +499,6 @@ class WHIPClient:
         if self.audio_encoder:
             try:
                 self.audio_encoder.release()
-                logger.debug("Audio encoder released")
             except Exception as e:
                 logger.error(f"Error releasing audio encoder: {e}")
             finally:
