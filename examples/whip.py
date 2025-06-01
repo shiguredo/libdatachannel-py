@@ -16,6 +16,7 @@ from libdatachannel import (
     OpusRtpPacketizer,
     PeerConnection,
     PliHandler,
+    RtcpNackResponder,
     RtcpSrReporter,
     RtpPacketizationConfig,
     Track,
@@ -60,6 +61,7 @@ class WHIPClient:
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
         self.pli_handler = None
+        self.nack_responder = None
 
         # Frame counters
         self.video_frame_number = 0
@@ -250,6 +252,11 @@ class WHIPClient:
         
         self.pli_handler = PliHandler(on_pli)
         self.video_packetizer.add_to_chain(self.pli_handler)
+
+        # Add NACK responder for retransmission
+        self.nack_responder = RtcpNackResponder()
+        self.video_packetizer.add_to_chain(self.nack_responder)
+        logger.info("NACK responder added for video track")
 
         # Set packetizer on track
         if not self.video_track:
@@ -473,6 +480,7 @@ class WHIPClient:
         self.video_sr_reporter = None
         self.audio_sr_reporter = None
         self.pli_handler = None
+        self.nack_responder = None
 
         # Close tracks before closing PeerConnection
         self.video_track = None
