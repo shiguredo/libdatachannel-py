@@ -59,4 +59,21 @@ class AudioEncoder {
       std::function<void(const EncodedAudio&)> on_encode) = 0;
 };
 
+class AudioDecoder {
+ public:
+  struct Settings {
+    AudioCodecType codec_type;
+    int sample_rate;
+    int channels;
+  };
+
+  virtual ~AudioDecoder() = default;
+
+  virtual bool Init(const Settings& settings) = 0;
+  virtual void Release() = 0;
+  virtual void Decode(const EncodedAudio& encoded) = 0;
+  virtual void SetOnDecode(
+      std::function<void(const AudioFrame&)> on_decode) = 0;
+};
+
 #endif
