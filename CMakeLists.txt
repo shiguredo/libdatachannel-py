@@ -61,6 +61,7 @@ add_subdirectory(${LIBDATACHANNEL_DIR}/deps/json json EXCLUDE_FROM_ALL)
 nanobind_add_module(
   libdatachannel_ext
   NB_STATIC
+  src/aom_video_decoder.cpp
   src/aom_video_encoder.cpp
   src/audio_codec.cpp
   src/bind_codec.cpp
