@@ -47,7 +47,7 @@ class WHIPClient:
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
         self.audio_track: Optional[Track] = None
-        self.resource_url: Optional[str] = None
+        self.session_url: Optional[str] = None
 
         # Encoders
         self.video_encoder: Optional[VideoEncoder] = None
@@ -223,10 +223,10 @@ class WHIPClient:
             if response.status_code != 201:
                 raise Exception(f"WHIP server returned {response.status_code}: {response.text}")
 
-            # Get resource URL
-            self.resource_url = response.headers.get("Location")
-            if self.resource_url and not self.resource_url.startswith("http"):
-                self.resource_url = urljoin(self.whip_url, self.resource_url)
+            # Get session URL
+            self.session_url = response.headers.get("Location")
+            if self.session_url and not self.session_url.startswith("http"):
+                self.session_url = urljoin(self.whip_url, self.session_url)
 
             # Parse Link header for ICE servers
             link_header = response.headers.get("Link")
@@ -447,7 +447,7 @@ class WHIPClient:
         logger.info("Starting graceful shutdown...")
 
         # First, send DELETE request to WHIP server
-        if self.resource_url:
+        if self.session_url:
             logger.info("Sending DELETE request to WHIP server...")
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
@@ -455,7 +455,7 @@ class WHIPClient:
                     if self.bearer_token:
                         headers["Authorization"] = f"Bearer {self.bearer_token}"
 
-                    response = await client.delete(self.resource_url, headers=headers)
+                    response = await client.delete(self.session_url, headers=headers)
                     if response.status_code in [200, 204]:
                         logger.info("WHIP session terminated successfully")
                     else:
