@@ -19,6 +19,11 @@ class OpusAudioEncoder : public AudioEncoder {
     Release();
     settings_ = settings;
 
+    PLOG_DEBUG << "OpusAudioEncoder::Init() - sample_rate: " << settings_.sample_rate
+               << ", channels: " << settings_.channels
+               << ", bitrate: " << settings_.bitrate
+               << ", frame_duration_ms: " << settings_.frame_duration_ms;
+
     if (settings_.channels != 1 && settings_.channels != 2) {
       PLOG_ERROR << "Invalid channels: " << settings_.channels;
       return false;
@@ -44,6 +49,7 @@ class OpusAudioEncoder : public AudioEncoder {
     }
 
     encoded_buf_.resize(1024);
+    PLOG_DEBUG << "OpusAudioEncoder initialized successfully";
     return true;
   }
   void Release() override {
@@ -54,6 +60,18 @@ class OpusAudioEncoder : public AudioEncoder {
   }
 
   void Encode(const AudioFrame& frame) override {
+    PLOG_INFO << "OpusAudioEncoder::Encode() called - samples: " << frame.samples() 
+              << ", channels: " << frame.channels() 
+              << ", sample_rate: " << frame.sample_rate
+              << ", settings channels: " << settings_.channels
+              << ", on_encode set: " << (on_encode_ ? "true" : "false");
+    
+    // Debug: Check if we have valid samples
+    if (frame.samples() <= 0) {
+      PLOG_ERROR << "Invalid number of samples: " << frame.samples();
+      return;
+    }
+    
     if (frame.sample_rate != settings_.sample_rate) {
       // TODO(melpon): リサンプリングが必要
       PLOG_WARNING << "Needs resampling: " << frame.sample_rate << " Hz to "
@@ -73,54 +91,130 @@ class OpusAudioEncoder : public AudioEncoder {
         (remain_samples * std::chrono::microseconds(std::chrono::seconds(1)) /
          settings_.sample_rate);
 
+    // Get raw pointer to PCM data
+    const float* pcm_data = static_cast<const float*>(frame.pcm.data());
+    int channels = frame.channels();
+    
+    // Debug: Check PCM data pointer
+    PLOG_INFO << "PCM data pointer: " << (void*)pcm_data << ", channels: " << channels;
+    if (pcm_data == nullptr) {
+      PLOG_ERROR << "PCM data pointer is null!";
+      return;
+    }
+    
+    // Debug: Check first few samples
+    if (frame.samples() > 0) {
+      PLOG_INFO << "First PCM sample: " << pcm_data[0];
+      if (frame.samples() > 1) {
+        PLOG_INFO << "Second PCM sample: " << pcm_data[1];
+      }
+    }
+    
+    // Add all samples to buffer
+    size_t pcm_buf_size_before = pcm_buf_.size();
+    PLOG_INFO << "Starting to add samples to buffer. Current buffer size: " << pcm_buf_size_before;
+    
     for (int i = 0; i < frame.samples(); i++) {
       if (frame.channels() == settings_.channels) {
         for (int j = 0; j < frame.channels(); j++) {
-          pcm_buf_.push_back(frame.pcm(i, j));
+          // Access data correctly: row-major order (samples x channels)
+          float sample = pcm_data[i * channels + j];
+          pcm_buf_.push_back(sample);
+          
+          // Debug first few samples
+          if (i < 2 && j == 0) {
+            PLOG_DEBUG << "Sample[" << i << "][" << j << "] = " << sample;
+          }
         }
       } else if (frame.channels() == 1 && settings_.channels == 2) {
         // 入力フレームはモノラルだけどエンコーダに渡すのはステレオの場合、同じデータを詰めておく
-        pcm_buf_.push_back(frame.pcm(i, 0));
-        pcm_buf_.push_back(frame.pcm(i, 0));
+        float sample = pcm_data[i];
+        pcm_buf_.push_back(sample);
+        pcm_buf_.push_back(sample);
+        
+        if (i < 2) {
+          PLOG_DEBUG << "Mono to Stereo - Sample[" << i << "] = " << sample;
+        }
       } else /*if (frame.channels() == 2 && settings_.channels == 1)*/ {
         // 入力フレームはステレオだけどエンコーダに渡すのはモノラルの場合、平均の値を詰めておく
-        pcm_buf_.push_back((frame.pcm(i, 0) + frame.pcm(i, 1)) / 2);
+        float avg = (pcm_data[i * 2 + 0] + pcm_data[i * 2 + 1]) / 2;
+        pcm_buf_.push_back(avg);
+        
+        if (i < 2) {
+          PLOG_DEBUG << "Stereo to Mono - Sample[" << i << "] = " << avg;
+        }
       }
+    }
+    
+    PLOG_INFO << "Added " << (pcm_buf_.size() - pcm_buf_size_before) 
+              << " samples to buffer. Total buffer size: " << pcm_buf_.size();
 
-      // frame_duration_ms 時間分のデータごとにエンコードする
-      // 16000 [Hz] * 2 [channels] * (20 [ms] / 1000 [ms])
-      if (pcm_buf_.size() < settings_.sample_rate * settings_.channels *
-                                settings_.frame_duration_ms / 1000) {
+    // Encode when we have enough samples
+    // frame_duration_ms 時間分のデータごとにエンコードする
+    // Calculate required frame count (not total float count)
+    size_t required_frames = settings_.sample_rate * settings_.frame_duration_ms / 1000;
+    // Total floats needed in buffer = frames * channels
+    size_t required_floats = required_frames * settings_.channels;
+    
+    PLOG_INFO << "Required frames for encoding: " << required_frames
+              << " (frame_duration_ms: " << settings_.frame_duration_ms << ")"
+              << ", required floats in buffer: " << required_floats
+              << ", pcm_buf size: " << pcm_buf_.size();
+    
+    int encode_count = 0;
+    while (pcm_buf_.size() >= required_floats) {
+      PLOG_INFO << "Calling opus_encode_float with " 
+                << required_frames
+                << " frames, pcm_buf.data() size: " << pcm_buf_.size();
+      
+      // opus_encode_float expects frame count, not total sample count
+      int n = opus_encode_float(encoder_, pcm_buf_.data(),
+                                required_frames,
+                                encoded_buf_.data(), encoded_buf_.size());
+      // バッファが足りないので増やす
+      if (n == OPUS_BUFFER_TOO_SMALL) {
+        PLOG_DEBUG << "OPUS_BUFFER_TOO_SMALL - resizing buffer from " 
+                   << encoded_buf_.size() << " to " << encoded_buf_.size() * 2;
+        encoded_buf_.resize(encoded_buf_.size() * 2);
         continue;
       }
-      while (true) {
-        int n = opus_encode_float(encoder_, pcm_buf_.data(),
-                                  pcm_buf_.size() / settings_.channels,
-                                  encoded_buf_.data(), encoded_buf_.size());
-        // バッファが足りないので増やす
-        if (n == OPUS_BUFFER_TOO_SMALL) {
-          encoded_buf_.resize(encoded_buf_.size() * 2);
-          continue;
-        }
-        if (n < 0) {
-          // 何かエラーが起きた
-          PLOG_ERROR << "Failed to opus_encode_float: result=" << n;
-          return;
-        }
-        // 無事エンコードできた
-        EncodedAudio encoded;
-        encoded.data = CreateAudioBuffer(n);
-        encoded.timestamp = timestamp;
-        timestamp += std::chrono::milliseconds(settings_.frame_duration_ms);
-        memcpy(encoded.data.data(), encoded_buf_.data(), n);
-        encoded_bufs_.push_back(std::move(encoded));
-        break;
+      if (n < 0) {
+        // 何かエラーが起きた
+        PLOG_ERROR << "Failed to opus_encode_float: result=" << n;
+        return;
       }
-      pcm_buf_.clear();
+      // 無事エンコードできた
+      PLOG_INFO << "opus_encode_float succeeded - encoded " << n << " bytes";
+      
+      EncodedAudio encoded;
+      encoded.data = CreateAudioBuffer(n);
+      encoded.timestamp = timestamp;
+      timestamp += std::chrono::milliseconds(settings_.frame_duration_ms);
+      memcpy(encoded.data.data(), encoded_buf_.data(), n);
+      encoded_bufs_.push_back(std::move(encoded));
+      encode_count++;
+      
+      // Remove encoded samples from buffer
+      pcm_buf_.erase(pcm_buf_.begin(), 
+                     pcm_buf_.begin() + required_floats);
+    }
+    
+    if (encode_count > 0) {
+      PLOG_DEBUG << "Encoded " << encode_count << " frames in this call";
     }
 
     for (auto it = encoded_bufs_.begin(); it != encoded_bufs_.end(); ++it) {
-      on_encode_(*it);
+      PLOG_INFO << "Calling on_encode callback with " << it->data.size() << " bytes";
+      if (on_encode_) {
+        on_encode_(*it);
+      } else {
+        PLOG_ERROR << "on_encode callback is not set!";
+      }
+    }
+    if (!encoded_bufs_.empty()) {
+      PLOG_INFO << "Sent " << encoded_bufs_.size() << " encoded frames to callback";
+    } else {
+      PLOG_WARNING << "No encoded frames to send after Encode() call";
     }
     encoded_bufs_.clear();
   }
@@ -128,6 +222,8 @@ class OpusAudioEncoder : public AudioEncoder {
   void SetOnEncode(
       std::function<void(const EncodedAudio&)> on_encode) override {
     on_encode_ = on_encode;
+    PLOG_INFO << "OpusAudioEncoder::SetOnEncode() - callback " 
+              << (on_encode ? "set" : "cleared");
   }
 
  private:
