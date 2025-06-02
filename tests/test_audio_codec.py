@@ -47,7 +47,7 @@ def test_audio_encoder_encode():
 
     assert callback_timestamps == [timedelta(milliseconds=1000)]
 
-    # 10ms → 20ms でエンコード
+    # 10ms -> 20ms でエンコード
     frame = AudioFrame()
     frame.sample_rate = 48000
     frame.timestamp = timedelta(milliseconds=1000)
@@ -78,101 +78,8 @@ def test_audio_encoder_encode():
     encoder.release()
 
 
-def test_audio_encoder_with_non_zero_data():
-    encoder = create_opus_audio_encoder()
-
-    settings = AudioEncoder.Settings()
-    settings.codec_type = AudioCodecType.OPUS
-    settings.sample_rate = 48000
-    settings.channels = 2
-    settings.bitrate = 64000
-    settings.frame_duration_ms = 20
-
-    assert encoder.init(settings) is True
-
-    def on_encoded(encoded: EncodedAudio):
-        assert isinstance(encoded.data, np.ndarray)
-
-    encoder.set_on_encode(on_encoded)
-
-    # 小さなサイン波でテスト
-    frame = AudioFrame()
-    frame.sample_rate = 48000
-    frame.timestamp = timedelta(milliseconds=1000)
-
-    # 440Hz のサイン波を生成
-    samples = 960
-    t = np.arange(samples) / 48000
-    audio_signal = np.sin(2 * np.pi * 440 * t) * 0.1
-    frame.pcm = np.column_stack((audio_signal, audio_signal)).astype(np.float32)
-
-    encoder.encode(frame)
-
-    encoder.release()
-
-
-def test_audio_decoder_decode():
-    # デコーダーのテスト
-    decoder = create_opus_audio_decoder()
-    decoder_settings = AudioDecoder.Settings()
-    decoder_settings.codec_type = AudioCodecType.OPUS
-    decoder_settings.sample_rate = 48000
-    decoder_settings.channels = 2
-    assert decoder.init(decoder_settings) is True
-
-    # まずエンコーダーでデータを作成
-    encoder = create_opus_audio_encoder()
-    encoder_settings = AudioEncoder.Settings()
-    encoder_settings.codec_type = AudioCodecType.OPUS
-    encoder_settings.sample_rate = 48000
-    encoder_settings.channels = 2
-    encoder_settings.bitrate = 64000
-    encoder_settings.frame_duration_ms = 20
-    assert encoder.init(encoder_settings) is True
-
-    encoded_data = []
-
-    def on_encoded(encoded: EncodedAudio):
-        encoded_data.append(encoded)
-
-    encoder.set_on_encode(on_encoded)
-
-    # ゼロデータでエンコード
-    frame = AudioFrame()
-    frame.sample_rate = 48000
-    frame.timestamp = timedelta(milliseconds=1000)
-    frame.pcm = np.zeros((960, 2), dtype=np.float32)
-
-    encoder.encode(frame)
-    encoder.release()
-
-    print(f"Encoded data count: {len(encoded_data)}")
-    assert len(encoded_data) == 1
-
-    # デコード結果を格納
-    decoded_frames = []
-
-    def on_decoded(frame: AudioFrame):
-        print(f"Decoded frame: samples={frame.samples()}, channels={frame.channels()}")
-        decoded_frames.append(frame)
-
-    decoder.set_on_decode(on_decoded)
-
-    # デコード実行
-    print(f"Decoding data with size: {len(encoded_data[0].data)}")
-    decoder.decode(encoded_data[0])
-
-    assert len(decoded_frames) == 1
-    decoded_frame = decoded_frames[0]
-    assert decoded_frame.sample_rate == 48000
-    assert decoded_frame.channels() == 2
-    assert decoded_frame.samples() == 960
-    assert decoded_frame.timestamp == timedelta(milliseconds=1000)
-    decoder.release()
-
-
 def test_audio_encoder_decoder():
-    # エンコード→デコードのテスト
+    """エンコード -> デコードのテスト"""
     encoder = create_opus_audio_encoder()
     encoder_settings = AudioEncoder.Settings()
     encoder_settings.codec_type = AudioCodecType.OPUS
