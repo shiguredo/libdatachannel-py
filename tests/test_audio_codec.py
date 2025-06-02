@@ -112,7 +112,7 @@ def test_audio_encoder_with_non_zero_data():
 
 @settings(max_examples=1000)
 @given(
-    samples=st.integers(min_value=48000, max_value=96000),
+    samples=st.integers(min_value=0, max_value=96000),
     # https://www.rfc-editor.org/rfc/rfc6716#section-2.1.1
     # Opus supports all bitrates from 6 kbit/s to 510 kbit/s.
     bitrate=st.integers(min_value=6000, max_value=510000),
