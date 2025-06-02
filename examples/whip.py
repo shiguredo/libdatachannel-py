@@ -86,12 +86,13 @@ class WHIPClient:
         # Key frame interval settings
         self.key_frame_interval_seconds = 2.0
         self.last_key_frame_time = None
+        self.key_frame_count = 0
 
         # Camera and audio capture
         self.camera = None
         self.camera_thread = None
         self.audio_thread = None
-        self.audio_queue = queue.Queue(maxsize=100)
+        self.audio_queue = queue.Queue(maxsize=10)  # Reduce buffer to minimize latency
         self.video_queue = queue.Queue(maxsize=30)
         self.capture_active = False
 
@@ -101,6 +102,9 @@ class WHIPClient:
         self._audio_send_count = 0
         self._last_audio_send_time = None
 
+        # Audio accumulation buffer for 10ms blocks
+        self.audio_accumulator = []
+
     def _handle_error(self, context: str, error: Exception):
         """Unified error handling"""
         logger.error(f"Error {context}: {error}")
@@ -109,14 +113,107 @@ class WHIPClient:
 
             traceback.print_exc()
 
-    def _create_black_i420_buffer(self) -> VideoFrameBufferI420:
-        """Create a black I420 video buffer"""
-        buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
+    # def _create_black_i420_buffer(self) -> VideoFrameBufferI420:
+    #     """Create a black I420 video buffer"""
+    #     buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
 
-        # Fill with black (Y=16, U=128, V=128)
-        buffer.y = np.full((self.video_height, buffer.stride_y()), 16, dtype=np.uint8)
-        buffer.u = np.full((self.video_height // 2, buffer.stride_u()), 128, dtype=np.uint8)
-        buffer.v = np.full((self.video_height // 2, buffer.stride_v()), 128, dtype=np.uint8)
+    #     # Fill with black (Y=16, U=128, V=128)
+    #     buffer.y = np.full((self.video_height, buffer.stride_y()), 16, dtype=np.uint8)
+    #     buffer.u = np.full((self.video_height // 2, buffer.stride_u()), 128, dtype=np.uint8)
+    #     buffer.v = np.full((self.video_height // 2, buffer.stride_v()), 128, dtype=np.uint8)
+
+    #     return buffer
+
+    def _create_pattern_i420_buffer(self) -> VideoFrameBufferI420:
+        """Create a patterned I420 video buffer that changes with each key frame"""
+        buffer: VideoFrameBufferI420 = VideoFrameBufferI420.create(
+            self.video_width, self.video_height
+        )
+
+        import random
+
+        # Random gradient direction and color every key frame
+        random.seed(self.key_frame_count)
+        direction: str = random.choice(["horizontal", "vertical", "diagonal"])
+
+        # Random RGB colors for gradient start and end
+        # Generate two random colors
+        r1, g1, b1 = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
+        r2, g2, b2 = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
+
+        # Convert RGB to YUV using standard conversion
+        # Y = 0.299*R + 0.587*G + 0.114*B
+        # U = -0.169*R - 0.331*G + 0.5*B + 128
+        # V = 0.5*R - 0.419*G - 0.081*B + 128
+        y1 = int(0.299 * r1 + 0.587 * g1 + 0.114 * b1)
+        u1 = int(-0.169 * r1 - 0.331 * g1 + 0.5 * b1 + 128)
+        v1 = int(0.5 * r1 - 0.419 * g1 - 0.081 * b1 + 128)
+
+        y2 = int(0.299 * r2 + 0.587 * g2 + 0.114 * b2)
+        u2 = int(-0.169 * r2 - 0.331 * g2 + 0.5 * b2 + 128)
+        v2 = int(0.5 * r2 - 0.419 * g2 - 0.081 * b2 + 128)
+
+        # Clamp values to valid range
+        y1, y2 = np.clip([y1, y2], 16, 235)
+        u1, u2 = np.clip([u1, u2], 16, 240)
+        v1, v2 = np.clip([v1, v2], 16, 240)
+
+        # Create gradient for Y channel
+        if direction == "horizontal":
+            # Gradient from left to right
+            y_gradient = np.linspace(y1, y2, self.video_width, dtype=np.uint8)
+            buffer.y[: self.video_height, : self.video_width] = y_gradient
+
+            # Color gradient for U and V (subsampled by 2)
+            u_gradient = np.linspace(u1, u2, self.video_width // 2, dtype=np.uint8)
+            v_gradient = np.linspace(v1, v2, self.video_width // 2, dtype=np.uint8)
+            buffer.u[: self.video_height // 2, : self.video_width // 2] = u_gradient
+            buffer.v[: self.video_height // 2, : self.video_width // 2] = v_gradient
+
+        elif direction == "vertical":
+            # Gradient from top to bottom
+            y_gradient = np.linspace(y1, y2, self.video_height, dtype=np.uint8).reshape(-1, 1)
+            buffer.y[: self.video_height, : self.video_width] = y_gradient
+
+            # Color gradient for U and V (subsampled by 2)
+            u_gradient = np.linspace(u1, u2, self.video_height // 2, dtype=np.uint8).reshape(-1, 1)
+            v_gradient = np.linspace(v1, v2, self.video_height // 2, dtype=np.uint8).reshape(-1, 1)
+            buffer.u[: self.video_height // 2, : self.video_width // 2] = u_gradient
+            buffer.v[: self.video_height // 2, : self.video_width // 2] = v_gradient
+
+        else:  # diagonal
+            # Gradient from top-left to bottom-right
+            x_grad = np.linspace(0, 1, self.video_width)
+            y_grad = np.linspace(0, 1, self.video_height).reshape(-1, 1)
+            diagonal = (x_grad + y_grad) / 2
+            buffer.y[: self.video_height, : self.video_width] = (y1 + (y2 - y1) * diagonal).astype(
+                np.uint8
+            )
+
+            # Color gradient for U and V (subsampled by 2)
+            x_grad_half = np.linspace(0, 1, self.video_width // 2)
+            y_grad_half = np.linspace(0, 1, self.video_height // 2).reshape(-1, 1)
+            diagonal_half = (x_grad_half + y_grad_half) / 2
+            buffer.u[: self.video_height // 2, : self.video_width // 2] = (
+                u1 + (u2 - u1) * diagonal_half
+            ).astype(np.uint8)
+            buffer.v[: self.video_height // 2, : self.video_width // 2] = (
+                v1 + (v2 - v1) * diagonal_half
+            ).astype(np.uint8)
+
+        # Fill padding if stride is larger than width
+        if buffer.stride_y() > self.video_width:
+            buffer.y[:, self.video_width : buffer.stride_y()] = 16
+        if buffer.stride_u() > self.video_width // 2:
+            buffer.u[:, self.video_width // 2 : buffer.stride_u()] = 128
+        if buffer.stride_v() > self.video_width // 2:
+            buffer.v[:, self.video_width // 2 : buffer.stride_v()] = 128
+
+        # Log the colors for debugging
+        if self.key_frame_count % 5 == 0:  # Log every 5th keyframe
+            logger.info(
+                f"Gradient colors: RGB1({r1},{g1},{b1}) -> RGB2({r2},{g2},{b2}), direction: {direction}"
+            )
 
         return buffer
 
@@ -128,9 +225,15 @@ class WHIPClient:
 
         time_since_last_key = current_time - self.last_key_frame_time
         if time_since_last_key >= self.key_frame_interval_seconds:
-            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
+            logger.debug(
+                f"Requesting key frame #{self.key_frame_count} (time since last: {time_since_last_key:.2f}s)"
+            )
             try:
+                # video_encoder must be initialized before requesting keyframe
+                if not self.video_encoder:
+                    raise RuntimeError("Video encoder is not initialized")
                 self.video_encoder.force_intra_next_frame()
+                self.key_frame_count += 1
             except Exception as e:
                 self._handle_error("requesting keyframe", e)
             self.last_key_frame_time = current_time
@@ -651,23 +754,43 @@ class WHIPClient:
             # Ensure the data is float32 and contiguous
             stereo_data = np.ascontiguousarray(stereo_data, dtype=np.float32)
 
-            try:
-                self.audio_queue.put_nowait(stereo_data)
-                # Debug: log first few frames
-                if hasattr(self, "_audio_callback_count"):
-                    self._audio_callback_count += 1
-                else:
-                    self._audio_callback_count = 1
+            # Accumulate 10ms blocks to form 20ms frames
+            self.audio_accumulator.append(stereo_data)
 
-                if self._audio_callback_count <= 5:
-                    logger.info(
-                        f"Audio capture callback #{self._audio_callback_count}: "
-                        f"stereo_data shape={stereo_data.shape}, "
-                        f"min={stereo_data.min():.6f}, max={stereo_data.max():.6f}"
-                    )
-            except queue.Full:
-                # Drop audio if queue is full
-                pass
+            # Check if we have accumulated 20ms worth of data (2 x 10ms blocks)
+            if len(self.audio_accumulator) >= 2:
+                # Combine the blocks
+                combined_data = np.concatenate(self.audio_accumulator[:2], axis=0)
+                # Remove used blocks
+                self.audio_accumulator = self.audio_accumulator[2:]
+
+                try:
+                    # Try to keep only the latest audio
+                    if self.audio_queue.qsize() >= 2:
+                        # Drop oldest frame if queue is getting full
+                        try:
+                            self.audio_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+
+                    self.audio_queue.put_nowait(combined_data)
+
+                    # Debug: log first few frames
+                    if hasattr(self, "_audio_callback_count"):
+                        self._audio_callback_count += 1
+                    else:
+                        self._audio_callback_count = 1
+
+                    if self._audio_callback_count <= 5:
+                        logger.info(
+                            f"Audio capture callback #{self._audio_callback_count}: "
+                            f"combined_data shape={combined_data.shape}, "
+                            f"min={combined_data.min():.6f}, max={combined_data.max():.6f}"
+                        )
+                except queue.Full:
+                    # Drop audio if queue is full
+                    if self._audio_callback_count % 50 == 0:
+                        logger.warning("Audio queue full, dropping frame")
 
         # Start audio stream
         try:
@@ -683,6 +806,10 @@ class WHIPClient:
                 default_device = devices[default_input]
                 logger.info(
                     f"Default input device: {default_device['name']}, channels: {default_device['max_input_channels']}"
+                )
+                # Log latency information
+                logger.info(
+                    f"Device default latency: low={default_device.get('default_low_input_latency', 'N/A')}s, high={default_device.get('default_high_input_latency', 'N/A')}s"
                 )
 
             # Check for macOS permission hint
@@ -707,9 +834,10 @@ class WHIPClient:
                 samplerate=self.audio_sample_rate,
                 channels=input_channels,  # Use detected channel count
                 callback=audio_callback,
-                blocksize=int(self.audio_sample_rate * 0.02),  # 20ms blocks
+                blocksize=int(self.audio_sample_rate * 0.01),  # 10ms blocks for lower latency
                 dtype="float32",
                 device=default_input,  # Explicitly use default input device
+                latency="low",  # Request low latency
             ):
                 logger.info(
                     f"Audio capture started at {self.audio_sample_rate} Hz with device {default_input}"
@@ -798,9 +926,13 @@ class WHIPClient:
                     else:
                         self._audio_send_count = 1
 
-                    if self._audio_send_count <= 10 or self._audio_send_count % 50 == 0:
-                        logger.debug(
-                            f"Sending audio frame #{self._audio_send_count} at time={current_time:.3f}, next_audio_time={next_audio_time:.3f}"
+                    # Log around key frame timing
+                    if self.key_frame_count > 0 and self._audio_send_count % 50 == 0:
+                        time_to_next_keyframe = self.key_frame_interval_seconds - (
+                            current_time - self.last_key_frame_time
+                        )
+                        logger.info(
+                            f"Audio frame #{self._audio_send_count}, time to next keyframe: {time_to_next_keyframe:.2f}s"
                         )
 
                     if use_mic:
@@ -812,8 +944,9 @@ class WHIPClient:
                 # Sleep until next frame
                 next_time = min(next_video_time, next_audio_time)
                 sleep_time = max(0, next_time - time.time())
+                # Limit sleep time to avoid missing audio frames
                 if sleep_time > 0:
-                    time.sleep(sleep_time)
+                    time.sleep(min(sleep_time, 0.010))  # Max 10ms sleep
         finally:
             if use_camera or use_mic:
                 # Stop capture threads
@@ -900,6 +1033,21 @@ class WHIPClient:
                     f"Audio frame timing issue: {time_diff:.1f}ms between frames (expected 20ms)"
                 )
         self._last_audio_send_time = current_time
+
+        # Monitor queue depth
+        queue_size = self.audio_queue.qsize()
+        if queue_size > 2:  # More than 40ms of audio buffered
+            logger.warning(f"Audio queue backlog: {queue_size} frames ({queue_size * 20}ms)")
+            # Drop old frames to reduce latency - keep only the most recent
+            while queue_size > 1:
+                try:
+                    self.audio_queue.get_nowait()
+                    queue_size -= 1
+                except queue.Empty:
+                    break
+            logger.info(
+                f"Dropped frames to reduce latency, new queue size: {self.audio_queue.qsize()}"
+            )
 
         try:
             # Get audio data from queue (non-blocking)
@@ -1006,6 +1154,8 @@ class WHIPClient:
                 f"mean={audio_data.mean():.6f}, "
                 f"queue_empty={queue_was_empty}, queue_size={self.audio_queue.qsize()}"
             )
+            # Log latency estimate
+            logger.info(f"Estimated audio latency: {self.audio_queue.qsize() * 20}ms in queue")
 
             # Check RMS (Root Mean Square) for better volume indication
             rms = np.sqrt(np.mean(audio_data**2))
@@ -1043,14 +1193,14 @@ class WHIPClient:
         self.audio_timestamp_ms += 20
 
     def _send_fake_video_frame(self):
-        """Send a black fake video frame"""
+        """Send a fake video frame with patterns"""
         if not self.video_encoder:
             return
 
-        # Create I420 frame with black buffer
+        # Create I420 frame with pattern buffer
         frame = VideoFrame()
         frame.format = ImageFormat.I420
-        frame.i420_buffer = self._create_black_i420_buffer()
+        frame.i420_buffer = self._create_pattern_i420_buffer()
         frame.timestamp = self.video_frame_number / self.video_fps
         frame.frame_number = self.video_frame_number
 
@@ -1252,7 +1402,7 @@ def main():
     args = parser.parse_args()
 
     # Log what sources are being used
-    video_source = "camera" if args.camera else "fake (black video)"
+    video_source = "camera" if args.camera else "fake (pattern video)"
     audio_source = "microphone" if args.mic else "fake (440Hz tone)"
     logger.info(f"Video source: {video_source}")
     logger.info(f"Audio source: {audio_source}")
