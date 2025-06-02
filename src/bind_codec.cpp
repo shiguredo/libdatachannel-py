@@ -16,10 +16,10 @@
 #include "aom_video_decoder.h"
 #include "aom_video_encoder.h"
 #include "audio_codec.h"
-#include "openh264_video_encoder.h"
 #include "openh264_video_decoder.h"
-#include "opus_audio_encoder.h"
+#include "openh264_video_encoder.h"
 #include "opus_audio_decoder.h"
+#include "opus_audio_encoder.h"
 #include "video_codec.h"
 #include "videotoolbox_video_encoder.h"
 
@@ -160,7 +160,8 @@ void bind_audio_codec(nb::module_& m) {
       .def_rw("sample_rate", &AudioEncoder::Settings::sample_rate)
       .def_rw("channels", &AudioEncoder::Settings::channels)
       .def_rw("bitrate", &AudioEncoder::Settings::bitrate)
-      .def_rw("frame_duration_ms", &AudioEncoder::Settings::frame_duration_ms);
+      .def_rw("frame_duration_ms", &AudioEncoder::Settings::frame_duration_ms)
+      .def_rw("opus_inband_fec", &AudioEncoder::Settings::opus_inband_fec);
 
   m.def("create_opus_audio_encoder", &CreateOpusAudioEncoder);
 

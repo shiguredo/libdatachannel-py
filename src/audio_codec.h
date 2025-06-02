@@ -48,6 +48,10 @@ class AudioEncoder {
     int channels;
     int bitrate;
     int frame_duration_ms;
+    // 0 インバンドFECを無効にする（デフォルト）。
+    // 1 インバンドFECを有効にする。パケットロス率が十分に高い場合、Opusは高ビットレートでも自動的にSILKに切り替えて、そのFECを使用できるようにする。
+    // 2 インバンドFECを有効にするが、音楽がある場合でも必ずしもSILKに切り替えるとは限らない。
+    int opus_inband_fec = 0;
   };
 
   virtual ~AudioEncoder() = default;

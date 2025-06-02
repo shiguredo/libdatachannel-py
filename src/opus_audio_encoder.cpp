@@ -32,7 +32,8 @@ class OpusAudioEncoder : public AudioEncoder {
       PLOG_ERROR << "Failed to create opus encoder";
       return false;
     }
-    int r = opus_encoder_ctl(encoder_, OPUS_SET_INBAND_FEC(1));
+    int r = opus_encoder_ctl(encoder_,
+                             OPUS_SET_INBAND_FEC(settings_.opus_inband_fec));
     if (r != OPUS_OK) {
       PLOG_ERROR << "Failed to OPUS_SET_INBAND_FEC";
       return false;
