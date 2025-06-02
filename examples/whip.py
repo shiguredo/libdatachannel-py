@@ -94,37 +94,38 @@ class WHIPClient:
         self.audio_queue = queue.Queue(maxsize=100)
         self.video_queue = queue.Queue(maxsize=30)
         self.capture_active = False
-        
+
         # Debug counters
         self._audio_callback_count = 0
         self._mic_callback_count = 0
         self._audio_send_count = 0
         self._last_audio_send_time = None
-    
+
     def _handle_error(self, context: str, error: Exception):
         """Unified error handling"""
         logger.error(f"Error {context}: {error}")
         if logger.isEnabledFor(logging.DEBUG):
             import traceback
+
             traceback.print_exc()
-    
+
     def _create_black_i420_buffer(self) -> VideoFrameBufferI420:
         """Create a black I420 video buffer"""
         buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
-        
+
         # Fill with black (Y=16, U=128, V=128)
         buffer.y = np.full((self.video_height, buffer.stride_y()), 16, dtype=np.uint8)
         buffer.u = np.full((self.video_height // 2, buffer.stride_u()), 128, dtype=np.uint8)
         buffer.v = np.full((self.video_height // 2, buffer.stride_v()), 128, dtype=np.uint8)
-        
+
         return buffer
-    
+
     def _check_and_request_keyframe(self):
         """Check if it's time to request a key frame"""
         current_time = time.time()
         if self.last_key_frame_time is None:
             self.last_key_frame_time = current_time
-        
+
         time_since_last_key = current_time - self.last_key_frame_time
         if time_since_last_key >= self.key_frame_interval_seconds:
             logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
@@ -353,7 +354,7 @@ class WHIPClient:
         settings.codec_type = AudioCodecType.OPUS
         settings.sample_rate = self.audio_sample_rate
         settings.channels = self.audio_channels
-        settings.bitrate = 160000  # 160 kbps
+        settings.bitrate = 96000  # 96 kbps
         settings.frame_duration_ms = 20
 
         # Note: Opus encoder is configured with these settings
@@ -448,7 +449,7 @@ class WHIPClient:
                 if len(data_bytes) > 0:
                     toc_byte = data_bytes[0]
                     logger.info(
-                        f"Opus TOC byte: 0x{toc_byte:02x} (config={toc_byte>>3}, s={toc_byte>>2 & 1}, c={toc_byte & 3})"
+                        f"Opus TOC byte: 0x{toc_byte:02x} (config={toc_byte >> 3}, s={toc_byte >> 2 & 1}, c={toc_byte & 3})"
                     )
 
                     # Decode TOC byte according to RFC 6716
@@ -472,7 +473,7 @@ class WHIPClient:
 
                     logger.info(
                         f"Opus packet: mode={mode}, bandwidth={bandwidth}, "
-                        f"frame_size={frame_size_ms}ms, stereo={s}, frames_per_packet={c+1}"
+                        f"frame_size={frame_size_ms}ms, stereo={s}, frames_per_packet={c + 1}"
                     )
 
             # Check track state
@@ -516,7 +517,8 @@ class WHIPClient:
                     if self.audio_sr_reporter:
                         # Get elapsed time in clock rate from last RTCP sender report
                         report_elapsed_timestamp = (
-                            audio_config.timestamp - self.audio_sr_reporter.last_reported_timestamp()
+                            audio_config.timestamp
+                            - self.audio_sr_reporter.last_reported_timestamp()
                         )
 
                         # Check if last report was at least 1 second ago
@@ -1001,7 +1003,7 @@ class WHIPClient:
         log_level = logging.INFO if self.audio_timestamp_ms <= 200 else logging.DEBUG
         logger.log(
             log_level,
-            f"[Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms/1000.0:.3f}s",
+            f"[Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms / 1000.0:.3f}s",
         )
 
         # Debug: Check if encoder callback gets called
@@ -1131,7 +1133,7 @@ class WHIPClient:
         log_level = logging.INFO if self.audio_timestamp_ms <= 200 else logging.DEBUG
         logger.log(
             log_level,
-            f"[Dummy Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms/1000.0:.3f}s",
+            f"[Dummy Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms / 1000.0:.3f}s",
         )
         try:
             self.audio_encoder.encode(frame)
