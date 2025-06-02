@@ -309,6 +309,23 @@ class WHIPClient:
             ssrc=1234567, cname="video-stream", payload_type=35, clock_rate=90000
         )
 
+        # Initialize RTP timestamps
+        import random
+
+        video_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
+        video_config.timestamp = video_config.start_timestamp
+        video_config.sequence_number = random.randint(0, 0xFFFF)
+
+        # Store config for later use
+        self.video_config = video_config
+
+        logger.info(
+            f"Video RTP config: SSRC={video_config.ssrc}, "
+            f"cname={video_config.cname}, payload_type={video_config.payload_type}, "
+            f"clock_rate={video_config.clock_rate}, "
+            f"initial_timestamp={video_config.timestamp}, initial_seq={video_config.sequence_number}"
+        )
+
         self.video_packetizer = AV1RtpPacketizer(
             AV1RtpPacketizer.Packetization.TemporalUnit, video_config
         )
