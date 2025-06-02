@@ -1,8 +1,7 @@
 #include "audio_codec.h"
 
 audio_buffer_type CreateAudioBuffer(int size) {
-  auto ptr = new std::shared_ptr<uint8_t>(new uint8_t[size](),
-                                          [](uint8_t* ptr) { delete[] ptr; });
+  auto ptr = new uint8_t[size]();
   nanobind::capsule owner(
       ptr, [](void* ptr) noexcept { delete[] static_cast<uint8_t*>(ptr); });
   return audio_buffer_type(ptr, {(size_t)size}, owner, {(int64_t)1});
