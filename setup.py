@@ -44,7 +44,7 @@ def run_setup(build_platform, target_platform):
     setup(
         version=version,
         url="https://github.com/shiguredo/libdatachannel-py",
-        packages=["libdatachannel"],
+        packages=["libdatachannel", "libdatachannel.codec", "libdatachannel.libyuv"],
         package_dir={"": "src"},
         package_data={
             "libdatachannel": ["libdatachannel_ext.*"],
