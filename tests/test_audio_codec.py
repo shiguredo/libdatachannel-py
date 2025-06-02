@@ -36,7 +36,7 @@ def test_audio_encoder_encode():
     frame = AudioFrame()
     frame.sample_rate = 48000
     frame.timestamp = timedelta(milliseconds=1000)
-    # 48000 Hz * 20 ms = 960 samples
+    # 48000 Hz * 20 ms = 960 サンプル
     frame.pcm = np.zeros((960, 2), dtype=np.float32)
 
     encoder.encode(frame)
@@ -70,6 +70,39 @@ def test_audio_encoder_encode():
         timedelta(milliseconds=1090),
         timedelta(milliseconds=1110),
     ]
+
+    encoder.release()
+
+
+def test_audio_encoder_with_non_zero_data():
+    encoder = create_opus_audio_encoder()
+
+    settings = AudioEncoder.Settings()
+    settings.codec_type = AudioCodecType.OPUS
+    settings.sample_rate = 48000
+    settings.channels = 2
+    settings.bitrate = 64000
+    settings.frame_duration_ms = 20
+
+    assert encoder.init(settings) is True
+
+    def on_encoded(encoded: EncodedAudio):
+        assert isinstance(encoded.data, np.ndarray)
+
+    encoder.set_on_encode(on_encoded)
+
+    # 小さなサイン波でテスト
+    frame = AudioFrame()
+    frame.sample_rate = 48000
+    frame.timestamp = timedelta(milliseconds=1000)
+
+    # 440Hz のサイン波を生成
+    samples = 960
+    t = np.arange(samples) / 48000
+    audio_signal = np.sin(2 * np.pi * 440 * t) * 0.1
+    frame.pcm = np.column_stack((audio_signal, audio_signal)).astype(np.float32)
+
+    encoder.encode(frame)
 
     encoder.release()
 
