@@ -707,7 +707,7 @@ class WHIPClient:
     def send_frames(
         self, duration: Optional[int] = None, use_camera: bool = False, use_mic: bool = False
     ):
-        """Send video and audio frames from camera/mic or dummy data"""
+        """Send video and audio frames from camera/mic or fake data"""
         if not self.pc:
             raise RuntimeError("PeerConnection not initialized. Call connect() first.")
 
@@ -770,7 +770,7 @@ class WHIPClient:
                     if use_camera:
                         self._send_video_frame()
                     else:
-                        self._send_dummy_video_frame()
+                        self._send_fake_video_frame()
                     next_video_time += video_interval
 
                 # Send audio frame
@@ -789,7 +789,7 @@ class WHIPClient:
                     if use_mic:
                         self._send_audio_frame()
                     else:
-                        self._send_dummy_audio_frame()
+                        self._send_fake_audio_frame()
                     next_audio_time += audio_interval
 
                 # Sleep until next frame
@@ -1025,8 +1025,8 @@ class WHIPClient:
             self._handle_error("in audio_encoder.encode()", e)
         self.audio_timestamp_ms += 20
 
-    def _send_dummy_video_frame(self):
-        """Send a black dummy video frame"""
+    def _send_fake_video_frame(self):
+        """Send a black fake video frame"""
         if not self.video_encoder:
             return
 
@@ -1046,10 +1046,10 @@ class WHIPClient:
         self.video_frame_number += 1
         self._check_and_request_keyframe()
 
-    def _send_dummy_audio_frame(self):
-        """Send a silent dummy audio frame"""
+    def _send_fake_audio_frame(self):
+        """Send a silent fake audio frame"""
         if not self.audio_encoder:
-            logger.warning("No audio encoder available for dummy frame")
+            logger.warning("No audio encoder available for fake frame")
             return
 
         # Create audio frame
@@ -1078,7 +1078,7 @@ class WHIPClient:
 
         # Debug: Log detailed info for first few frames
         if self.audio_timestamp_ms <= 100:
-            logger.info(f"[Dummy Audio Debug] Frame at {self.audio_timestamp_ms}ms:")
+            logger.info(f"[Fake Audio Debug] Frame at {self.audio_timestamp_ms}ms:")
             logger.info(f"  - Shape: {audio_data.shape}")
             logger.info(f"  - dtype: {audio_data.dtype}")
             logger.info(f"  - is C-contiguous: {audio_data.flags['C_CONTIGUOUS']}")
@@ -1096,7 +1096,7 @@ class WHIPClient:
                 if hasattr(frame.timestamp, "total_seconds")
                 else frame.timestamp
             )
-            logger.info("[Dummy AudioFrame Debug] Created frame:")
+            logger.info("[Fake AudioFrame Debug] Created frame:")
             logger.info(f"  - sample_rate: {frame.sample_rate}")
             logger.info(f"  - timestamp: {timestamp_sec:.3f}s")
             logger.info(f"  - samples(): {frame.samples()}")
@@ -1115,7 +1115,7 @@ class WHIPClient:
                 else frame.timestamp
             )
             logger.info(
-                f"Dummy audio progress: timestamp={timestamp_sec:.3f}s, "
+                f"Fake audio progress: timestamp={timestamp_sec:.3f}s, "
                 f"shape={audio_data.shape}, "
                 f"min={audio_data.min():.6f}, max={audio_data.max():.6f}, "
                 f"mean={audio_data.mean():.6f}"
@@ -1123,24 +1123,24 @@ class WHIPClient:
 
             # Check RMS (Root Mean Square) for better volume indication
             rms = np.sqrt(np.mean(audio_data**2))
-            logger.info(f"Dummy audio RMS: {rms:.6f} (expected ~0.212 for 30% sine wave)")
+            logger.info(f"Fake audio RMS: {rms:.6f} (expected ~0.212 for 30% sine wave)")
 
             # Also log track state periodically
             if self.audio_track:
-                logger.info(f"Audio track state (dummy): is_open={self.audio_track.is_open()}")
+                logger.info(f"Audio track state (fake): is_open={self.audio_track.is_open()}")
 
         # Encode frame
         log_level = logging.INFO if self.audio_timestamp_ms <= 200 else logging.DEBUG
         logger.log(
             log_level,
-            f"[Dummy Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms / 1000.0:.3f}s",
+            f"[Fake Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms / 1000.0:.3f}s",
         )
         try:
             self.audio_encoder.encode(frame)
-            logger.log(log_level, "[Dummy Encode] audio_encoder.encode() completed successfully")
+            logger.log(log_level, "[Fake Encode] audio_encoder.encode() completed successfully")
         except Exception as e:
             logger.error(f"Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
-            self._handle_error("encoding dummy audio frame", e)
+            self._handle_error("encoding fake audio frame", e)
         self.audio_timestamp_ms += 20
 
     def disconnect(self):
@@ -1235,8 +1235,8 @@ def main():
     args = parser.parse_args()
 
     # Log what sources are being used
-    video_source = "camera" if args.camera else "dummy (black video)"
-    audio_source = "microphone" if args.mic else "dummy (440Hz tone)"
+    video_source = "camera" if args.camera else "fake (black video)"
+    audio_source = "microphone" if args.mic else "fake (440Hz tone)"
     logger.info(f"Video source: {video_source}")
     logger.info(f"Audio source: {audio_source}")
 
