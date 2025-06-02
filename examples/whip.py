@@ -1,15 +1,11 @@
 import argparse
 import logging
-import os
 import queue
 import re
 import threading
 import time
 from typing import List, Optional
 from urllib.parse import urljoin
-
-# Enable debug logging for plog (C++ side)
-os.environ["PLOG_LEVEL"] = "DEBUG"
 
 import cv2
 import httpx
@@ -54,10 +50,9 @@ logger = logging.getLogger(__name__)
 class WHIPClient:
     """Minimal WHIP client for sending test video and audio"""
 
-    def __init__(self, whip_url: str, bearer_token: Optional[str] = None, test_tone: bool = False):
+    def __init__(self, whip_url: str, bearer_token: Optional[str] = None):
         self.whip_url = whip_url
         self.bearer_token = bearer_token
-        self.test_tone = test_tone  # Add test tone option
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
         self.audio_track: Optional[Track] = None
@@ -99,6 +94,45 @@ class WHIPClient:
         self.audio_queue = queue.Queue(maxsize=100)
         self.video_queue = queue.Queue(maxsize=30)
         self.capture_active = False
+        
+        # Debug counters
+        self._audio_callback_count = 0
+        self._mic_callback_count = 0
+        self._audio_send_count = 0
+        self._last_audio_send_time = None
+    
+    def _handle_error(self, context: str, error: Exception):
+        """Unified error handling"""
+        logger.error(f"Error {context}: {error}")
+        if logger.isEnabledFor(logging.DEBUG):
+            import traceback
+            traceback.print_exc()
+    
+    def _create_black_i420_buffer(self) -> VideoFrameBufferI420:
+        """Create a black I420 video buffer"""
+        buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
+        
+        # Fill with black (Y=16, U=128, V=128)
+        buffer.y = np.full((self.video_height, buffer.stride_y()), 16, dtype=np.uint8)
+        buffer.u = np.full((self.video_height // 2, buffer.stride_u()), 128, dtype=np.uint8)
+        buffer.v = np.full((self.video_height // 2, buffer.stride_v()), 128, dtype=np.uint8)
+        
+        return buffer
+    
+    def _check_and_request_keyframe(self):
+        """Check if it's time to request a key frame"""
+        current_time = time.time()
+        if self.last_key_frame_time is None:
+            self.last_key_frame_time = current_time
+        
+        time_since_last_key = current_time - self.last_key_frame_time
+        if time_since_last_key >= self.key_frame_interval_seconds:
+            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
+            try:
+                self.video_encoder.force_intra_next_frame()
+            except Exception as e:
+                self._handle_error("requesting keyframe", e)
+            self.last_key_frame_time = current_time
 
     def _parse_link_header(self, link_header: str) -> List[IceServer]:
         """Parse Link header for ICE servers"""
@@ -263,7 +297,7 @@ class WHIPClient:
         settings.codec_type = VideoCodecType.AV1
         settings.width = self.video_width
         settings.height = self.video_height
-        settings.bitrate = 2000000  # 2 Mbps
+        settings.bitrate = 2500000  # 2 Mbps
         settings.fps = self.video_fps
 
         if not self.video_encoder.init(settings):
@@ -306,7 +340,7 @@ class WHIPClient:
                     data = encoded_image.data.tobytes()
                     self.video_track.send(data)
                 except Exception as e:
-                    logger.error(f"Error sending encoded video: {e}")
+                    self._handle_error("sending encoded video", e)
 
         self.video_encoder.set_on_encode(on_encoded)
 
@@ -319,7 +353,7 @@ class WHIPClient:
         settings.codec_type = AudioCodecType.OPUS
         settings.sample_rate = self.audio_sample_rate
         settings.channels = self.audio_channels
-        settings.bitrate = 64000  # 64 kbps
+        settings.bitrate = 160000  # 160 kbps
         settings.frame_duration_ms = 20
 
         # Note: Opus encoder is configured with these settings
@@ -479,18 +513,19 @@ class WHIPClient:
                         )
 
                     # Check if we need to send RTCP SR (similar to reference implementation)
-                    # Get elapsed time in clock rate from last RTCP sender report
-                    report_elapsed_timestamp = (
-                        audio_config.timestamp - self.audio_sr_reporter.last_reported_timestamp()
-                    )
+                    if self.audio_sr_reporter:
+                        # Get elapsed time in clock rate from last RTCP sender report
+                        report_elapsed_timestamp = (
+                            audio_config.timestamp - self.audio_sr_reporter.last_reported_timestamp()
+                        )
 
-                    # Check if last report was at least 1 second ago
-                    if audio_config.timestamp_to_seconds(report_elapsed_timestamp) > 1:
-                        self.audio_sr_reporter.set_needs_to_report()
-                        if self._audio_callback_count <= 10:
-                            logger.info(
-                                f"Setting RTCP SR needs to report flag (elapsed: {audio_config.timestamp_to_seconds(report_elapsed_timestamp):.2f}s)"
-                            )
+                        # Check if last report was at least 1 second ago
+                        if audio_config.timestamp_to_seconds(report_elapsed_timestamp) > 1:
+                            self.audio_sr_reporter.set_needs_to_report()
+                            if self._audio_callback_count <= 10:
+                                logger.info(
+                                    f"Setting RTCP SR needs to report flag (elapsed: {audio_config.timestamp_to_seconds(report_elapsed_timestamp):.2f}s)"
+                                )
 
                     result = self.audio_track.send(data)
                     if self._audio_callback_count <= 10:
@@ -501,10 +536,7 @@ class WHIPClient:
                             f"Sent audio data to track: {len(data)} bytes, result={result}",
                         )
                 except Exception as e:
-                    logger.error(f"Error sending encoded audio: {e}")
-                    import traceback
-
-                    traceback.print_exc()
+                    self._handle_error("sending encoded audio", e)
             else:
                 logger.warning("Audio track not open, cannot send data")
 
@@ -553,6 +585,7 @@ class WHIPClient:
 
         # Audio callback
         def audio_callback(indata, frames, time_info, status):
+            _ = time_info  # Unused
             if status:
                 logger.warning(f"Audio callback status: {status}")
 
@@ -665,10 +698,7 @@ class WHIPClient:
                 while self.capture_active:
                     time.sleep(0.1)
         except Exception as e:
-            logger.error(f"Audio capture error: {e}")
-            import traceback
-
-            traceback.print_exc()
+            self._handle_error("audio capture", e)
 
         logger.info("Audio capture stopped")
 
@@ -827,27 +857,10 @@ class WHIPClient:
         try:
             self.video_encoder.encode(frame)
         except Exception as e:
-            logger.error(f"Error encoding frame: {e}")
+            self._handle_error("encoding frame", e)
 
         self.video_frame_number += 1
-
-        # Check if it's time to request a key frame (AFTER encoding the frame)
-        current_time = time.time()
-
-        # Initialize last_key_frame_time if this is the first frame
-        if self.last_key_frame_time is None:
-            self.last_key_frame_time = current_time
-        time_since_last_key = current_time - self.last_key_frame_time
-
-        # Request key frame every 2 seconds
-        if time_since_last_key >= self.key_frame_interval_seconds:
-            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
-            try:
-                # Force the encoder to generate a key frame (intra frame)
-                self.video_encoder.force_intra_next_frame()
-            except Exception as e:
-                logger.error(f"Error requesting keyframe: {e}")
-            self.last_key_frame_time = current_time
+        self._check_and_request_keyframe()
 
         # Debug log every 30 frames (1 second)
         if self.video_frame_number % 30 == 0:
@@ -861,7 +874,7 @@ class WHIPClient:
 
         # Track time between calls
         current_time = time.time()
-        if hasattr(self, "_last_audio_send_time"):
+        if self._last_audio_send_time is not None:
             time_diff = (current_time - self._last_audio_send_time) * 1000  # ms
             if time_diff > 25 or time_diff < 15:  # Should be ~20ms
                 logger.warning(
@@ -1007,10 +1020,7 @@ class WHIPClient:
             self.audio_encoder.encode(frame)
             logger.log(log_level, "[Encode] audio_encoder.encode() completed successfully")
         except Exception as e:
-            logger.error(f"Error in audio_encoder.encode(): {e}")
-            import traceback
-
-            traceback.print_exc()
+            self._handle_error("in audio_encoder.encode()", e)
         self.audio_timestamp_ms += 20
 
     def _send_dummy_video_frame(self):
@@ -1018,29 +1028,10 @@ class WHIPClient:
         if not self.video_encoder:
             return
 
-        # Create I420 frame
+        # Create I420 frame with black buffer
         frame = VideoFrame()
         frame.format = ImageFormat.I420
-
-        # Create I420 buffer
-        buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
-
-        # Fill with black (Y=16, U=128, V=128)
-        # Y plane
-        y_data = np.full((self.video_height, buffer.stride_y()), 16, dtype=np.uint8)
-        buffer.y = y_data
-
-        # U plane
-        u_height = self.video_height // 2
-        u_data = np.full((u_height, buffer.stride_u()), 128, dtype=np.uint8)
-        buffer.u = u_data
-
-        # V plane
-        v_height = self.video_height // 2
-        v_data = np.full((v_height, buffer.stride_v()), 128, dtype=np.uint8)
-        buffer.v = v_data
-
-        frame.i420_buffer = buffer
+        frame.i420_buffer = self._create_black_i420_buffer()
         frame.timestamp = self.video_frame_number / self.video_fps
         frame.frame_number = self.video_frame_number
 
@@ -1048,23 +1039,10 @@ class WHIPClient:
         try:
             self.video_encoder.encode(frame)
         except Exception as e:
-            logger.error(f"Error encoding frame: {e}")
+            self._handle_error("encoding frame", e)
 
         self.video_frame_number += 1
-
-        # Check if it's time to request a key frame
-        current_time = time.time()
-        if self.last_key_frame_time is None:
-            self.last_key_frame_time = current_time
-        time_since_last_key = current_time - self.last_key_frame_time
-
-        if time_since_last_key >= self.key_frame_interval_seconds:
-            logger.info(f"Requesting key frame (time since last: {time_since_last_key:.2f}s)")
-            try:
-                self.video_encoder.force_intra_next_frame()
-            except Exception as e:
-                logger.error(f"Error requesting keyframe: {e}")
-            self.last_key_frame_time = current_time
+        self._check_and_request_keyframe()
 
     def _send_dummy_audio_frame(self):
         """Send a silent dummy audio frame"""
@@ -1159,11 +1137,8 @@ class WHIPClient:
             self.audio_encoder.encode(frame)
             logger.log(log_level, "[Dummy Encode] audio_encoder.encode() completed successfully")
         except Exception as e:
-            logger.error(f"Error encoding dummy audio frame: {e}")
             logger.error(f"Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
-            import traceback
-
-            traceback.print_exc()
+            self._handle_error("encoding dummy audio frame", e)
         self.audio_timestamp_ms += 20
 
     def disconnect(self):
@@ -1223,7 +1198,7 @@ class WHIPClient:
             try:
                 self.pc.close()
             except Exception as e:
-                logger.error(f"Error closing PeerConnection: {e}")
+                self._handle_error("closing PeerConnection", e)
             finally:
                 self.pc = None
 
@@ -1232,7 +1207,7 @@ class WHIPClient:
             try:
                 self.video_encoder.release()
             except Exception as e:
-                logger.error(f"Error releasing video encoder: {e}")
+                self._handle_error("releasing video encoder", e)
             finally:
                 self.video_encoder = None
 
@@ -1240,7 +1215,7 @@ class WHIPClient:
             try:
                 self.audio_encoder.release()
             except Exception as e:
-                logger.error(f"Error releasing audio encoder: {e}")
+                self._handle_error("releasing audio encoder", e)
             finally:
                 self.audio_encoder = None
 
@@ -1254,22 +1229,12 @@ def main():
     parser.add_argument("--duration", type=int, help="Duration in seconds")
     parser.add_argument("--camera", action="store_true", help="Use camera for video capture")
     parser.add_argument("--mic", action="store_true", help="Use microphone for audio capture")
-    parser.add_argument(
-        "--test-tone",
-        action="store_true",
-        help="Use test tone instead of mic audio (for debugging)",
-    )
 
     args = parser.parse_args()
 
     # Log what sources are being used
     video_source = "camera" if args.camera else "dummy (black video)"
-    if args.test_tone:
-        audio_source = "test tone (440Hz)"
-    elif args.mic:
-        audio_source = "microphone"
-    else:
-        audio_source = "dummy (silence)"
+    audio_source = "microphone" if args.mic else "dummy (440Hz tone)"
     logger.info(f"Video source: {video_source}")
     logger.info(f"Audio source: {audio_source}")
 
@@ -1278,7 +1243,7 @@ def main():
     if args.mic:
         logger.info("Make sure you have microphone permissions enabled")
 
-    client = WHIPClient(args.url, args.token, test_tone=args.test_tone)
+    client = WHIPClient(args.url, args.token)
 
     try:
         client.connect()
@@ -1286,10 +1251,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
     except Exception as e:
-        logger.error(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()
+        client._handle_error("", e)
     finally:
         # Always disconnect gracefully
         try:

@@ -30,7 +30,8 @@ dev = [
     "wheel>=0.45.1",
     "numpy>=2.2",
     "ty",
-    "hypothesis>=6.132.0",
+    "hypothesis",
+    "ruff",
 ]
 
 [tool.uv.workspace]
