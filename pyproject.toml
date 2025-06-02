@@ -18,17 +18,19 @@ Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
 
 [build-system]
-requires = ["setuptools>=80.8", "wheel>=0.45.1"]
+requires = ["setuptools>=80.9", "wheel>=0.45.1"]
 build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
     "nanobind>=2.7",
     "pytest>=8",
-    "setuptools>=80.8",
+    "setuptools>=80.9",
     "build>=1.2.2.post1",
     "wheel>=0.45.1",
     "numpy>=2.2",
+    "ty",
+    "hypothesis>=6.132.0",
 ]
 
 [tool.uv.workspace]

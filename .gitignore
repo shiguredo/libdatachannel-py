@@ -16,3 +16,5 @@ __pycache__
 
 libopenh264*
 examples/whip-webrtc*
+
+/.hypothesis
