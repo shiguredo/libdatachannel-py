@@ -6,9 +6,11 @@ from hypothesis import strategies as st
 
 from libdatachannel.codec import (
     AudioCodecType,
+    AudioDecoder,
     AudioEncoder,
     AudioFrame,
     EncodedAudio,
+    create_opus_audio_decoder,
     create_opus_audio_encoder,
 )
 
@@ -25,8 +27,8 @@ from libdatachannel.codec import (
     # frame_duration_ms=st.sampled_from([2.5, 5, 10, 20, 40, 60, 120]),
     frame_duration_ms=st.sampled_from([5, 10, 20, 40, 60, 120]),
 )
-def test_prop_audio_encoder(samples, bitrate, frame_duration_ms):
-    """PBT を利用したエンコーダーのテスト"""
+def test_prop_audio_encode_decode(samples, bitrate, frame_duration_ms):
+    """PBT を利用したエンコーダー・デコーダーのテスト"""
     encoder = create_opus_audio_encoder()
     encoder_settings = AudioEncoder.Settings()
     encoder_settings.codec_type = AudioCodecType.OPUS
@@ -34,20 +36,28 @@ def test_prop_audio_encoder(samples, bitrate, frame_duration_ms):
     encoder_settings.channels = 2
     encoder_settings.bitrate = bitrate
     encoder_settings.frame_duration_ms = frame_duration_ms
-    print(
-        f"Testing with samples={samples}, bitrate={bitrate}, frame_duration_ms={frame_duration_ms}"
-    )
     assert encoder.init(encoder_settings) is True
 
-    encoded_count = 0
+    decoder = create_opus_audio_decoder()
+    decoder_settings = AudioDecoder.Settings()
+    decoder_settings.codec_type = AudioCodecType.OPUS
+    decoder_settings.sample_rate = 48000
+    decoder_settings.channels = 2
+    assert decoder.init(decoder_settings) is True
+
+    encoded_data = []
+    decoded_frames = []
 
     def on_encoded(encoded: EncodedAudio):
-        nonlocal encoded_count
         assert isinstance(encoded.data, np.ndarray)
         assert len(encoded.data) > 0
-        encoded_count += 1
+        encoded_data.append(encoded)
+
+    def on_decoded(frame: AudioFrame):
+        decoded_frames.append(frame)
 
     encoder.set_on_encode(on_encoded)
+    decoder.set_on_decode(on_decoded)
 
     frame = AudioFrame()
     frame.sample_rate = 48000
@@ -65,6 +75,23 @@ def test_prop_audio_encoder(samples, bitrate, frame_duration_ms):
     # frame_duration_ms に基づいて期待されるフレーム数を計算
     samples_per_frame = int(48000 * frame_duration_ms / 1000)
     expected_frames = samples // samples_per_frame
-    assert encoded_count == expected_frames
+    assert len(encoded_data) == expected_frames
+
+    # デコード実行
+    for encoded in encoded_data:
+        decoder.decode(encoded)
+
+    # デコードされたフレーム数の確認
+    assert len(decoded_frames) == expected_frames
+
+    # デコードされたフレームのプロパティを確認
+    for i, decoded_frame in enumerate(decoded_frames):
+        assert decoded_frame.sample_rate == 48000
+        assert decoded_frame.channels() == 2
+        assert decoded_frame.samples() == samples_per_frame
+        # タイムスタンプの確認
+        expected_timestamp = timedelta(milliseconds=1000 + i * frame_duration_ms)
+        assert decoded_frame.timestamp == expected_timestamp
 
     encoder.release()
+    decoder.release()
