@@ -8,11 +8,13 @@
 #include <nanobind/intrusive/ref.h>
 #include <nanobind/make_iterator.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/operators.h>
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/function.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/string_view.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/variant.h>
@@ -459,8 +461,10 @@ void bind_candidate(nb::module_& m) {
       .def("family", &Candidate::family)
       .def("address", &Candidate::address)
       .def("port", &Candidate::port)
-      .def("__eq__", &Candidate::operator==)
-      .def("__ne__", &Candidate::operator!=)
+      .def(nb::self == nb::self,
+           nb::sig("def __eq__(self, arg: object, /) -> bool"))
+      .def(nb::self != nb::self,
+           nb::sig("def __ne__(self, arg: object, /) -> bool"))
       .def("__str__",
            [](const Candidate& c) { return static_cast<std::string>(c); });
 }
@@ -1070,8 +1074,12 @@ void bind_channel(nb::module_& m) {
       // Core API
       .def("close", &Channel::close)
       .def("send", nb::overload_cast<message_variant>(&Channel::send), "data"_a)
-      .def("send", nb::overload_cast<const byte*, size_t>(&Channel::send),
-           "data"_a, "size"_a)
+      .def(
+          "send",
+          [](Channel& self, std::vector<byte> data, size_t size) {
+            return self.send(data.data(), size);
+          },
+          "data"_a, "size"_a)
       .def("is_open", &Channel::isOpen)
       .def("is_closed", &Channel::isClosed)
       .def("max_message_size", &Channel::maxMessageSize)
@@ -1111,8 +1119,12 @@ void bind_datachannel(nb::module_& m) {
       .def("close", &DataChannel::close)
       .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
            "data"_a)
-      .def("send", nb::overload_cast<const byte*, size_t>(&DataChannel::send),
-           "data"_a, "size"_a)
+      .def(
+          "send",
+          [](DataChannel& self, std::vector<byte> data, size_t size) {
+            return self.send(data.data(), size);
+          },
+          "data"_a, "size"_a)
       .def("stream", &DataChannel::stream)
       .def("id", &DataChannel::id)
       .def("label", &DataChannel::label)
@@ -1129,8 +1141,12 @@ void bind_track(nb::module_& m) {
       .def("max_message_size", &Track::maxMessageSize)
       .def("close", &Track::close)
       .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a)
-      .def("send", nb::overload_cast<const byte*, size_t>(&Track::send),
-           "data"_a, "size"_a)
+      .def(
+          "send",
+          [](Track& self, std::vector<byte> data, size_t size) {
+            return self.send(data.data(), size);
+          },
+          "data"_a, "size"_a)
       .def("mid", &Track::mid)
       .def("direction", &Track::direction)
       .def("description", &Track::description)
@@ -1260,8 +1276,12 @@ void bind_websocket(nb::module_& m) {
       .def("close", &WebSocket::close)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a)
-      .def("send", nb::overload_cast<const byte*, size_t>(&WebSocket::send),
-           "data"_a, "size"_a)
+      .def(
+          "send",
+          [](WebSocket& self, std::vector<byte> data, size_t size) {
+            return self.send(data.data(), size);
+          },
+          "data"_a, "size"_a)
       .def("ready_state", &WebSocket::readyState)
       .def("open", &WebSocket::open, "url"_a)
       .def("force_close", &WebSocket::forceClose)

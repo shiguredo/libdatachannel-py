@@ -5,6 +5,9 @@
     "reportMissingImports": "none",
     "reportUnusedImport": "information"
   },
+  "mypy-type-checker.path": [
+    "uv", "run", "mypy",
+  ],
   "[python]": {
     "editor.formatOnSave": true,
     "editor.formatOnSaveMode": "file",

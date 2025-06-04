@@ -18,7 +18,7 @@ from libdatachannel.libyuv import (
 def test_libyuv_nv12_scale():
     src_width, src_height = 640, 480
     src = VideoFrameBufferNV12.create(src_width, src_height)
-    # type: ignore しないと型エラーになる
+    # ignore しないと型エラーになる
     # 参考: https://github.com/wjakob/nanobind/pull/442
     src.y[:, :] = 42  # type: ignore
 
@@ -37,7 +37,7 @@ def test_libyuv_nv12_scale():
         dst.stride_uv(),
         dst.width(),
         dst.height(),
-        FilterMode.NONE,
+        FilterMode.kNone,
     )
 
     assert r == 0
@@ -68,7 +68,7 @@ def test_libyuv_i420_scale():
         dst.stride_v(),
         dst.width(),
         dst.height(),
-        FilterMode.NONE,
+        FilterMode.kNone,
     )
     assert r == 0
     assert np.all(dst.y == 42)
@@ -93,8 +93,8 @@ def test_libyuv_convert_to_i420():
         480,
         640,
         480,
-        RotationMode.Rotate0,
-        FourCC.NV12,
+        RotationMode.kRotate0,
+        FourCC.kNV12,
     )
     assert r == 0
     assert np.all(dst.y == 42)
