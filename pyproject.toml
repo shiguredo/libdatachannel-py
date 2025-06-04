@@ -12,6 +12,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.13"
+dependencies = [
+    "mypy>=1.16.0",
+]
 
 [project.urls]
 Source = "https://github.com/shiguredo/libdatachannel-py"
