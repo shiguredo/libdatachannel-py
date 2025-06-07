@@ -12,10 +12,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.13"
-dependencies = [
-    "mypy>=1.16.0",
-]
-
 [project.urls]
 Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
@@ -34,6 +30,9 @@ dev = [
     "numpy>=2.2",
     "ty",
     "hypothesis>=6.132.0",
+    "mypy",
+    "pyrefly",
+    "pyright",
 ]
 
 [tool.uv.workspace]
@@ -42,3 +41,6 @@ members = ["examples"]
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+[tool.pyrefly]
+project-includes = ["**/*"]
+project-excludes = ["**/*venv/**/*"]
