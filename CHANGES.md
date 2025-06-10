@@ -13,5 +13,9 @@
 
 ### misc
 
+- [CHANGE] リリースを GH コマンドに変更
+  - `gh release create` を使用してリリースを作成するように変更する
+  - @voluntas
 - [ADD] デバッグビルドの追加
   - ローカルバージョンラベル +debug を指定している
+  - @voluntas
