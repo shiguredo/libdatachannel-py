@@ -32,7 +32,7 @@ from libdatachannel.codec import (
     VideoCodecType,
     VideoDecoder,
     VideoFrame,
-    create_aom_video_decoder,
+    create_openh264_video_decoder,
     create_opus_audio_decoder,
 )
 
@@ -82,8 +82,8 @@ class WHEPClient:
         self.audio_frames_received = 0
         self.last_stats_time = time.time()
         
-        # AV1 frame decoding helper
-        self._decode_av1_frame = None
+        # H264 NAL unit buffer
+        self._h264_nal_buffer = []
 
     def _handle_error(self, context: str, error: Exception):
         """Unified error handling"""
@@ -178,9 +178,9 @@ class WHEPClient:
 
         # Add video track SECOND (after audio)
         video_desc = Description.Video("video", Description.Direction.RecvOnly)
-        video_desc.add_av1_codec(35)
+        video_desc.add_h264_codec(96)
         self.video_track = self.pc.add_track(video_desc)
-        logger.info("Added video track with AV1 codec (PT=35)")
+        logger.info("Added video track with H264 codec (PT=96)")
 
         # Create offer
         self.pc.set_local_description()
@@ -254,35 +254,37 @@ class WHEPClient:
         logger.info("Connected to WHEP server")
 
     def _setup_video_decoder(self):
-        """Set up AV1 video decoder"""
+        """Set up H264 video decoder"""
         if not self.video_track:
             logger.warning("Video track is None in _setup_video_decoder")
             return
             
-        # Create AV1 decoder
-        self.video_decoder = create_aom_video_decoder()
+        # Create H264 decoder
+        import os
+        openh264_path = os.environ.get("OPENH264_PATH")
+        if not openh264_path:
+            raise Exception("OPENH264_PATH environment variable not set")
+        self.video_decoder = create_openh264_video_decoder(openh264_path)
         
         # Initialize decoder with settings
         settings = VideoDecoder.Settings()
-        settings.codec_type = VideoCodecType.AV1
+        settings.codec_type = VideoCodecType.H264
+        # Note: width and height are optional for H264 decoder
+        # They will be determined from SPS
 
         if not self.video_decoder.init(settings):
             raise Exception("Failed to initialize video decoder")
             
-        logger.info("AV1 video decoder initialized successfully")
+        logger.info("H264 video decoder initialized successfully")
         
         # Counter for decoded frames
         self._decoded_frame_count = 0
         
-        # Set decoder callback AFTER initialization (like in the test)
+        # Set decoder callback AFTER initialization
         def on_decoded(decoded_frame):
             try:
                 self._decoded_frame_count += 1
-                self.video_frames_received += 1
-                if self.video_frames_received <= 5:
-                    logger.info(f"Video frame decoded #{self.video_frames_received}: {decoded_frame.width()}x{decoded_frame.height()}, format: {decoded_frame.format}")
-                elif self.video_frames_received % 30 == 0:
-                    logger.info(f"Video frame decoded #{self.video_frames_received}")
+                logger.info(f"🎥 Video frame decoded #{self._decoded_frame_count}: {decoded_frame.width()}x{decoded_frame.height()}, format: {decoded_frame.format}")
                 
                 # Put frame in queue
                 try:
@@ -294,195 +296,253 @@ class WHEPClient:
                 import traceback
                 traceback.print_exc()
 
+        def on_error(error_msg):
+            logger.error(f"Video decoder error: {error_msg}")
+
         self.video_decoder.set_on_decode(on_decoded)
+        if hasattr(self.video_decoder, 'set_on_error'):
+            self.video_decoder.set_on_error(on_error)
         logger.info("Video decoder callback set")
 
         # Initialize counter
         self._video_message_count = 0
+        self._h264_timestamp = 0
         
-        # Store for AV1 frame assembly
-        self._av1_frame_buffer = bytearray()
-        self._av1_timestamp = 0
-        self._av1_packets_in_frame = 0
-        
-        # Set track message handler for AV1
+        # Set track message handler for H264
         def on_video_message(data):
             try:
                 self._video_message_count += 1
                 
-                if self._video_message_count <= 10:
-                    logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes")
-                    # Log first bytes to understand the format
-                    preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
-                    logger.info(f"Data preview: {preview}")
-                    
-                    # Check if this looks like RTP
-                    if len(data) >= 12:
-                        byte0 = data[0]
-                        version = (byte0 >> 6) & 0x03
-                        if version == 2:  # RTP version 2
-                            byte1 = data[1]
-                            marker = (byte1 >> 7) & 0x01
-                            pt = byte1 & 0x7F
-                            seq = (data[2] << 8) | data[3]
-                            ts = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
-                            logger.info(f"  RTP: version={version}, marker={marker}, PT={pt}, seq={seq}, timestamp={ts}")
+                # Always check if this is RTP data (not just for first 20 messages)
+                if len(data) >= 12 and (data[0] >> 6) == 2:  # RTP version 2
+                    if self._video_message_count <= 20:
+                        logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes")
+                        # Log first bytes to understand the format
+                        preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
+                        logger.info(f"Data preview: {preview}")
+                        logger.info("Detected RTP packet, manually extracting payload")
+                        # Extract RTP header info
+                        pt = data[1] & 0x7F
+                        seq = (data[2] << 8) | data[3]
+                        timestamp = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+                        
+                        # RTP header is typically 12 bytes (without extensions)
+                        header_size = 12
+                        
+                        # Check for header extension
+                        if data[0] & 0x10:
+                            if len(data) >= header_size + 4:
+                                ext_length = ((data[header_size + 2] << 8) | data[header_size + 3]) * 4
+                                header_size += 4 + ext_length
+                        
+                        # Extract payload
+                        if header_size < len(data):
+                            data = data[header_size:]
+                            if self._video_message_count <= 20:
+                                logger.info(f"Extracted payload: {len(data)} bytes from RTP packet (PT={pt}, seq={seq})")
+                        else:
+                            logger.warning("Invalid RTP packet - header size exceeds packet size")
+                            return
+                else:
+                    # Not RTP data - log for debugging if within first 20 messages
+                    if self._video_message_count <= 20:
+                        logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes (not RTP)")
+                        preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
+                        logger.info(f"Data preview: {preview}")
                 
-                # The data should already be depacketized by OpusRtpDepacketizer
-                # so we receive raw AV1 OBU data
+                # The data should be H264 NAL units after RTP extraction
                 if self.video_decoder and len(data) > 0:
                     try:
-                        # Process AV1 OBU data
-                        if len(data) >= 2:
-                            obu_header = data[0]
-                            obu_type = (obu_header >> 3) & 0x0F
+                        # Process H264 RTP payload according to RFC 6184
+                        nal_type = None
+                        if len(data) > 0:
+                            nal_type = data[0] & 0x1F
                             
-                            if self._video_message_count <= 10:
-                                logger.info(f"OBU type: {obu_type}, size: {len(data)}")
-                                # Analyze OBU types in the message
-                                obu_types = []
-                                i = 0
-                                while i < min(len(data), 100):
-                                    if i < len(data):
-                                        check_header = data[i]
-                                        check_type = (check_header >> 3) & 0x0F
-                                        obu_types.append(check_type)
-                                        # Skip to approximate next OBU
-                                        if check_type == 2:  # temporal delimiter is always 2 bytes
-                                            i += 2
-                                        else:
-                                            i += 20  # rough estimate
-                                    else:
-                                        break
-                                logger.info(f"OBU types in message: {obu_types}")
+                        if self._video_message_count <= 20:
+                            logger.info(f"NAL type: {nal_type} ({self._get_nal_type_name(nal_type) if nal_type else 'Unknown'})")
+                        
+                        # Process based on NAL type
+                        if nal_type >= 1 and nal_type <= 23:  # Single NAL unit
+                            # Add start code prefix to NAL unit
+                            nal_with_start_code = bytearray([0x00, 0x00, 0x00, 0x01])
+                            nal_with_start_code.extend(data)
+                            self._h264_nal_buffer.append(nal_with_start_code)
                             
-                            # Check for temporal delimiter (new frame)
-                            if obu_type == 2:  # Temporal delimiter
-                                # Decode previous frame if exists
-                                if len(self._av1_frame_buffer) > 0 and callable(self._decode_av1_frame):
-                                    self._decode_av1_frame()
+                            if self._video_message_count <= 20 and nal_type > 15:
+                                logger.warning(f"Unusual NAL type {nal_type} in single NAL unit range")
+                            
+                        elif nal_type == 24:  # STAP-A (Single Time Aggregation Packet)
+                            # Skip STAP-A header
+                            i = 1
+                            while i < len(data) - 2:
+                                # Read NAL size (2 bytes)
+                                nal_size = (data[i] << 8) | data[i + 1]
+                                i += 2
                                 
-                                # Start new frame - create new buffer
-                                self._av1_frame_buffer = bytearray()
-                                self._av1_packets_in_frame = 0
-                                self._av1_timestamp += 33  # ~30fps
+                                if i + nal_size <= len(data):
+                                    # Extract NAL unit
+                                    nal_unit = data[i:i + nal_size]
+                                    if len(nal_unit) > 0:
+                                        # Add start code and NAL to buffer
+                                        nal_with_start_code = bytearray([0x00, 0x00, 0x00, 0x01])
+                                        nal_with_start_code.extend(nal_unit)
+                                        self._h264_nal_buffer.append(nal_with_start_code)
+                                        
+                                        if self._video_message_count <= 20:
+                                            sub_nal_type = nal_unit[0] & 0x1F if len(nal_unit) > 0 else None
+                                            logger.info(f"  STAP-A contains NAL type {sub_nal_type}: {self._get_nal_type_name(sub_nal_type)}")
+                                    i += nal_size
+                                else:
+                                    break
+                                    
+                        elif nal_type == 28:  # FU-A (Fragmentation Unit)
+                            if len(data) < 2:
+                                return
                                 
-                                if self._video_message_count <= 5:
-                                    logger.info("New AV1 frame starting with temporal delimiter")
-                                    # Check OBU header format
-                                    logger.info(f"OBU header: 0x{obu_header:02x}, has_size_field={(obu_header >> 1) & 0x01}")
+                            # FU header
+                            fu_header = data[1]
+                            start_bit = (fu_header >> 7) & 0x01
+                            end_bit = (fu_header >> 6) & 0x01
+                            nal_unit_type = fu_header & 0x1F
                             
-                            # Add OBU to frame buffer
-                            self._av1_frame_buffer.extend(data)
-                            self._av1_packets_in_frame += 1
-                            
-                            # Don't decode immediately - wait for more OBUs
-                            # AV1 frames typically contain multiple OBUs:
-                            # - Temporal delimiter (type 2)
-                            # - Sequence header (type 1) - optional
-                            # - Frame header (type 3) or Frame (type 6)
-                            # - Tile groups (type 4) - optional
-                            
-                            # We'll decode when we see the next temporal delimiter or have enough data
-                            if self._av1_packets_in_frame > 2 and len(self._av1_frame_buffer) > 500:
-                                # We likely have a complete frame
-                                if self._video_message_count <= 10:
-                                    logger.info(f"Accumulated {self._av1_packets_in_frame} packets, {len(self._av1_frame_buffer)} bytes - attempting decode")
-                                if callable(self._decode_av1_frame):
-                                    self._decode_av1_frame()
+                            if start_bit:
+                                # First fragment - create NAL header
+                                nal_header = (data[0] & 0xE0) | nal_unit_type
+                                self._fu_buffer = bytearray([0x00, 0x00, 0x00, 0x01, nal_header])
+                                self._fu_buffer.extend(data[2:])  # Skip FU indicator and header
+                                if self._video_message_count <= 20:
+                                    logger.info(f"  FU-A start for NAL type {nal_unit_type}: {self._get_nal_type_name(nal_unit_type)}")
+                            elif hasattr(self, '_fu_buffer'):
+                                # Continuation fragment
+                                self._fu_buffer.extend(data[2:])  # Skip FU indicator and header
+                                
+                                if end_bit:
+                                    # Last fragment - add complete NAL to buffer
+                                    self._h264_nal_buffer.append(self._fu_buffer)
+                                    if self._video_message_count <= 20:
+                                        logger.info(f"  FU-A complete, total size: {len(self._fu_buffer)} bytes")
+                                    del self._fu_buffer
                         else:
-                            # Just accumulate data
-                            self._av1_frame_buffer.extend(data)
+                            if self._video_message_count <= 10:
+                                logger.warning(f"Unsupported NAL type: {nal_type}")
+                            return
+                        
+                        # Check if we should decode
+                        should_decode = False
+                        
+                        # Decode on IDR frames (NAL type 5) or access unit delimiter (type 9)
+                        if nal_type == 5:  # IDR frame
+                            should_decode = True
+                            logger.info(f"IDR frame detected at message #{self._video_message_count}, decoding immediately")
+                        elif nal_type == 9:  # Access unit delimiter - marks new frame
+                            # Decode previous frame if exists
+                            if len(self._h264_nal_buffer) > 1:  # More than just the delimiter
+                                should_decode = True
+                                if self._video_message_count <= 20:
+                                    logger.info("Access unit delimiter detected, decoding previous frame")
+                        elif nal_type in [7, 8]:  # SPS/PPS
+                            if self._video_message_count <= 20:
+                                logger.info(f"Received {self._get_nal_type_name(nal_type)}")
+                        elif len(self._h264_nal_buffer) >= 5:  # Multiple NALs accumulated
+                            should_decode = True
+                            if self._video_message_count <= 20:
+                                logger.info(f"Accumulated {len(self._h264_nal_buffer)} NALs, decoding")
+                        
+                        if should_decode and len(self._h264_nal_buffer) > 0:
+                            # For access unit delimiter, exclude it from current decode
+                            nals_to_decode = self._h264_nal_buffer[:-1] if nal_type == 9 else self._h264_nal_buffer
+                            
+                            if len(nals_to_decode) > 0:
+                                # Combine all NAL units
+                                combined_data = bytearray()
+                                for nal in nals_to_decode:
+                                    combined_data.extend(nal)
+                                
+                                # Create EncodedImage
+                                encoded_image = EncodedImage()
+                                np_data = np.array(combined_data, dtype=np.uint8)
+                                encoded_image.data = np_data
+                                
+                                # Set timestamp
+                                from datetime import timedelta
+                                encoded_image.timestamp = timedelta(milliseconds=self._h264_timestamp)
+                                
+                                # Increment frame counter before logging
+                                self.video_frames_received += 1
+                                
+                                if self.video_frames_received <= 10 or self.video_frames_received % 100 == 0:
+                                    logger.info(f"Decoding H264 frame #{self.video_frames_received}: {len(combined_data)} bytes, {len(nals_to_decode)} NALs, timestamp={self._h264_timestamp}ms")
+                                    # Log NAL types in this frame
+                                    nal_types_in_frame = []
+                                    for nal in nals_to_decode:
+                                        if len(nal) > 4:
+                                            nal_type = nal[4] & 0x1F  # After start code
+                                            nal_types_in_frame.append(nal_type)
+                                    logger.info(f"  NAL types in frame: {[self._get_nal_type_name(t) for t in nal_types_in_frame]}")
+                                    
+                                    # Debug first bytes
+                                    if len(combined_data) > 10 and self.video_frames_received <= 10:
+                                        preview = ' '.join(f'{b:02x}' for b in combined_data[:20])
+                                        logger.info(f"  Frame data preview: {preview}")
+                                
+                                # Decode
+                                try:
+                                    result = self.video_decoder.decode(encoded_image)
+                                    if self.video_frames_received < 5:
+                                        logger.info(f"Decode result: {result}")
+                                    
+                                    # Flush decoder periodically, not every frame
+                                    if hasattr(self.video_decoder, 'flush') and self.video_frames_received % 30 == 0:
+                                        self.video_decoder.flush()
+                                        logger.info(f"Flushed decoder at frame {self.video_frames_received}")
+                                except Exception as e:
+                                    logger.error(f"Failed to decode: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                
+                                # Update timestamp
+                                self._h264_timestamp += 33  # ~30fps
+                                
+                                # Clear buffer after decoding
+                                self._h264_nal_buffer = []
+                                
+                                if self._video_message_count <= 20:
+                                    logger.info(f"Buffer cleared after frame #{self.video_frames_received}, remaining NALs: {len(self._h264_nal_buffer)}")
                             
                     except Exception as e:
-                        logger.error(f"Error processing AV1 data: {e}")
+                        logger.error(f"Error processing H264 data: {e}")
                         import traceback
                         traceback.print_exc()
             except Exception as e:
                 self._handle_error("processing video message", e)
         
-        def _decode_av1_frame():
-            """Helper function to decode accumulated AV1 frame"""
-            if len(self._av1_frame_buffer) == 0:
-                return
-                
-            try:
-                # Create EncodedImage with AV1 data
-                encoded_image = EncodedImage()
-                
-                # Convert buffer to numpy array and set data
-                # Create numpy array from buffer
-                np_data = np.array(self._av1_frame_buffer, dtype=np.uint8)
-                encoded_image.data = np_data
-                
-                # Set timestamp (important for decoder)
-                from datetime import timedelta
-                encoded_image.timestamp = timedelta(milliseconds=self._av1_timestamp)
-                
-                if self.video_frames_received < 5 or self.video_frames_received % 100 == 0:
-                    logger.info(f"Decoding AV1 frame #{self.video_frames_received + 1}: {len(self._av1_frame_buffer)} bytes, {self._av1_packets_in_frame} packets, timestamp={self._av1_timestamp}ms")
-                    
-                    # Debug: Check first few bytes to verify it's valid AV1
-                    if len(self._av1_frame_buffer) >= 4:
-                        preview = ' '.join(f'{b:02x}' for b in self._av1_frame_buffer[:20])
-                        logger.debug(f"Frame data preview: {preview}")
-                
-                # Try to decode
-                if self.video_decoder:
-                    try:
-                        # Log decoder state before decode
-                        if self.video_frames_received < 5:
-                            logger.info(f"Before decode: decoded count = {getattr(self, '_decoded_frame_count', 0)}")
-                        
-                        # Decode the frame - this should trigger the callback
-                        result = self.video_decoder.decode(encoded_image)
-                        
-                        if self.video_frames_received < 5:
-                            logger.info(f"Decode call completed, result={result}, decoded count = {getattr(self, '_decoded_frame_count', 0)}")
-                            # Check if the decoder actually processed the data
-                            if hasattr(self.video_decoder, 'frames_decoded'):
-                                logger.info(f"Decoder frames_decoded: {self.video_decoder.frames_decoded}")
-                            
-                        # Force flush if possible
-                        if hasattr(self.video_decoder, 'flush'):
-                            self.video_decoder.flush()
-                            logger.info("Called flush on decoder")
-                            
-                    except Exception as e:
-                        logger.error(f"Exception during decode: {e}")
-                        import traceback
-                        traceback.print_exc()
-                else:
-                    logger.error("Video decoder is None")
-                    return
-                
-                # Clear buffer for next frame - create new bytearray to avoid reference issues
-                self._av1_frame_buffer = bytearray()
-                self._av1_packets_in_frame = 0
-            except Exception as e:
-                logger.error(f"Error decoding AV1 frame: {e}")
-                import traceback
-                traceback.print_exc()
-                # Create new buffer on error
-                self._av1_frame_buffer = bytearray()
-                self._av1_packets_in_frame = 0
+        def _get_nal_type_name(nal_type):
+            """Get human-readable name for NAL unit type"""
+            nal_names = {
+                1: "Non-IDR slice",
+                5: "IDR slice",
+                6: "SEI",
+                7: "SPS",
+                8: "PPS",
+                9: "Access unit delimiter",
+                24: "STAP-A",
+                28: "FU-A",
+            }
+            return nal_names.get(nal_type, f"Unknown ({nal_type})")
         
-        # Make _decode_av1_frame accessible in the closure
-        self._decode_av1_frame = _decode_av1_frame
+        self._get_nal_type_name = _get_nal_type_name
 
         if self.video_track:
             # Set up RTCP receiving session
             rtcp_session = RtcpReceivingSession()
             self.video_track.set_media_handler(rtcp_session)
             
-            # For AV1, we might need special handling
-            # libdatachannel should handle RTP depacketization automatically
-            # but we'll log what we receive
+            # NOTE: Manual RTP depacketization since H264RtpDepacketizer doesn't seem to work as expected
             
             # Set message handler on track
             self.video_track.on_message(on_video_message)
             
-            logger.info(f"Video track setup: is_open={self.video_track.is_open()}, with RTCP session and RTP depacketizer")
+            logger.info(f"Video track setup: is_open={self.video_track.is_open()}, with RTCP session (H264 depacketizer disabled for testing)")
         else:
             logger.warning("Video track is None!")
 
@@ -593,7 +653,6 @@ class WHEPClient:
             return
         
         frame_count = 0
-        last_frame_time = time.time()
 
         while self.playback_active:
             try:
@@ -656,11 +715,28 @@ class WHEPClient:
             except Exception as e:
                 self._handle_error("playing video", e)
         
-        # Decode any remaining AV1 data
-        if hasattr(self, '_decode_av1_frame') and self._decode_av1_frame and hasattr(self, '_av1_frame_buffer'):
-            if len(self._av1_frame_buffer) > 0:
-                logger.info(f"Decoding remaining AV1 data: {len(self._av1_frame_buffer)} bytes")
-                self._decode_av1_frame()
+        # Decode any remaining H264 NAL units
+        if hasattr(self, '_h264_nal_buffer') and len(self._h264_nal_buffer) > 0:
+            logger.info(f"Decoding remaining H264 NAL units: {len(self._h264_nal_buffer)} NALs")
+            # Process remaining NALs
+            combined_data = bytearray()
+            for nal in self._h264_nal_buffer:
+                combined_data.extend(nal)
+            if len(combined_data) > 0:
+                encoded_image = EncodedImage()
+                np_data = np.array(combined_data, dtype=np.uint8)
+                encoded_image.data = np_data
+                from datetime import timedelta
+                encoded_image.timestamp = timedelta(milliseconds=self._h264_timestamp)
+                try:
+                    if self.video_decoder:
+                        self.video_decoder.decode(encoded_image)
+                        # Try to flush decoder
+                        if hasattr(self.video_decoder, 'flush'):
+                            self.video_decoder.flush()
+                            logger.info("Flushed decoder for remaining frames")
+                except Exception as e:
+                    logger.error(f"Error decoding remaining NALs: {e}")
 
         if window_created:
             cv2.destroyWindow(self.window_name)
@@ -800,7 +876,7 @@ class WHEPClient:
                     audio_fps = self.audio_frames_received / elapsed if elapsed > 0 else 0
                     
                     logger.info(
-                        f"[{elapsed}s] Video: {video_messages} msgs, {self.video_frames_received} decoded ({video_fps:.1f} fps), "
+                        f"[{elapsed}s] Video: {video_messages} msgs, {self.video_frames_received} sent to decoder, {self._decoded_frame_count} decoded ({video_fps:.1f} fps), "
                         f"Audio: {audio_messages} msgs, {self.audio_frames_received} decoded ({audio_fps:.1f} fps), "
                         f"Queues: V={self.video_queue.qsize()} A={self.audio_queue.qsize()}"
                     )
@@ -856,8 +932,22 @@ class WHEPClient:
             finally:
                 self.pc = None
 
-        # Note: Don't release decoders here as they might still be in use
-        # The Python garbage collector will handle cleanup
+        # Release decoders
+        if self.video_decoder:
+            try:
+                if hasattr(self.video_decoder, 'release'):
+                    self.video_decoder.release()
+                    logger.info("Released video decoder")
+            except Exception as e:
+                logger.error(f"Error releasing video decoder: {e}")
+        if self.audio_decoder:
+            try:
+                if hasattr(self.audio_decoder, 'release'):
+                    self.audio_decoder.release()
+                    logger.info("Released audio decoder")
+            except Exception as e:
+                logger.error(f"Error releasing audio decoder: {e}")
+        
         self.video_decoder = None
         self.audio_decoder = None
 
