@@ -1,10 +1,9 @@
 import argparse
 import logging
 import queue
-import re
 import threading
 import time
-from typing import List, Optional
+from typing import Optional
 from urllib.parse import urljoin
 
 import cv2
@@ -40,6 +39,7 @@ from libdatachannel.codec import (
 from libdatachannel.libyuv import (
     rgb24_to_i420,
 )
+from wish import parse_link_header
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -238,65 +238,6 @@ class WHIPClient:
                 self._handle_error("requesting keyframe", e)
             self.last_key_frame_time = current_time
 
-    def _parse_link_header(self, link_header: str) -> List[IceServer]:
-        """Parse Link header for ICE servers"""
-        ice_servers = []
-        if not link_header:
-            return ice_servers
-
-        # Parse Link header: <turn:turn.example.com>; rel="ice-server"; username="user"; credential="pass"
-        # Split by comma to handle multiple servers
-        entries = []
-        current = ""
-        in_quotes = False
-
-        for char in link_header:
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char == "," and not in_quotes:
-                entries.append(current.strip())
-                current = ""
-                continue
-            current += char
-        if current:
-            entries.append(current.strip())
-
-        for entry in entries:
-            # Extract URL from <...>
-            url_match = re.match(r"<([^>]+)>", entry)
-            if not url_match:
-                continue
-
-            url = url_match.group(1)
-
-            # Skip TURN TCP as it's not supported by libdatachannel
-            if "transport=tcp" in url.lower() or "?tcp" in url.lower():
-                logger.info(f"Skipping TURN TCP server (not supported): {url}")
-                continue
-
-            # Check if it's an ICE server
-            if 'rel="ice-server"' not in entry:
-                continue
-
-            if url.startswith("stun:") or url.startswith("turn:"):
-                ice_server = IceServer(url)
-
-                # Extract username
-                username_match = re.search(r'username="([^"]+)"', entry)
-                if username_match:
-                    ice_server.username = username_match.group(1)
-
-                # Extract credential
-                credential_match = re.search(r'credential="([^"]+)"', entry)
-                if credential_match:
-                    ice_server.password = credential_match.group(1)
-
-                ice_servers.append(ice_server)
-                logger.info(f"Added ICE server from Link header: {url}")
-                if hasattr(ice_server, "username") and ice_server.username:
-                    logger.info(f"  with username: {ice_server.username}")
-
-        return ice_servers
 
     def connect(self):
         """Connect to WHIP server"""
@@ -378,7 +319,7 @@ class WHIPClient:
             # Parse Link header for ICE servers
             link_header = response.headers.get("Link")
             if link_header:
-                ice_servers = self._parse_link_header(link_header)
+                ice_servers = parse_link_header(link_header)
                 if ice_servers:
                     logger.info(f"Found {len(ice_servers)} ICE server(s) in Link header")
                     # Try to add ICE servers if method is available
