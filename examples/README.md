@@ -76,6 +76,70 @@ uv run python whip.py --url http://127.0.0.1:5000/whip/sora
 uv run python whip.py --camera --microphone --url http://127.0.0.1:5000/whip/sora
 ```
 
+### whep.py
+
+WHEP (WebRTC HTTP Egress Protocol) クライアントの実装例です。
+
+- **プロトコル**: WHEP プロトコル準拠のクライアント
+- **ビデオコーデック**: H.264（OpenH264 デコーダ使用）
+- **オーディオコーデック**: Opus
+- **機能**:
+  - HTTP POST でオファーを送信し、映像と音声を受信
+  - 201 Created レスポンスでアンサーを受信
+  - Location ヘッダーを使用したセッション管理
+  - H.264 映像のデコードと表示（OpenCV）
+  - Opus 音声のデコードと再生（sounddevice）
+  - 手動 RTP デパケタイゼーション実装
+  - TURN サーバー（UDP）の自動設定（Link ヘッダーから取得）
+  - グレースフルシャットダウン（DELETE リクエストでセッション終了）
+
+#### OpenH264 のセットアップ
+
+H.264 デコードには OpenH264 が必要です。環境変数 `OPENH264_PATH` に OpenH264 ライブラリのパスを設定してください。
+
+```bash
+# macOS (arm64) の場合
+export OPENH264_PATH=/path/to/libopenh264-2.6.0-mac-arm64.dylib
+
+# Linux の場合
+export OPENH264_PATH=/path/to/libopenh264.so
+
+# Windows の場合
+set OPENH264_PATH=C:\path\to\openh264.dll
+```
+
+使用例：
+
+```bash
+# 基本的な使い方
+OPENH264_PATH=./libopenh264-2.6.0-mac-arm64.dylib uv run python whep.py --url https://example.com/whep/stream
+
+# 認証トークンを使用
+uv run python whep.py --url https://example.com/whep/stream --token YOUR_BEARER_TOKEN
+
+# 音声のみ再生（映像を無効化）
+uv run python whep.py --url https://example.com/whep/stream --no-video
+
+# 30秒間受信して終了
+uv run python whep.py --url https://example.com/whep/stream --timeout 30
+
+# Sora のテストサーバーで試す
+OPENH264_PATH=./libopenh264-2.6.0-mac-arm64.dylib uv run python whep.py --url https://sora-test.shiguredo.co.jp/whep/sora
+```
+
+オプション：
+
+- `--url`: WHEP エンドポイントの URL（必須）
+- `--token`: Bearer 認証トークン（オプション）
+- `--no-video`: 映像を無効化し、音声のみ再生
+- `--timeout`: 受信時間（秒）（指定しない場合は無期限）
+
+注意事項：
+
+- macOS では OpenCV ウィンドウの表示に問題がある場合があります（デコード自体は正常に動作）
+- ビデオウィンドウで 'q' キーまたは Ctrl+C で終了できます
+- H264RtpDepacketizer の制限により、手動 RTP デパケタイゼーションを実装しています
+
 ## 依存関係
 
 examples プロジェクトは以下の依存関係を持っています：

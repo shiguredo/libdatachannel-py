@@ -65,6 +65,62 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 Discord へお願いします。
 
+## サンプル
+
+### WHEP (WebRTC HTTP Egress Protocol) クライアント
+
+`examples/whep.py` は WHEP サーバーから映像と音声を受信して再生するサンプルです。
+
+#### 必要なパッケージのインストール
+
+```bash
+uv add opencv-python numpy sounddevice httpx
+```
+
+#### OpenH264 のセットアップ
+
+H.264 デコードには OpenH264 が必要です。環境変数 `OPENH264_PATH` に OpenH264 ライブラリのパスを設定してください。
+
+```bash
+# macOS (arm64) の場合
+export OPENH264_PATH=/path/to/libopenh264-2.6.0-mac-arm64.dylib
+
+# Linux の場合
+export OPENH264_PATH=/path/to/libopenh264.so
+
+# Windows の場合
+set OPENH264_PATH=C:\path\to\openh264.dll
+```
+
+#### 実行方法
+
+```bash
+# 基本的な使い方
+uv run examples/whep.py --url https://your-whep-server.example.com/whep/stream
+
+# 認証トークンを使用する場合
+uv run examples/whep.py --url https://your-whep-server.example.com/whep/stream --token YOUR_BEARER_TOKEN
+
+# 音声のみ再生（映像を無効化）
+uv run examples/whep.py --url https://your-whep-server.example.com/whep/stream --no-video
+
+# タイムアウトを指定（秒単位）
+uv run examples/whep.py --url https://your-whep-server.example.com/whep/stream --timeout 30
+```
+
+#### 実装の特徴
+
+- H.264 映像と Opus 音声の受信・デコード・再生に対応
+- 手動 RTP デパケタイゼーション実装（H264RtpDepacketizer の制限を回避）
+- STAP-A（Single Time Aggregation Packet）と FU-A（Fragmentation Unit）をサポート
+- TURN サーバー（UDP）の自動設定（Link ヘッダーから取得）
+- グレースフルシャットダウン（DELETE リクエストでセッション終了）
+
+#### 注意事項
+
+- macOS では OpenCV ウィンドウの表示に問題がある場合があります（デコード自体は正常に動作）
+- キーボードの 'q' キーまたは Ctrl+C で終了できます
+
 ## ライセンス
 
 Apache License 2.0

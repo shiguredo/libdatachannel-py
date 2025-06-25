@@ -313,42 +313,48 @@ class WHEPClient:
             try:
                 self._video_message_count += 1
                 
-                # Always check if this is RTP data (not just for first 20 messages)
+                # Always check if this is RTP data
                 if len(data) >= 12 and (data[0] >> 6) == 2:  # RTP version 2
-                    if self._video_message_count <= 20:
-                        logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes")
-                        # Log first bytes to understand the format
-                        preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
-                        logger.info(f"Data preview: {preview}")
-                        logger.info("Detected RTP packet, manually extracting payload")
-                        # Extract RTP header info
-                        pt = data[1] & 0x7F
-                        seq = (data[2] << 8) | data[3]
-                        timestamp = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+                    # Extract RTP header info
+                    pt = data[1] & 0x7F
+                    seq = (data[2] << 8) | data[3]
+                    timestamp = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+                    
+                    # RTP header is typically 12 bytes (without extensions)
+                    header_size = 12
+                    
+                    # Check for header extension
+                    if data[0] & 0x10:
+                        if len(data) >= header_size + 4:
+                            ext_length = ((data[header_size + 2] << 8) | data[header_size + 3]) * 4
+                            header_size += 4 + ext_length
+                    
+                    # Extract payload
+                    if header_size < len(data):
+                        # Log only first 20 messages for debugging
+                        if self._video_message_count <= 20:
+                            logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes")
+                            preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
+                            logger.info(f"Data preview: {preview}")
+                            logger.info("Detected RTP packet, manually extracting payload")
+                            logger.info(f"Extracted payload: {len(data) - header_size} bytes from RTP packet (PT={pt}, seq={seq})")
                         
-                        # RTP header is typically 12 bytes (without extensions)
-                        header_size = 12
-                        
-                        # Check for header extension
-                        if data[0] & 0x10:
-                            if len(data) >= header_size + 4:
-                                ext_length = ((data[header_size + 2] << 8) | data[header_size + 3]) * 4
-                                header_size += 4 + ext_length
-                        
-                        # Extract payload
-                        if header_size < len(data):
-                            data = data[header_size:]
-                            if self._video_message_count <= 20:
-                                logger.info(f"Extracted payload: {len(data)} bytes from RTP packet (PT={pt}, seq={seq})")
-                        else:
-                            logger.warning("Invalid RTP packet - header size exceeds packet size")
-                            return
+                        # Always extract the payload
+                        data = data[header_size:]
+                    else:
+                        logger.warning("Invalid RTP packet - header size exceeds packet size")
+                        return
                 else:
                     # Not RTP data - log for debugging if within first 20 messages
                     if self._video_message_count <= 20:
                         logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes (not RTP)")
                         preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
                         logger.info(f"Data preview: {preview}")
+                
+                # Ensure we have valid data after RTP extraction
+                if len(data) == 0:
+                    logger.warning(f"Empty payload after RTP extraction in message #{self._video_message_count}")
+                    return
                 
                 # The data should be H264 NAL units after RTP extraction
                 if self.video_decoder and len(data) > 0:
@@ -423,9 +429,13 @@ class WHEPClient:
                                         logger.info(f"  FU-A complete, total size: {len(self._fu_buffer)} bytes")
                                     del self._fu_buffer
                         else:
-                            if self._video_message_count <= 10:
-                                logger.warning(f"Unsupported NAL type: {nal_type}")
-                            return
+                            # Other NAL types (including reserved types) - treat as single NAL unit
+                            if self._video_message_count <= 20:
+                                logger.info(f"NAL type: {nal_type} (Reserved or other type)")
+                            # Add start code prefix to NAL unit
+                            nal_with_start_code = bytearray([0x00, 0x00, 0x00, 0x01])
+                            nal_with_start_code.extend(data)
+                            self._h264_nal_buffer.append(nal_with_start_code)
                         
                         # Check if we should decode
                         should_decode = False
@@ -443,6 +453,11 @@ class WHEPClient:
                         elif nal_type in [7, 8]:  # SPS/PPS
                             if self._video_message_count <= 20:
                                 logger.info(f"Received {self._get_nal_type_name(nal_type)}")
+                        elif nal_type == 1:  # Non-IDR slice - also decode after accumulating
+                            if len(self._h264_nal_buffer) >= 3:  # At least a few NALs
+                                should_decode = True
+                                if self._video_message_count <= 20:
+                                    logger.info(f"Non-IDR slice with {len(self._h264_nal_buffer)} NALs, decoding")
                         elif len(self._h264_nal_buffer) >= 5:  # Multiple NALs accumulated
                             should_decode = True
                             if self._video_message_count <= 20:
@@ -476,8 +491,13 @@ class WHEPClient:
                                     nal_types_in_frame = []
                                     for nal in nals_to_decode:
                                         if len(nal) > 4:
-                                            nal_type = nal[4] & 0x1F  # After start code
-                                            nal_types_in_frame.append(nal_type)
+                                            # Check if this looks like a NAL with start code
+                                            if nal[0] == 0x00 and nal[1] == 0x00 and nal[2] == 0x00 and nal[3] == 0x01:
+                                                nal_type = nal[4] & 0x1F  # After start code
+                                                nal_types_in_frame.append(nal_type)
+                                            else:
+                                                # This might be raw RTP data - log warning
+                                                logger.warning(f"NAL buffer contains non-NAL data: {' '.join(f'{b:02x}' for b in nal[:10])}")
                                     logger.info(f"  NAL types in frame: {[self._get_nal_type_name(t) for t in nal_types_in_frame]}")
                                     
                                     # Debug first bytes
@@ -488,15 +508,19 @@ class WHEPClient:
                                 # Decode
                                 try:
                                     result = self.video_decoder.decode(encoded_image)
-                                    if self.video_frames_received < 5:
-                                        logger.info(f"Decode result: {result}")
+                                    if self.video_frames_received <= 5 or self.video_frames_received % 100 == 0:
+                                        logger.info(f"Decode called for frame #{self.video_frames_received}, result: {result}")
                                     
                                     # Flush decoder periodically, not every frame
                                     if hasattr(self.video_decoder, 'flush') and self.video_frames_received % 30 == 0:
                                         self.video_decoder.flush()
                                         logger.info(f"Flushed decoder at frame {self.video_frames_received}")
+                                        
+                                    # Check if decoder is still valid
+                                    if self.video_frames_received % 100 == 0:
+                                        logger.info(f"Decoder status check: decoder={self.video_decoder is not None}, callback set={hasattr(self.video_decoder, '_on_decoded')}")
                                 except Exception as e:
-                                    logger.error(f"Failed to decode: {e}")
+                                    logger.error(f"Failed to decode frame #{self.video_frames_received}: {e}")
                                     import traceback
                                     traceback.print_exc()
                                 
@@ -520,15 +544,38 @@ class WHEPClient:
             """Get human-readable name for NAL unit type"""
             nal_names = {
                 1: "Non-IDR slice",
+                2: "Slice data partition A",
+                3: "Slice data partition B",
+                4: "Slice data partition C",
                 5: "IDR slice",
                 6: "SEI",
                 7: "SPS",
                 8: "PPS",
                 9: "Access unit delimiter",
+                10: "End of sequence",
+                11: "End of stream",
+                12: "Filler data",
+                13: "SPS extension",
+                14: "Prefix NAL unit",
+                15: "Subset SPS",
+                16: "Reserved",
+                17: "Reserved",
+                18: "Reserved",
+                19: "Auxiliary slice",
+                20: "Slice extension",
+                21: "Slice extension for depth view",
+                22: "Reserved",
+                23: "Reserved",
                 24: "STAP-A",
+                25: "STAP-B",
+                26: "MTAP16",
+                27: "MTAP24",
                 28: "FU-A",
+                29: "FU-B",
+                30: "Unspecified",
+                31: "Unspecified",
             }
-            return nal_names.get(nal_type, f"Unknown ({nal_type})")
+            return nal_names.get(nal_type, f"Type {nal_type}")
         
         self._get_nal_type_name = _get_nal_type_name
 
@@ -538,11 +585,12 @@ class WHEPClient:
             self.video_track.set_media_handler(rtcp_session)
             
             # NOTE: Manual RTP depacketization since H264RtpDepacketizer doesn't seem to work as expected
+            # H264RtpDepacketizer returns raw RTP packets instead of depacketized H264 NAL units
             
             # Set message handler on track
             self.video_track.on_message(on_video_message)
             
-            logger.info(f"Video track setup: is_open={self.video_track.is_open()}, with RTCP session (H264 depacketizer disabled for testing)")
+            logger.info(f"Video track setup: is_open={self.video_track.is_open()}, with RTCP session (H264 depacketizer disabled)")
         else:
             logger.warning("Video track is None!")
 
@@ -586,6 +634,10 @@ class WHEPClient:
         # Set track message handler
         def on_audio_message(data):
             try:
+                self._audio_message_count += 1
+                if self._audio_message_count <= 10 or self._audio_message_count % 100 == 0:
+                    logger.info(f"Audio message #{self._audio_message_count}: {len(data)} bytes")
+                    
                 # Create EncodedAudio from data
                 if self.audio_decoder:
                     encoded_audio = EncodedAudio()
@@ -595,7 +647,6 @@ class WHEPClient:
                     # Set timestamp
                     from datetime import timedelta
                     # Audio timestamp (20ms per frame for Opus)
-                    self._audio_message_count += 1
                     timestamp_ms = self._audio_message_count * 20
                     encoded_audio.timestamp = timedelta(milliseconds=timestamp_ms)
                     self.audio_decoder.decode(encoded_audio)
