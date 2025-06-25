@@ -814,13 +814,45 @@ void bind_mediahandler(nb::module_& m) {
           "desc"_a)
       .def(
           "incoming",
-          [](std::shared_ptr<MediaHandler> self, message_vector& messages,
-             const message_callback& send) { self->incoming(messages, send); },
+          [](std::shared_ptr<MediaHandler> self, nb::list py_messages,
+             const message_callback& send) -> nb::list {
+            // Python リストを C++ ベクトルに変換
+            message_vector messages;
+            for (auto item : py_messages) {
+              messages.push_back(nb::cast<message_ptr>(item));
+            }
+            
+            // C++ の incoming を呼び出す
+            self->incoming(messages, send);
+            
+            // 変更後の C++ ベクトルを Python リストとして返す
+            nb::list result;
+            for (auto& msg : messages) {
+              result.append(msg);
+            }
+            return result;
+          },
           "messages"_a, "send"_a)
       .def(
           "outgoing",
-          [](std::shared_ptr<MediaHandler> self, message_vector& messages,
-             const message_callback& send) { self->outgoing(messages, send); },
+          [](std::shared_ptr<MediaHandler> self, nb::list py_messages,
+             const message_callback& send) -> nb::list {
+            // Python リストを C++ ベクトルに変換
+            message_vector messages;
+            for (auto item : py_messages) {
+              messages.push_back(nb::cast<message_ptr>(item));
+            }
+            
+            // C++ の outgoing を呼び出す
+            self->outgoing(messages, send);
+            
+            // 変更後の C++ ベクトルを Python リストとして返す
+            nb::list result;
+            for (auto& msg : messages) {
+              result.append(msg);
+            }
+            return result;
+          },
           "messages"_a, "send"_a)
       .def(
           "request_keyframe",
@@ -990,7 +1022,28 @@ void bind_h265rtppacketizer(nb::module_& m) {
 void bind_rtpdepacketizer(nb::module_& m) {
   nb::class_<RtpDepacketizer, MediaHandler>(m, "RtpDepacketizer")
       .def(nb::init<>())
-      .def("incoming", &RtpDepacketizer::incoming);
+      .def(
+          "incoming",
+          [](std::shared_ptr<RtpDepacketizer> self, nb::list py_messages,
+             const message_callback& send) -> nb::list {
+            // Python リストを C++ ベクトルに変換
+            message_vector messages;
+            for (auto item : py_messages) {
+              messages.push_back(nb::cast<message_ptr>(item));
+            }
+            
+            // C++ の incoming を呼び出す（messages が in-place で変更される）
+            self->incoming(messages, send);
+            
+            // 変更後の C++ ベクトルを Python リストとして返す
+            nb::list result;
+            for (auto& msg : messages) {
+              result.append(msg);
+            }
+            return result;
+          },
+          "messages"_a, "send"_a,
+          "Process incoming RTP messages and return depacketized messages");
 }
 
 // ---- h264depacketizer.hpp ----
@@ -999,7 +1052,28 @@ void bind_h264depacketizer(nb::module_& m) {
   nb::class_<H264RtpDepacketizer, MediaHandler>(m, "H264RtpDepacketizer")
       .def(nb::init<NalUnit::Separator>(),
            "separator"_a = NalUnit::Separator::LongStartSequence)
-      .def("incoming", &H264RtpDepacketizer::incoming);
+      .def(
+          "incoming",
+          [](std::shared_ptr<H264RtpDepacketizer> self, nb::list py_messages,
+             const message_callback& send) -> nb::list {
+            // Python リストを C++ ベクトルに変換
+            message_vector messages;
+            for (auto item : py_messages) {
+              messages.push_back(nb::cast<message_ptr>(item));
+            }
+            
+            // C++ の incoming を呼び出す（messages が in-place で変更される）
+            self->incoming(messages, send);
+            
+            // 変更後の C++ ベクトルを Python リストとして返す
+            nb::list result;
+            for (auto& msg : messages) {
+              result.append(msg);
+            }
+            return result;
+          },
+          "messages"_a, "send"_a,
+          "Process incoming RTP messages and return depacketized NAL units");
 }
 
 // ---- pacinghandler.hpp ----

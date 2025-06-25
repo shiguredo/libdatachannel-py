@@ -11,6 +11,11 @@
 
 ## develop
 
+- [CHANGE] RtpDepacketizer、H264RtpDepacketizer、MediaHandler の incoming() メソッドの動作を変更
+  - incoming() メソッドが処理後のメッセージリストを返すように変更
+  - これにより、ペイロードの抽出と無効なパケットの破棄が正しく動作するようになった
+  - @voluntas
+
 ### misc
 
 - [CHANGE] リリースを GH コマンドに変更
