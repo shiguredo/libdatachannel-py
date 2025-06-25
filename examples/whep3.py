@@ -1,6 +1,8 @@
+"""
+WHEP client with proper RTP depacketization using custom MediaHandler
+"""
 import argparse
 import logging
-import threading
 import time
 from typing import Optional
 from urllib.parse import urljoin
@@ -15,11 +17,11 @@ from libdatachannel import (
     RtcpReceivingSession,
     Track,
     RtpDepacketizer,
-    OpusRtpDepacketizer,
     H264RtpDepacketizer,
     NalUnit,
 )
 from wish import parse_link_header
+from custom_media_handler import RtpDepacketizingHandler
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleWHEPClient:
-    """Minimal WHEP client for receiving and depacketizing RTP packets"""
+    """WHEP client with proper RTP depacketization"""
 
     def __init__(self, whep_url: str, bearer_token: Optional[str] = None, timeout: Optional[int] = None):
         self.whep_url = whep_url
@@ -40,8 +42,8 @@ class SimpleWHEPClient:
         self.session_url: Optional[str] = None
         
         # Statistics
-        self.video_packets_received = 0
-        self.audio_packets_received = 0
+        self.video_payloads_received = 0
+        self.audio_payloads_received = 0
         self.last_stats_time = time.time()
         self.running = False
 
@@ -53,24 +55,20 @@ class SimpleWHEPClient:
         config = Configuration()
         config.ice_servers = []
         
-        # Set max message size if needed
         if hasattr(config, "max_message_size"):
             config.max_message_size = 16384
 
-        # Try to disable auto gathering if available
         if hasattr(config, "disable_auto_gathering"):
             config.disable_auto_gathering = True
 
         self.pc = PeerConnection(config)
 
         # Add receive-only tracks
-        # Add audio track FIRST (before video)
         audio_desc = Description.Audio("audio", Description.Direction.RecvOnly)
         audio_desc.add_opus_codec(111)
         self.audio_track = self.pc.add_track(audio_desc)
         logger.info("Added audio track with Opus codec (PT=111)")
 
-        # Add video track SECOND (after audio)
         video_desc = Description.Video("video", Description.Direction.RecvOnly)
         video_desc.add_h264_codec(96)
         self.video_track = self.pc.add_track(video_desc)
@@ -84,12 +82,10 @@ class SimpleWHEPClient:
         if not local_sdp:
             raise Exception("Failed to create offer")
 
-        # Log SDP for debugging
         sdp_lines = str(local_sdp).split("\n")
         media_lines = [line.strip() for line in sdp_lines if line.startswith("m=")]
         logger.info(f"SDP media sections order: {media_lines}")
         
-        # Log full SDP offer for debugging
         logger.debug("SDP Offer:")
         logger.debug(str(local_sdp))
 
@@ -113,11 +109,6 @@ class SimpleWHEPClient:
                 logger.error(f"WHEP server error response headers: {dict(response.headers)}")
                 error_body = response.text if response.text else "(empty response body)"
                 logger.error(f"WHEP server error response body: {error_body}")
-                
-                # Check if this might be a WHIP endpoint instead of WHEP
-                if "whip" in self.whep_url.lower() and "whep" not in self.whep_url.lower():
-                    logger.warning("URL contains 'whip' but not 'whep' - are you using the correct endpoint?")
-                
                 raise Exception(f"WHEP server returned {response.status_code}: {error_body}")
 
             # Get session URL
@@ -131,109 +122,70 @@ class SimpleWHEPClient:
                 ice_servers = parse_link_header(link_header)
                 if ice_servers:
                     logger.info(f"Found {len(ice_servers)} ICE server(s) in Link header")
-                    # Try to add ICE servers if method is available
-                    if hasattr(self.pc, "gather_local_candidates"):
-                        self.pc.gather_local_candidates(ice_servers)
-                    else:
-                        logger.warning("Cannot add ICE servers after PeerConnection creation")
 
             # Set remote SDP
             answer = Description(response.text, Description.Type.Answer)
             self.pc.set_remote_description(answer)
             
-            # Log answer SDP for debugging
             logger.debug("SDP Answer:")
             logger.debug(response.text)
 
         logger.info("Connected to WHEP server")
 
     def _setup_tracks(self):
-        """Set up track message handlers with RTP depacketizers"""
+        """Set up track message handlers with custom RTP depacketizer"""
         
-        # Counter for RTP packets before depacketization
-        self._rtp_packet_count = 0
-        
-        # Handler for raw RTP packets (before depacketization)
-        def on_rtp_packet(data):
-            self._rtp_packet_count += 1
-            if self._rtp_packet_count <= 5:
-                is_rtp = len(data) >= 12 and (data[0] >> 6) == 2
-                if is_rtp:
-                    pt = data[1] & 0x7F
-                    logger.info(f"RTP packet #{self._rtp_packet_count} before depacketizer: PT={pt}, size={len(data)} bytes")
-        
-        # Video track handler - receives RTP packets (depacketizer not working as expected)
-        def on_video_message(data):
-            self.video_packets_received += 1
+        # Video payload handler
+        def on_video_payload(payload: bytes, payload_type: int, timestamp: int):
+            self.video_payloads_received += 1
             
-            # Extract RTP payload manually since RtpDepacketizer doesn't seem to work
-            if len(data) >= 12 and (data[0] >> 6) == 2:  # RTP version 2
-                pt = data[1] & 0x7F
-                seq = (data[2] << 8) | data[3]
-                timestamp = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+            if self.video_payloads_received <= 10 or self.video_payloads_received % 1000 == 0:
+                logger.info(f"Video payload #{self.video_payloads_received}: PT={payload_type}, size={len(payload)} bytes")
                 
-                # Calculate header size
-                header_size = 12
-                cc = data[0] & 0x0F  # CSRC count
-                header_size += cc * 4  # Each CSRC is 4 bytes
-                
-                # Check for header extension
-                if data[0] & 0x10:  # Extension bit
-                    if len(data) >= header_size + 4:
-                        ext_length = ((data[header_size + 2] << 8) | data[header_size + 3]) * 4
-                        header_size += 4 + ext_length
-                
-                # Extract payload
-                if header_size < len(data):
-                    payload = data[header_size:]
+                # For H264, check NAL unit type
+                if payload_type == 96 and len(payload) > 0:
+                    nal_type = payload[0] & 0x1F
+                    logger.info(f"  H264 NAL type: {nal_type} ({self._get_nal_type_name(nal_type)})")
                     
-                    if self.video_packets_received <= 10 or self.video_packets_received % 1000 == 0:
-                        logger.info(f"Video RTP packet #{self.video_packets_received}: PT={pt}, seq={seq}, RTP size={len(data)}, payload size={len(payload)} bytes")
-                        if len(payload) >= 5:
-                            preview = ' '.join(f'{b:02x}' for b in payload[:5])
-                            logger.info(f"  RTP payload preview: {preview}...")
-            else:
-                # Not RTP - this shouldn't happen with current setup
-                if self.video_packets_received <= 10:
-                    logger.warning(f"Video message #{self.video_packets_received}: Non-RTP data, size={len(data)} bytes")
+                    if len(payload) >= 5:
+                        preview = ' '.join(f'{b:02x}' for b in payload[:5])
+                        logger.info(f"  Payload preview: {preview}...")
 
-        # Audio track handler - receives depacketized audio payloads
-        def on_audio_message(data):
-            self.audio_packets_received += 1
+        # Audio payload handler
+        def on_audio_payload(payload: bytes, payload_type: int, timestamp: int):
+            self.audio_payloads_received += 1
             
-            if self.audio_packets_received <= 10 or self.audio_packets_received % 1000 == 0:
-                logger.info(f"Audio depacketized Opus frame #{self.audio_packets_received}: size={len(data)} bytes")
+            if self.audio_payloads_received <= 10 or self.audio_payloads_received % 1000 == 0:
+                logger.info(f"Audio payload #{self.audio_payloads_received}: PT={payload_type}, size={len(payload)} bytes")
 
         if self.video_track:
             # Set up RTCP receiving session
             rtcp_session = RtcpReceivingSession()
             self.video_track.set_media_handler(rtcp_session)
             
-            # First, use generic RTP depacketizer to remove RTP headers
-            rtp_depacketizer = RtpDepacketizer()
-            self.video_track.chain_media_handler(rtp_depacketizer)
+            # Use custom RTP depacketizer
+            video_depacketizer = RtpDepacketizingHandler(on_video_payload)
+            self.video_track.chain_media_handler(video_depacketizer)
             
-            # Set message handler on track - receives RTP payload
-            self.video_track.on_message(on_video_message)
+            # The track's on_message will still receive raw RTP packets
+            # But our custom handler will extract the payloads
+            self.video_track.on_message(lambda data: None)  # Ignore raw messages
             
-            logger.info(f"Video track setup with RTP depacketizer: is_open={self.video_track.is_open()}")
+            logger.info(f"Video track setup with custom RTP depacketizer")
 
         if self.audio_track:
             # Set up RTCP receiving session
             rtcp_session = RtcpReceivingSession()
             self.audio_track.set_media_handler(rtcp_session)
             
-            # Set RTP packet handler on RTCP session for debugging
-            rtcp_session.on_message(on_rtp_packet)
+            # Use custom RTP depacketizer for audio
+            audio_depacketizer = RtpDepacketizingHandler(on_audio_payload)
+            self.audio_track.chain_media_handler(audio_depacketizer)
             
-            # Chain Opus RTP depacketizer
-            opus_depacketizer = OpusRtpDepacketizer()
-            self.audio_track.chain_media_handler(opus_depacketizer)
+            # Ignore raw messages
+            self.audio_track.on_message(lambda data: None)
             
-            # Set message handler on track - receives depacketized Opus frames
-            self.audio_track.on_message(on_audio_message)
-            
-            logger.info(f"Audio track setup with Opus RTP depacketizer: is_open={self.audio_track.is_open()}")
+            logger.info(f"Audio track setup with custom RTP depacketizer")
     
     def _get_nal_type_name(self, nal_type):
         """Get human-readable name for NAL unit type"""
@@ -244,9 +196,11 @@ class SimpleWHEPClient:
             7: "SPS",
             8: "PPS",
             9: "Access unit delimiter",
+            24: "STAP-A",
+            28: "FU-A",
         }
         return nal_names.get(nal_type, f"Type {nal_type}")
-    
+
     def start_receiving(self):
         """Start receiving RTP packets"""
         if not self.pc:
@@ -287,12 +241,12 @@ class SimpleWHEPClient:
                 # Log statistics every 5 seconds
                 if current_time - self.last_stats_time >= 5.0:
                     elapsed = int(current_time - start_time)
-                    video_pps = self.video_packets_received / elapsed if elapsed > 0 else 0
-                    audio_pps = self.audio_packets_received / elapsed if elapsed > 0 else 0
+                    video_pps = self.video_payloads_received / elapsed if elapsed > 0 else 0
+                    audio_pps = self.audio_payloads_received / elapsed if elapsed > 0 else 0
                     
                     logger.info(
-                        f"[{elapsed}s] Video: {self.video_packets_received} depacketized payloads ({video_pps:.1f}/s), "
-                        f"Audio: {self.audio_packets_received} depacketized payloads ({audio_pps:.1f}/s)"
+                        f"[{elapsed}s] Video: {self.video_payloads_received} RTP payloads ({video_pps:.1f}/s), "
+                        f"Audio: {self.audio_payloads_received} RTP payloads ({audio_pps:.1f}/s)"
                     )
                     self.last_stats_time = current_time
                 
@@ -347,14 +301,14 @@ class SimpleWHEPClient:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Simple WHEP client for receiving RTP packets")
+    parser = argparse.ArgumentParser(description="WHEP client with custom RTP depacketizer")
     parser.add_argument("--url", required=True, help="WHEP endpoint URL")
     parser.add_argument("--token", help="Bearer token for authentication")
     parser.add_argument("--timeout", type=int, help="Timeout in seconds")
 
     args = parser.parse_args()
 
-    logger.info("Starting simple WHEP client...")
+    logger.info("Starting WHEP client with custom MediaHandler...")
     logger.info("Press Ctrl+C to stop")
 
     client = SimpleWHEPClient(args.url, args.token, args.timeout)
