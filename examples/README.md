@@ -76,6 +76,39 @@ uv run python whip.py --url http://127.0.0.1:5000/whip/sora
 uv run python whip.py --camera --microphone --url http://127.0.0.1:5000/whip/sora
 ```
 
+### whep.py
+
+WHEP (WebRTC-HTTP Egress Protocol) クライアントの実装例です。
+
+- **プロトコル**: draft-ietf-wish-whep-02 準拠の WHEP クライアント
+- **対応ビデオコーデック**: H.264, VP8, AV1
+- **対応オーディオコーデック**: Opus
+- **機能**:
+  - HTTP POST でオファーを送信（recvonly）
+  - 201 Created レスポンスでアンサーとセッション URL を受信
+  - RTP デパケタイザーによるメディアストリーム処理
+  - リアルタイム統計情報（FPS、受信データ量）
+  - HTTP DELETE によるセッション終了
+
+使用例：
+
+```bash
+# 無期限に受信（Ctrl+C で停止）
+uv run python whep.py --url https://example.com/whep/endpoint
+
+# 60秒間受信
+uv run python whep.py --url https://example.com/whep/endpoint --duration 60
+
+# Bearer トークンによる認証
+uv run python whep.py --url https://example.com/whep/endpoint --token YOUR_BEARER_TOKEN
+```
+
+オプション：
+
+- `--url`: WHEP エンドポイントの URL（必須）
+- `--duration`: 受信時間（秒）（指定しない場合は無期限に受信）
+- `--token`: Bearer 認証トークン（オプション）
+
 ## 依存関係
 
 examples プロジェクトは以下の依存関係を持っています：
