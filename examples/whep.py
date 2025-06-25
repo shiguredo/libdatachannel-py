@@ -45,11 +45,12 @@ logger = logging.getLogger(__name__)
 class WHEPClient:
     """Minimal WHEP client for receiving and playing back video and audio"""
 
-    def __init__(self, whep_url: str, bearer_token: Optional[str] = None, no_video: bool = False, timeout: Optional[int] = None):
+    def __init__(self, whep_url: str, bearer_token: Optional[str] = None, no_video: bool = False, timeout: Optional[int] = None, openh264_path: Optional[str] = None):
         self.whep_url = whep_url
         self.bearer_token = bearer_token
         self.no_video = no_video
         self.timeout = timeout
+        self.openh264_path = openh264_path
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
         self.audio_track: Optional[Track] = None
@@ -261,9 +262,9 @@ class WHEPClient:
             
         # Create H264 decoder
         import os
-        openh264_path = os.environ.get("OPENH264_PATH")
+        openh264_path = self.openh264_path or os.environ.get("OPENH264_PATH")
         if not openh264_path:
-            raise Exception("OPENH264_PATH environment variable not set")
+            raise Exception("OpenH264 path not specified. Use --openh264 argument or set OPENH264_PATH environment variable")
         self.video_decoder = create_openh264_video_decoder(openh264_path)
         
         # Initialize decoder with settings
@@ -271,8 +272,15 @@ class WHEPClient:
         settings.codec_type = VideoCodecType.H264
         # Note: width and height are optional for H264 decoder
         # They will be determined from SPS
+        
+        # Debug: Log decoder info before init
+        logger.info(f"Created video decoder: type={type(self.video_decoder)}")
+        logger.info(f"Decoder methods: {[m for m in dir(self.video_decoder) if not m.startswith('_')]}")
 
-        if not self.video_decoder.init(settings):
+        init_result = self.video_decoder.init(settings)
+        logger.info(f"Decoder init result: {init_result}")
+        
+        if not init_result:
             raise Exception("Failed to initialize video decoder")
             
         logger.info("H264 video decoder initialized successfully")
@@ -284,25 +292,58 @@ class WHEPClient:
         def on_decoded(decoded_frame):
             try:
                 self._decoded_frame_count += 1
-                logger.info(f"🎥 Video frame decoded #{self._decoded_frame_count}: {decoded_frame.width()}x{decoded_frame.height()}, format: {decoded_frame.format}")
+                logger.info(f"🎥 OpenH264 decoder OUTPUT! Frame #{self._decoded_frame_count}")
+                logger.info(f"  Decoded frame: {decoded_frame.width()}x{decoded_frame.height()}, format: {decoded_frame.format}")
                 
                 # Put frame in queue
+                queue_size_before = self.video_queue.qsize()
                 try:
                     self.video_queue.put_nowait(decoded_frame)
+                    queue_size_after = self.video_queue.qsize()
+                    logger.info(f"  Frame #{self._decoded_frame_count} added to queue (size: {queue_size_before} -> {queue_size_after})")
+                    
+                    # Track total frames enqueued
+                    if not hasattr(self, '_frames_enqueued'):
+                        self._frames_enqueued = 0
+                    self._frames_enqueued += 1
+                    logger.info(f"  Total frames enqueued: {self._frames_enqueued}")
                 except queue.Full:
-                    logger.warning(f"Video queue full, dropping frame #{self.video_frames_received}")
+                    logger.warning(f"Video queue full, dropping frame #{self._decoded_frame_count}")
             except Exception as e:
                 logger.error(f"Error in on_decoded callback: {e}")
                 import traceback
                 traceback.print_exc()
 
         def on_error(error_msg):
-            logger.error(f"Video decoder error: {error_msg}")
+            logger.error(f"🚨 OpenH264 decoder ERROR: {error_msg}")
 
-        self.video_decoder.set_on_decode(on_decoded)
+        try:
+            self.video_decoder.set_on_decode(on_decoded)
+            logger.info("Successfully set on_decode callback")
+            
+            # Verify callback is set
+            if hasattr(self.video_decoder, '_on_decoded'):
+                logger.info(f"Callback verification: _on_decoded is set = {self.video_decoder._on_decoded is not None}")
+            
+        except Exception as e:
+            logger.error(f"Failed to set on_decode callback: {e}")
+            import traceback
+            traceback.print_exc()
+            
         if hasattr(self.video_decoder, 'set_on_error'):
-            self.video_decoder.set_on_error(on_error)
-        logger.info("Video decoder callback set")
+            try:
+                self.video_decoder.set_on_error(on_error)
+                logger.info("Successfully set on_error callback")
+            except Exception as e:
+                logger.error(f"Failed to set on_error callback: {e}")
+        
+        # Log decoder state
+        logger.info(f"Video decoder final state check:")
+        logger.info(f"  - Type: {type(self.video_decoder)}")
+        logger.info(f"  - Has decode method: {hasattr(self.video_decoder, 'decode')}")
+        logger.info(f"  - Has set_on_decode method: {hasattr(self.video_decoder, 'set_on_decode')}")
+        logger.info(f"  - Decoder object id: {id(self.video_decoder)}")
+        logger.info(f"Decoder has flush method: {hasattr(self.video_decoder, 'flush')}")
 
         # Initialize counter
         self._video_message_count = 0
@@ -389,13 +430,26 @@ class WHEPClient:
                                     # Extract NAL unit
                                     nal_unit = data[i:i + nal_size]
                                     if len(nal_unit) > 0:
-                                        # Add start code and NAL to buffer
-                                        nal_with_start_code = bytearray([0x00, 0x00, 0x00, 0x01])
-                                        nal_with_start_code.extend(nal_unit)
-                                        self._h264_nal_buffer.append(nal_with_start_code)
+                                        sub_nal_type = nal_unit[0] & 0x1F
+                                        
+                                        # Store SPS/PPS separately
+                                        if sub_nal_type == 7:  # SPS
+                                            if not hasattr(self, '_sps_data'):
+                                                self._sps_data = bytearray([0x00, 0x00, 0x00, 0x01])
+                                                self._sps_data.extend(nal_unit)
+                                                logger.info("Stored SPS data from STAP-A")
+                                        elif sub_nal_type == 8:  # PPS
+                                            if not hasattr(self, '_pps_data'):
+                                                self._pps_data = bytearray([0x00, 0x00, 0x00, 0x01])
+                                                self._pps_data.extend(nal_unit)
+                                                logger.info("Stored PPS data from STAP-A")
+                                        else:
+                                            # Add start code and NAL to buffer
+                                            nal_with_start_code = bytearray([0x00, 0x00, 0x00, 0x01])
+                                            nal_with_start_code.extend(nal_unit)
+                                            self._h264_nal_buffer.append(nal_with_start_code)
                                         
                                         if self._video_message_count <= 20:
-                                            sub_nal_type = nal_unit[0] & 0x1F if len(nal_unit) > 0 else None
                                             logger.info(f"  STAP-A contains NAL type {sub_nal_type}: {self._get_nal_type_name(sub_nal_type)}")
                                     i += nal_size
                                 else:
@@ -440,6 +494,18 @@ class WHEPClient:
                         # Check if we should decode
                         should_decode = False
                         
+                        # SPS/PPS should be kept separately and put at the beginning
+                        if nal_type == 7:  # SPS
+                            if not hasattr(self, '_sps_data'):
+                                self._sps_data = bytearray([0x00, 0x00, 0x00, 0x01])
+                                self._sps_data.extend(data)
+                                logger.info("Stored SPS data")
+                        elif nal_type == 8:  # PPS
+                            if not hasattr(self, '_pps_data'):
+                                self._pps_data = bytearray([0x00, 0x00, 0x00, 0x01])
+                                self._pps_data.extend(data)
+                                logger.info("Stored PPS data")
+                        
                         # Decode on IDR frames (NAL type 5) or access unit delimiter (type 9)
                         if nal_type == 5:  # IDR frame
                             should_decode = True
@@ -450,9 +516,6 @@ class WHEPClient:
                                 should_decode = True
                                 if self._video_message_count <= 20:
                                     logger.info("Access unit delimiter detected, decoding previous frame")
-                        elif nal_type in [7, 8]:  # SPS/PPS
-                            if self._video_message_count <= 20:
-                                logger.info(f"Received {self._get_nal_type_name(nal_type)}")
                         elif nal_type == 1:  # Non-IDR slice - also decode after accumulating
                             if len(self._h264_nal_buffer) >= 3:  # At least a few NALs
                                 should_decode = True
@@ -468,8 +531,15 @@ class WHEPClient:
                             nals_to_decode = self._h264_nal_buffer[:-1] if nal_type == 9 else self._h264_nal_buffer
                             
                             if len(nals_to_decode) > 0:
-                                # Combine all NAL units
+                                # Combine all NAL units with SPS/PPS first
                                 combined_data = bytearray()
+                                
+                                # Always include SPS/PPS at the beginning if we have them
+                                if hasattr(self, '_sps_data') and hasattr(self, '_pps_data'):
+                                    combined_data.extend(self._sps_data)
+                                    combined_data.extend(self._pps_data)
+                                
+                                # Then add the frame NALs
                                 for nal in nals_to_decode:
                                     combined_data.extend(nal)
                                 
@@ -481,6 +551,13 @@ class WHEPClient:
                                 # Set timestamp
                                 from datetime import timedelta
                                 encoded_image.timestamp = timedelta(milliseconds=self._h264_timestamp)
+                                
+                                # Log what we're sending to decoder
+                                if self.video_frames_received <= 3:
+                                    logger.info(f"Sending to OpenH264 decoder:")
+                                    logger.info(f"  Data size: {len(combined_data)} bytes")
+                                    logger.info(f"  NumPy array shape: {np_data.shape}")
+                                    logger.info(f"  Timestamp: {self._h264_timestamp}ms")
                                 
                                 # Increment frame counter before logging
                                 self.video_frames_received += 1
@@ -507,18 +584,41 @@ class WHEPClient:
                                 
                                 # Decode
                                 try:
-                                    result = self.video_decoder.decode(encoded_image)
-                                    if self.video_frames_received <= 5 or self.video_frames_received % 100 == 0:
-                                        logger.info(f"Decode called for frame #{self.video_frames_received}, result: {result}")
+                                    # Log decoder state before decode
+                                    if self.video_frames_received <= 3:
+                                        logger.info(f"Before decode: decoder object id = {id(self.video_decoder)}")
+                                        logger.info(f"Before decode: decoder is not None = {self.video_decoder is not None}")
                                     
-                                    # Flush decoder periodically, not every frame
+                                    result = self.video_decoder.decode(encoded_image)
+                                    
+                                    if self.video_frames_received <= 10:
+                                        logger.info(f"Decode called for frame #{self.video_frames_received}:")
+                                        logger.info(f"  - Result: {result}")
+                                        logger.info(f"  - Result type: {type(result)}")
+                                        logger.info(f"  - Data size: {len(combined_data)} bytes")
+                                        logger.info(f"  - EncodedImage.data type: {type(encoded_image.data)}")
+                                        logger.info(f"  - EncodedImage.data shape: {encoded_image.data.shape if hasattr(encoded_image.data, 'shape') else 'No shape'}")
+                                        logger.info(f"  - Timestamp: {encoded_image.timestamp}")
+                                        
+                                        # Check if result indicates success
+                                        if result is not None:
+                                            logger.info(f"  - Decode returned non-None: {result}")
+                                        else:
+                                            logger.info(f"  - Decode returned None (which is typical)")
+                                    
+                                    # Check if decoder has flush method and use it periodically
                                     if hasattr(self.video_decoder, 'flush') and self.video_frames_received % 30 == 0:
-                                        self.video_decoder.flush()
-                                        logger.info(f"Flushed decoder at frame {self.video_frames_received}")
+                                        logger.info(f"Flushing decoder at frame {self.video_frames_received}")
+                                        try:
+                                            self.video_decoder.flush()
+                                        except Exception as flush_e:
+                                            logger.warning(f"Failed to flush decoder: {flush_e}")
                                         
                                     # Check if decoder is still valid
                                     if self.video_frames_received % 100 == 0:
-                                        logger.info(f"Decoder status check: decoder={self.video_decoder is not None}, callback set={hasattr(self.video_decoder, '_on_decoded')}")
+                                        logger.info(f"Decoder status check: decoder={self.video_decoder is not None}, has _on_decoded={hasattr(self.video_decoder, '_on_decoded')}")
+                                        if hasattr(self.video_decoder, '_on_decoded'):
+                                            logger.info(f"  - _on_decoded is not None: {self.video_decoder._on_decoded is not None}")
                                 except Exception as e:
                                     logger.error(f"Failed to decode frame #{self.video_frames_received}: {e}")
                                     import traceback
@@ -670,63 +770,80 @@ class WHEPClient:
         logger.info("Audio decoder setup complete")
 
     def _play_video(self):
-        """Play video frames using OpenCV"""
-        logger.info("Starting video playback thread...")
+        """Process video frames from decoder"""
+        logger.info("_play_video method started")
         
-        # Wait for main thread to be ready (macOS requirement)
-        time.sleep(0.5)
-        
-        # Try different window creation methods for macOS compatibility
-        window_created = False
         try:
-            # Try simple window first (more compatible with macOS)
-            cv2.namedWindow(self.window_name)
-            window_created = True
-            logger.info("OpenCV window created with default settings")
+            # Wait for main thread to be ready (macOS requirement)
+            logger.info("Waiting 0.5s for main thread...")
+            time.sleep(0.5)
+            logger.info("Done waiting")
             
-            # Show a black frame initially
-            black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(black_frame, "Waiting for video...", (50, 240), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            cv2.imshow(self.window_name, black_frame)
-            cv2.waitKey(1)
+            # Check if window was created on main thread
+            window_created = getattr(self, '_window_created', False)
+            logger.info(f"Checking window_created: {window_created}")
             
-        except Exception as e:
-            logger.error(f"Failed to create OpenCV window: {e}")
-            logger.info("Continuing without display - frames are being decoded successfully")
-            # Continue without display to show decoding is working
-            while self.playback_active:
-                try:
-                    frame = self.video_queue.get(timeout=0.1)
-                    logger.info(f"Decoded frame received but cannot display: {frame.width()}x{frame.height()}")
-                except queue.Empty:
-                    pass
-            return
-        
-        frame_count = 0
+            frame_count = 0
+            dequeue_count = 0
+            empty_count = 0
 
-        while self.playback_active:
-            try:
+            logger.info(f"Video thread started. Queue size: {self.video_queue.qsize()}, Window created: {window_created}")
+            
+            # Track total frames dequeued
+            self._frames_dequeued = 0
+        
+            # Debug: Check if thread is really running
+            loop_count = 0
+
+            while self.playback_active:
+            loop_count += 1
+            if loop_count == 1 or loop_count % 50 == 0:
+                    logger.info(f"Video thread loop #{loop_count}, playback_active={self.playback_active}, queue size={self.video_queue.qsize()}")
+                try:
+                # Check queue state before trying to get
+                queue_size = self.video_queue.qsize()
+                if queue_size > 0 and self._frames_dequeued == 0:
+                    logger.info(f"First attempt to dequeue, queue has {queue_size} frames")
+                
                 # Get frame from queue with timeout
                 frame = self.video_queue.get(timeout=0.1)
-                frame_count += 1
+                dequeue_count += 1
+                self._frames_dequeued += 1
                 
-                # Resize window on first frame
-                if frame_count == 1:
-                    logger.info(f"First video frame received! Frame size: {frame.width()}x{frame.height()}")
-                    try:
-                        cv2.resizeWindow(self.window_name, frame.width(), frame.height())
-                    except cv2.error:
-                        pass  # Ignore resize errors
+                if dequeue_count <= 5 or dequeue_count % 100 == 0:
+                    logger.info(f"🎬 Successfully dequeued decoded frame #{dequeue_count}!")
+                    logger.info(f"  Frame: {frame.width()}x{frame.height()}, format: {frame.format}")
+                    logger.info(f"  Total frames dequeued: {self._frames_dequeued}, queue size after: {self.video_queue.qsize()}")
+                
+                # Use window created on main thread
+                if not self.no_video and dequeue_count == 1:
+                    logger.info(f"First video frame dequeued! Frame size: {frame.width()}x{frame.height()}")
+                    # Check if window was created on main thread
+                    window_created = getattr(self, '_window_created', False)
+                    if window_created:
+                        logger.info("Using window created on main thread")
+                        # Resize window to match frame size
+                        try:
+                            cv2.resizeWindow(self.window_name, frame.width(), frame.height())
+                        except:
+                            pass  # Ignore resize errors
+                    else:
+                        logger.warning("No OpenCV window available")
 
                 # Convert frame to BGR for OpenCV display
                 if frame.format == ImageFormat.I420:
+                    if dequeue_count <= 5:
+                        logger.info(f"Converting frame #{dequeue_count} to BGR...")
+                    
                     # Get I420 buffer
                     i420_buffer = frame.i420_buffer
                     
                     # Extract Y, U, V planes
                     height = i420_buffer.height()
                     width = i420_buffer.width()
+                    
+                    if dequeue_count <= 5:
+                        logger.info(f"Frame #{dequeue_count} dimensions: {width}x{height}")
                     
                     y_plane = np.array(i420_buffer.y[:height, :width], copy=True)
                     u_plane = np.array(i420_buffer.u[:height//2, :width//2], copy=True)
@@ -742,28 +859,28 @@ class WHEPClient:
                     # Convert YUV to BGR
                     bgr_frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
                     
-                    # Display frame
-                    cv2.imshow(self.window_name, bgr_frame)
-                    
-                    if frame_count <= 5:
-                        logger.info(f"Displayed video frame #{frame_count}")
-                    
-                    # Handle window events
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        logger.info("User pressed 'q', stopping playback")
-                        self.playback_active = False
+                    # Display frame if window was created
+                    window_created = getattr(self, '_window_created', False)
+                    if window_created:
+                        cv2.imshow(self.window_name, bgr_frame)
+                        frame_count += 1
+                        
+                        if dequeue_count <= 5 or dequeue_count % 30 == 0:
+                            logger.info(f"📺 Displayed video frame #{dequeue_count}")
+                    else:
+                        # Log that frame is being processed even without display
+                        if dequeue_count <= 5 or dequeue_count % 100 == 0:
+                            logger.info(f"Frame #{dequeue_count} processed but no window: {frame.width()}x{frame.height()}")
 
             except queue.Empty:
                 # No frame available
-                if window_created:
-                    # Check if window is closed
-                    try:
-                        if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
-                            logger.info("Window closed, stopping playback")
-                            self.playback_active = False
-                    except cv2.error:
-                        pass  # Window might not exist yet
+                empty_count += 1
+                if empty_count % 10 == 1:  # Log every 10th empty
+                    logger.info(f"Video queue empty (count: {empty_count}), queue size: {self.video_queue.qsize()}")
             except Exception as e:
+                logger.error(f"Error in video playback thread: {e}")
+                import traceback
+                traceback.print_exc()
                 self._handle_error("playing video", e)
         
         # Decode any remaining H264 NAL units
@@ -789,8 +906,14 @@ class WHEPClient:
                 except Exception as e:
                     logger.error(f"Error decoding remaining NALs: {e}")
 
+        # Destroy window if it was created
+        window_created = getattr(self, '_window_created', False)
         if window_created:
-            cv2.destroyWindow(self.window_name)
+            try:
+                cv2.destroyWindow(self.window_name)
+                cv2.waitKey(1)  # Process any pending window events
+            except:
+                pass  # Ignore errors during cleanup
         logger.info(f"Video playback stopped. Total frames displayed: {frame_count}")
 
     def _play_audio(self):
@@ -895,6 +1018,16 @@ class WHEPClient:
         self.playback_active = True
 
         if not self.no_video:
+            # Create OpenCV window on main thread (required for macOS)
+            try:
+                cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(self.window_name, 960, 540)  # Default size
+                self._window_created = True
+                logger.info("Created OpenCV window on main thread")
+            except Exception as e:
+                logger.warning(f"Failed to create OpenCV window: {e}")
+                self._window_created = False
+            
             self.video_thread = threading.Thread(target=self._play_video)
             self.video_thread.daemon = True  # Make thread daemon to ensure clean shutdown
             self.video_thread.start()
@@ -919,6 +1052,13 @@ class WHEPClient:
                     logger.info(f"Timeout reached ({timeout} seconds)")
                     break
                 
+                # Check for 'q' key to quit (must be on main thread for macOS)
+                if not self.no_video and self._window_created:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        logger.info("'q' key pressed, stopping playback")
+                        break
+                
                 if current_time - self.last_stats_time >= 5.0:  # Log stats every 5 seconds
                     video_messages = getattr(self, '_video_message_count', 0)
                     audio_messages = getattr(self, '_audio_message_count', 0)
@@ -926,13 +1066,25 @@ class WHEPClient:
                     video_fps = self.video_frames_received / elapsed if elapsed > 0 else 0
                     audio_fps = self.audio_frames_received / elapsed if elapsed > 0 else 0
                     
+                    frames_enqueued = getattr(self, '_frames_enqueued', 0)
+                    frames_dequeued = getattr(self, '_frames_dequeued', 0)
+                    
                     logger.info(
                         f"[{elapsed}s] Video: {video_messages} msgs, {self.video_frames_received} sent to decoder, {self._decoded_frame_count} decoded ({video_fps:.1f} fps), "
                         f"Audio: {audio_messages} msgs, {self.audio_frames_received} decoded ({audio_fps:.1f} fps), "
-                        f"Queues: V={self.video_queue.qsize()} A={self.audio_queue.qsize()}"
+                        f"Queues: V={self.video_queue.qsize()} A={self.audio_queue.qsize()}, "
+                        f"Enqueued: {frames_enqueued}, Dequeued: {frames_dequeued}"
                     )
                     self.last_stats_time = current_time
-                time.sleep(0.5)
+                
+                # Process OpenCV window events on main thread (required for macOS)
+                if not self.no_video and getattr(self, '_window_created', False):
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        logger.info("User pressed 'q', stopping playback")
+                        break
+                else:
+                    time.sleep(0.1)
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
         finally:
@@ -942,6 +1094,14 @@ class WHEPClient:
                 self.video_thread.join(timeout=2.0)
             if self.audio_thread:
                 self.audio_thread.join(timeout=2.0)
+            
+            # Close OpenCV window
+            if not self.no_video and getattr(self, '_window_created', False):
+                try:
+                    cv2.destroyWindow(self.window_name)
+                    cv2.waitKey(1)  # Process pending window events
+                except:
+                    pass
 
     def disconnect(self):
         """Disconnect from WHEP server"""
@@ -1011,13 +1171,14 @@ def main():
     parser.add_argument("--token", help="Bearer token for authentication")
     parser.add_argument("--no-video", action="store_true", help="Disable video display (audio only)")
     parser.add_argument("--timeout", type=int, help="Timeout in seconds")
+    parser.add_argument("--openh264", help="Path to OpenH264 library (e.g., ./libopenh264-2.6.0-mac-arm64.dylib)")
 
     args = parser.parse_args()
 
     logger.info("Starting WHEP client...")
     logger.info("Press 'q' in the video window or Ctrl+C to stop")
 
-    client = WHEPClient(args.url, args.token, args.no_video, args.timeout)
+    client = WHEPClient(args.url, args.token, args.no_video, args.timeout, args.openh264)
 
     try:
         client.connect()

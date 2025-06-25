@@ -111,25 +111,29 @@ set OPENH264_PATH=C:\path\to\openh264.dll
 使用例：
 
 ```bash
-# 基本的な使い方
+# 基本的な使い方（--openh264 引数でライブラリパスを指定）
+uv run python whep.py --url https://example.com/whep/stream --openh264 ./libopenh264-2.6.0-mac-arm64.dylib
+
+# 環境変数での指定も引き続き可能
 OPENH264_PATH=./libopenh264-2.6.0-mac-arm64.dylib uv run python whep.py --url https://example.com/whep/stream
 
 # 認証トークンを使用
-uv run python whep.py --url https://example.com/whep/stream --token YOUR_BEARER_TOKEN
+uv run python whep.py --url https://example.com/whep/stream --openh264 ./libopenh264-2.6.0-mac-arm64.dylib --token YOUR_BEARER_TOKEN
 
 # 音声のみ再生（映像を無効化）
-uv run python whep.py --url https://example.com/whep/stream --no-video
+uv run python whep.py --url https://example.com/whep/stream --openh264 ./libopenh264-2.6.0-mac-arm64.dylib --no-video
 
 # 30秒間受信して終了
-uv run python whep.py --url https://example.com/whep/stream --timeout 30
+uv run python whep.py --url https://example.com/whep/stream --openh264 ./libopenh264-2.6.0-mac-arm64.dylib --timeout 30
 
 # Sora のテストサーバーで試す
-OPENH264_PATH=./libopenh264-2.6.0-mac-arm64.dylib uv run python whep.py --url https://sora-test.shiguredo.co.jp/whep/sora
+uv run python whep.py --url https://sora-test.shiguredo.co.jp/whep/sora --openh264 ./libopenh264-2.6.0-mac-arm64.dylib
 ```
 
 オプション：
 
 - `--url`: WHEP エンドポイントの URL（必須）
+- `--openh264`: OpenH264 ライブラリのパス（例: ./libopenh264-2.6.0-mac-arm64.dylib）
 - `--token`: Bearer 認証トークン（オプション）
 - `--no-video`: 映像を無効化し、音声のみ再生
 - `--timeout`: 受信時間（秒）（指定しない場合は無期限）
