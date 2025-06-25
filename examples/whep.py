@@ -117,14 +117,51 @@ class H264DepacketizerHandler(PyMediaHandler):
         
         # H.264 NALユニットのスタートコードを確認
         if len(data) >= 4:
+            start_code_len = 0
             if data[:4] == b'\x00\x00\x00\x01':
-                logger.info(f"  *** H.264 NAL unit with start code detected! ***")
-                nal_type = data[4] & 0x1F if len(data) > 4 else 0
-                logger.info(f"  NAL unit type: {nal_type}")
+                start_code_len = 4
+                logger.info(f"  *** H.264 NAL unit with long start code detected! ***")
             elif data[:3] == b'\x00\x00\x01':
+                start_code_len = 3
                 logger.info(f"  *** H.264 NAL unit with short start code detected! ***")
-                nal_type = data[3] & 0x1F if len(data) > 3 else 0
-                logger.info(f"  NAL unit type: {nal_type}")
+            
+            if start_code_len > 0 and len(data) > start_code_len:
+                try:
+                    # スタートコードを除いたNALユニットデータ
+                    nal_data = data[start_code_len:]
+                    nal_unit = NalUnit(nal_data)
+                    
+                    # NalUnitクラスで全ての情報を取得
+                    forbidden_bit = nal_unit.forbidden_bit()
+                    nri = nal_unit.nri()
+                    nal_type = nal_unit.unit_type()
+                    
+                    logger.info(f"  NAL unit type: {nal_type}")
+                    logger.info(f"  NAL header: forbidden_bit={forbidden_bit}, NRI={nri}")
+                    
+                    # ペイロードを取得
+                    payload = nal_unit.payload()
+                    if payload:
+                        logger.info(f"  NAL payload size: {len(payload)} bytes")
+                        
+                        # NALタイプ別の処理
+                        if nal_type == 7:  # SPS
+                            logger.info(f"  *** SPS (Sequence Parameter Set) detected ***")
+                            if len(payload) > 4:
+                                logger.info(f"  SPS payload (first 4 bytes): {bytes(payload[:4]).hex()}")
+                        elif nal_type == 8:  # PPS
+                            logger.info(f"  *** PPS (Picture Parameter Set) detected ***")
+                        elif nal_type == 5:  # IDR
+                            logger.info(f"  *** IDR (Instantaneous Decoder Refresh) slice detected ***")
+                        elif nal_type == 1:  # Non-IDR slice
+                            logger.info(f"  *** Non-IDR slice detected ***")
+                        elif nal_type == 6:  # SEI
+                            logger.info(f"  *** SEI (Supplemental Enhancement Information) detected ***")
+                        elif nal_type == 9:  # AUD
+                            logger.info(f"  *** AUD (Access Unit Delimiter) detected ***")
+                        
+                except Exception as e:
+                    logger.error(f"  Failed to parse NAL unit: {e}")
 
 
 class DepacketizedDataHandler(PyMediaHandler):
