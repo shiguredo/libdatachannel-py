@@ -566,8 +566,22 @@ class WHEPClient:
             except Exception as e:
                 logger.error(f"Error terminating session: {e}")
         
+        # トラックをクリア
+        if hasattr(self, 'audio_track') and self.audio_track:
+            self.audio_track.on_open(lambda: None)  # コールバックをクリア
+            self.audio_track.on_frame(lambda x: None)
+            self.audio_track = None
+            
+        if hasattr(self, 'video_track') and self.video_track:
+            self.video_track.on_open(lambda: None)  # コールバックをクリア
+            self.video_track.on_frame(lambda x: None)
+            self.video_track = None
+        
         # PeerConnection をクローズ
         if self.pc:
+            # コールバックをクリア
+            self.pc.on_state_change(lambda x: None)
+            self.pc.on_ice_state_change(lambda x: None)
             self.pc.close()
             self.pc = None
         
@@ -614,6 +628,15 @@ def main():
     # WHEP クライアントを作成
     client = WHEPClient(args.url, args.token)
     
+    # シグナルハンドラーを設定
+    def signal_handler(sig, frame):
+        logger.info("Received interrupt signal, shutting down...")
+        if client:
+            client._running = False
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     try:
         # 接続
         client.connect()
@@ -621,9 +644,14 @@ def main():
         # メディアを受信
         client.run(args.duration)
         
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
     except Exception as e:
         logger.error(f"Error: {e}")
         sys.exit(1)
+    finally:
+        # 必ず切断処理を実行
+        client.disconnect()
 
 
 if __name__ == "__main__":
