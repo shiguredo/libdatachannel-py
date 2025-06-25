@@ -374,11 +374,14 @@ class WHEPClient:
                     if header_size < len(data):
                         # Log only first 20 messages for debugging
                         if self._video_message_count <= 20:
-                            logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes")
+                            logger.info(f"Video message #{self._video_message_count}: {len(data)} bytes, Payload Type={pt}")
                             preview = ' '.join(f'{b:02x}' for b in data[:min(30, len(data))])
                             logger.info(f"Data preview: {preview}")
                             logger.info("Detected RTP packet, manually extracting payload")
                             logger.info(f"Extracted payload: {len(data) - header_size} bytes from RTP packet (PT={pt}, seq={seq})")
+                        else:
+                            # Log payload type for all messages
+                            logger.info(f"Video message #{self._video_message_count}: PT={pt}, {len(data)} bytes")
                         
                         # Always extract the payload
                         data = data[header_size:]
@@ -735,8 +738,22 @@ class WHEPClient:
         def on_audio_message(data):
             try:
                 self._audio_message_count += 1
+                
+                # Check if this is RTP data and extract payload type
+                pt = None
+                if len(data) >= 12 and (data[0] >> 6) == 2:  # RTP version 2
+                    pt = data[1] & 0x7F
+                    seq = (data[2] << 8) | data[3]
+                    
                 if self._audio_message_count <= 10 or self._audio_message_count % 100 == 0:
-                    logger.info(f"Audio message #{self._audio_message_count}: {len(data)} bytes")
+                    if pt is not None:
+                        logger.info(f"Audio message #{self._audio_message_count}: {len(data)} bytes, Payload Type={pt}")
+                    else:
+                        logger.info(f"Audio message #{self._audio_message_count}: {len(data)} bytes (not RTP)")
+                else:
+                    # Log payload type for all messages
+                    if pt is not None:
+                        logger.info(f"Audio message #{self._audio_message_count}: PT={pt}, {len(data)} bytes")
                     
                 # Create EncodedAudio from data
                 if self.audio_decoder:
@@ -796,125 +813,130 @@ class WHEPClient:
             loop_count = 0
 
             while self.playback_active:
-            loop_count += 1
-            if loop_count == 1 or loop_count % 50 == 0:
+                loop_count += 1
+                if loop_count == 1 or loop_count % 50 == 0:
                     logger.info(f"Video thread loop #{loop_count}, playback_active={self.playback_active}, queue size={self.video_queue.qsize()}")
                 try:
-                # Check queue state before trying to get
-                queue_size = self.video_queue.qsize()
-                if queue_size > 0 and self._frames_dequeued == 0:
-                    logger.info(f"First attempt to dequeue, queue has {queue_size} frames")
-                
-                # Get frame from queue with timeout
-                frame = self.video_queue.get(timeout=0.1)
-                dequeue_count += 1
-                self._frames_dequeued += 1
-                
-                if dequeue_count <= 5 or dequeue_count % 100 == 0:
-                    logger.info(f"🎬 Successfully dequeued decoded frame #{dequeue_count}!")
-                    logger.info(f"  Frame: {frame.width()}x{frame.height()}, format: {frame.format}")
-                    logger.info(f"  Total frames dequeued: {self._frames_dequeued}, queue size after: {self.video_queue.qsize()}")
-                
-                # Use window created on main thread
-                if not self.no_video and dequeue_count == 1:
-                    logger.info(f"First video frame dequeued! Frame size: {frame.width()}x{frame.height()}")
-                    # Check if window was created on main thread
-                    window_created = getattr(self, '_window_created', False)
-                    if window_created:
-                        logger.info("Using window created on main thread")
-                        # Resize window to match frame size
-                        try:
-                            cv2.resizeWindow(self.window_name, frame.width(), frame.height())
-                        except:
-                            pass  # Ignore resize errors
-                    else:
-                        logger.warning("No OpenCV window available")
+                    # Check queue state before trying to get
+                    queue_size = self.video_queue.qsize()
+                    if queue_size > 0 and self._frames_dequeued == 0:
+                        logger.info(f"First attempt to dequeue, queue has {queue_size} frames")
+                    
+                    # Get frame from queue with timeout
+                    frame = self.video_queue.get(timeout=0.1)
+                    dequeue_count += 1
+                    self._frames_dequeued += 1
+                    
+                    if dequeue_count <= 5 or dequeue_count % 100 == 0:
+                        logger.info(f"🎬 Successfully dequeued decoded frame #{dequeue_count}!")
+                        logger.info(f"  Frame: {frame.width()}x{frame.height()}, format: {frame.format}")
+                        logger.info(f"  Total frames dequeued: {self._frames_dequeued}, queue size after: {self.video_queue.qsize()}")
+                    
+                    # Use window created on main thread
+                    if not self.no_video and dequeue_count == 1:
+                        logger.info(f"First video frame dequeued! Frame size: {frame.width()}x{frame.height()}")
+                        # Check if window was created on main thread
+                        window_created = getattr(self, '_window_created', False)
+                        if window_created:
+                            logger.info("Using window created on main thread")
+                            # Resize window to match frame size
+                            try:
+                                cv2.resizeWindow(self.window_name, frame.width(), frame.height())
+                            except:
+                                pass  # Ignore resize errors
+                        else:
+                            logger.warning("No OpenCV window available")
 
-                # Convert frame to BGR for OpenCV display
-                if frame.format == ImageFormat.I420:
-                    if dequeue_count <= 5:
-                        logger.info(f"Converting frame #{dequeue_count} to BGR...")
-                    
-                    # Get I420 buffer
-                    i420_buffer = frame.i420_buffer
-                    
-                    # Extract Y, U, V planes
-                    height = i420_buffer.height()
-                    width = i420_buffer.width()
-                    
-                    if dequeue_count <= 5:
-                        logger.info(f"Frame #{dequeue_count} dimensions: {width}x{height}")
-                    
-                    y_plane = np.array(i420_buffer.y[:height, :width], copy=True)
-                    u_plane = np.array(i420_buffer.u[:height//2, :width//2], copy=True)
-                    v_plane = np.array(i420_buffer.v[:height//2, :width//2], copy=True)
-                    
-                    # Upsample U and V planes
-                    u_upsampled = cv2.resize(u_plane, (width, height), interpolation=cv2.INTER_LINEAR)
-                    v_upsampled = cv2.resize(v_plane, (width, height), interpolation=cv2.INTER_LINEAR)
-                    
-                    # Stack to create YUV image
-                    yuv = np.stack([y_plane, u_upsampled, v_upsampled], axis=-1).astype(np.uint8)
-                    
-                    # Convert YUV to BGR
-                    bgr_frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
-                    
-                    # Display frame if window was created
-                    window_created = getattr(self, '_window_created', False)
-                    if window_created:
-                        cv2.imshow(self.window_name, bgr_frame)
-                        frame_count += 1
+                    # Convert frame to BGR for OpenCV display
+                    if frame.format == ImageFormat.I420:
+                        if dequeue_count <= 5:
+                            logger.info(f"Converting frame #{dequeue_count} to BGR...")
                         
-                        if dequeue_count <= 5 or dequeue_count % 30 == 0:
-                            logger.info(f"📺 Displayed video frame #{dequeue_count}")
-                    else:
-                        # Log that frame is being processed even without display
-                        if dequeue_count <= 5 or dequeue_count % 100 == 0:
-                            logger.info(f"Frame #{dequeue_count} processed but no window: {frame.width()}x{frame.height()}")
+                        # Get I420 buffer
+                        i420_buffer = frame.i420_buffer
+                        
+                        # Extract Y, U, V planes
+                        height = i420_buffer.height()
+                        width = i420_buffer.width()
+                        
+                        if dequeue_count <= 5:
+                            logger.info(f"Frame #{dequeue_count} dimensions: {width}x{height}")
+                        
+                        y_plane = np.array(i420_buffer.y[:height, :width], copy=True)
+                        u_plane = np.array(i420_buffer.u[:height//2, :width//2], copy=True)
+                        v_plane = np.array(i420_buffer.v[:height//2, :width//2], copy=True)
+                        
+                        # Upsample U and V planes
+                        u_upsampled = cv2.resize(u_plane, (width, height), interpolation=cv2.INTER_LINEAR)
+                        v_upsampled = cv2.resize(v_plane, (width, height), interpolation=cv2.INTER_LINEAR)
+                        
+                        # Stack to create YUV image
+                        yuv = np.stack([y_plane, u_upsampled, v_upsampled], axis=-1).astype(np.uint8)
+                        
+                        # Convert YUV to BGR
+                        bgr_frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
+                        
+                        # Display frame if window was created
+                        window_created = getattr(self, '_window_created', False)
+                        if window_created:
+                            cv2.imshow(self.window_name, bgr_frame)
+                            frame_count += 1
+                            
+                            if dequeue_count <= 5 or dequeue_count % 30 == 0:
+                                logger.info(f"📺 Displayed video frame #{dequeue_count}")
+                        else:
+                            # Log that frame is being processed even without display
+                            if dequeue_count <= 5 or dequeue_count % 100 == 0:
+                                logger.info(f"Frame #{dequeue_count} processed but no window: {frame.width()}x{frame.height()}")
 
-            except queue.Empty:
-                # No frame available
-                empty_count += 1
-                if empty_count % 10 == 1:  # Log every 10th empty
-                    logger.info(f"Video queue empty (count: {empty_count}), queue size: {self.video_queue.qsize()}")
-            except Exception as e:
-                logger.error(f"Error in video playback thread: {e}")
-                import traceback
-                traceback.print_exc()
-                self._handle_error("playing video", e)
-        
-        # Decode any remaining H264 NAL units
-        if hasattr(self, '_h264_nal_buffer') and len(self._h264_nal_buffer) > 0:
-            logger.info(f"Decoding remaining H264 NAL units: {len(self._h264_nal_buffer)} NALs")
-            # Process remaining NALs
-            combined_data = bytearray()
-            for nal in self._h264_nal_buffer:
-                combined_data.extend(nal)
-            if len(combined_data) > 0:
-                encoded_image = EncodedImage()
-                np_data = np.array(combined_data, dtype=np.uint8)
-                encoded_image.data = np_data
-                from datetime import timedelta
-                encoded_image.timestamp = timedelta(milliseconds=self._h264_timestamp)
-                try:
-                    if self.video_decoder:
-                        self.video_decoder.decode(encoded_image)
-                        # Try to flush decoder
-                        if hasattr(self.video_decoder, 'flush'):
-                            self.video_decoder.flush()
-                            logger.info("Flushed decoder for remaining frames")
+                except queue.Empty:
+                    # No frame available
+                    empty_count += 1
+                    if empty_count % 10 == 1:  # Log every 10th empty
+                        logger.info(f"Video queue empty (count: {empty_count}), queue size: {self.video_queue.qsize()}")
                 except Exception as e:
-                    logger.error(f"Error decoding remaining NALs: {e}")
+                    logger.error(f"Error in video playback thread: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    self._handle_error("playing video", e)
+            
+            # Decode any remaining H264 NAL units
+            if hasattr(self, '_h264_nal_buffer') and len(self._h264_nal_buffer) > 0:
+                logger.info(f"Decoding remaining H264 NAL units: {len(self._h264_nal_buffer)} NALs")
+                # Process remaining NALs
+                combined_data = bytearray()
+                for nal in self._h264_nal_buffer:
+                    combined_data.extend(nal)
+                if len(combined_data) > 0:
+                    encoded_image = EncodedImage()
+                    np_data = np.array(combined_data, dtype=np.uint8)
+                    encoded_image.data = np_data
+                    from datetime import timedelta
+                    encoded_image.timestamp = timedelta(milliseconds=self._h264_timestamp)
+                    try:
+                        if self.video_decoder:
+                            self.video_decoder.decode(encoded_image)
+                            # Try to flush decoder
+                            if hasattr(self.video_decoder, 'flush'):
+                                self.video_decoder.flush()
+                                logger.info("Flushed decoder for remaining frames")
+                    except Exception as e:
+                        logger.error(f"Error decoding remaining NALs: {e}")
 
-        # Destroy window if it was created
-        window_created = getattr(self, '_window_created', False)
-        if window_created:
-            try:
-                cv2.destroyWindow(self.window_name)
-                cv2.waitKey(1)  # Process any pending window events
-            except:
-                pass  # Ignore errors during cleanup
-        logger.info(f"Video playback stopped. Total frames displayed: {frame_count}")
+            # Destroy window if it was created
+            window_created = getattr(self, '_window_created', False)
+            if window_created:
+                try:
+                    cv2.destroyWindow(self.window_name)
+                    cv2.waitKey(1)  # Process any pending window events
+                except:
+                    pass  # Ignore errors during cleanup
+            logger.info(f"Video playback stopped. Total frames displayed: {frame_count}")
+        
+        except Exception as e:
+            logger.error(f"Error in video playback thread: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _play_audio(self):
         """Play audio frames using sounddevice"""
