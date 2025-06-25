@@ -164,90 +164,6 @@ class H264DepacketizerHandler(PyMediaHandler):
                     logger.error(f"  Failed to parse NAL unit: {e}")
 
 
-class DepacketizedDataHandler(PyMediaHandler):
-    """デパケタイズされたデータを処理するハンドラー"""
-    
-    def __init__(self, media_type: str, stats: MediaStats):
-        super().__init__()
-        self.media_type = media_type
-        self.stats = stats
-        self.frame_count = 0
-    
-    def incoming(self, messages, send):
-        """デパケタイズされたメッセージを受信"""
-        # デバッグ用：メッセージ数をログ
-        if self.frame_count == 0:
-            logger.info(f"{self.media_type} handler: Received {len(messages)} messages in first incoming call")
-        
-        # メッセージを処理
-        for i, msg in enumerate(messages):
-            if msg:
-                size = len(msg)
-                if self.media_type == "audio":
-                    self.stats.update_audio(size)
-                else:
-                    self.stats.update_video(size)
-                
-                self.frame_count += 1
-                
-                # 最初の数フレームを詳細にログ
-                if self.frame_count <= 5:
-                    logger.info(f"{self.media_type} depacketized frame #{self.frame_count}: size={size} bytes")
-                    
-                    # frame_infoがあるか確認（メッセージ自体に）
-                    frame_info = getattr(msg, 'frame_info', None)
-                    if frame_info:
-                        logger.info(f"  Frame info found: PT={frame_info.payload_type}, TS={frame_info.timestamp}")
-                    else:
-                        logger.debug(f"  No frame_info attribute on message")
-                    
-                    # メッセージのタイプを確認
-                    logger.debug(f"  Message type: {type(msg)}")
-                    
-                    # データの内容を確認
-                    if hasattr(msg, 'to_bytes'):
-                        data = msg.to_bytes()
-                    else:
-                        data = bytes(msg)
-                    
-                    logger.info(f"  First 20 bytes: {data[:20].hex() if len(data) >= 20 else data.hex()}")
-                    
-                    # RTPヘッダーのように見えるか確認
-                    if len(data) >= 12 and (data[0] & 0xC0) == 0x80:
-                        logger.warning(f"  WARNING: Data looks like RTP packet (starts with {data[0]:02x})")
-                        # RTPヘッダーをパース
-                        pt = data[1] & 0x7F
-                        seq = (data[2] << 8) | data[3]
-                        ts = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
-                        logger.warning(f"  RTP header: PT={pt}, SEQ={seq}, TS={ts}")
-                    
-                    # H.264 NALユニットのスタートコードを確認
-                    if self.media_type == "video" and len(data) >= 4:
-                        if data[:4] == b'\x00\x00\x00\x01':
-                            logger.info(f"  *** H.264 NAL unit with start code detected! ***")
-                            nal_type = data[4] & 0x1F if len(data) > 4 else 0
-                            logger.info(f"  NAL unit type: {nal_type}")
-                        elif data[:3] == b'\x00\x00\x01':
-                            logger.info(f"  *** H.264 NAL unit with short start code detected! ***")
-                            nal_type = data[3] & 0x1F if len(data) > 3 else 0
-                            logger.info(f"  NAL unit type: {nal_type}")
-                        else:
-                            # スタートコードがない場合は、生のH.264データかもしれない
-                            nal_type = data[0] & 0x1F if len(data) > 0 else 0
-                            if nal_type <= 31:  # 有効なNALタイプ
-                                logger.info(f"  H.264 NAL unit type (no start code): {nal_type}")
-                    
-                    # Opusフレームを確認
-                    if self.media_type == "audio":
-                        logger.info(f"  Opus frame received")
-                
-                # 定期的にログ
-                elif self.frame_count % 100 == 0:
-                    logger.debug(f"{self.media_type} frame #{self.frame_count}: size={size} bytes")
-        
-        # 入力メッセージをそのまま返す
-        return messages
-
 
 class WHEPClient:
     """WHEP クライアントの実装"""
@@ -396,8 +312,28 @@ class WHEPClient:
         audio_depacketizer = OpusRtpDepacketizer()
         audio_rtcp.add_to_chain(audio_depacketizer)
         
-        # デパケタイズされたデータを処理するハンドラーを追加
-        audio_handler = DepacketizedDataHandler("audio", self.stats)
+        # 音声用の簡易ハンドラーを追加（統計のみ）
+        class AudioStatsHandler(PyMediaHandler):
+            def __init__(self, stats):
+                super().__init__()
+                self.stats = stats
+                self.frame_count = 0
+            
+            def incoming(self, messages, send):
+                for msg in messages:
+                    if msg:
+                        self.stats.update_audio(len(msg))
+                        self.frame_count += 1
+                        
+                        # 最初の数フレームだけログ
+                        if self.frame_count <= 5:
+                            frame_info = getattr(msg, 'frame_info', None)
+                            if frame_info:
+                                logger.info(f"Audio frame #{self.frame_count}: PT={frame_info.payload_type}, size={len(msg)} bytes")
+                
+                return messages
+        
+        audio_handler = AudioStatsHandler(self.stats)
         audio_depacketizer.add_to_chain(audio_handler)
         
         def on_audio_open():
