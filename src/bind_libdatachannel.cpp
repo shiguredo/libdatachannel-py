@@ -1043,7 +1043,8 @@ void bind_rtpdepacketizer(nb::module_& m) {
             return result;
           },
           "messages"_a, "send"_a,
-          "Process incoming RTP messages and return depacketized messages");
+          "Process incoming RTP messages and return depacketized messages",
+          nb::sig("def incoming(self, messages: list[Message], send: Callable[[Message], None]) -> list[Message]"));
 }
 
 // ---- h264depacketizer.hpp ----
@@ -1073,7 +1074,8 @@ void bind_h264depacketizer(nb::module_& m) {
             return result;
           },
           "messages"_a, "send"_a,
-          "Process incoming RTP messages and return depacketized NAL units");
+          "Process incoming RTP messages and return depacketized NAL units",
+          nb::sig("def incoming(self, messages: list[Message], send: Callable[[Message], None]) -> list[Message]"));
 }
 
 // ---- pacinghandler.hpp ----
