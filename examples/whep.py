@@ -11,6 +11,7 @@ from libdatachannel import (
     Description,
     H264RtpDepacketizer,
     IceServer,
+    NalUnit,
     OpusRtpDepacketizer,
     PeerConnection,
     Track,
@@ -195,6 +196,30 @@ class WHEPClient:
 
         logger.info("Connected to WHEP server")
 
+    def _get_nal_type_name(self, nal_type: int) -> str:
+        """Get human-readable name for NAL unit type"""
+        nal_type_names = {
+            0: "Unspecified",
+            1: "Coded slice (non-IDR)",
+            2: "Coded slice data partition A",
+            3: "Coded slice data partition B",
+            4: "Coded slice data partition C",
+            5: "Coded slice (IDR)",
+            6: "SEI",
+            7: "SPS",
+            8: "PPS",
+            9: "Access unit delimiter",
+            10: "End of sequence",
+            11: "End of stream",
+            12: "Filler data",
+            13: "SPS extension",
+            14: "Prefix NAL unit",
+            15: "Subset SPS",
+            19: "Coded slice of auxiliary picture",
+            20: "Coded slice extension",
+        }
+        return nal_type_names.get(nal_type, f"Reserved/Unknown ({nal_type})")
+
     def _setup_depacketizers(self):
         """Set up RTP depacketizers for audio and video"""
         # Video H.264 depacketizer
@@ -206,11 +231,89 @@ class WHEPClient:
             # Set up frame handler for H.264 frames
             def on_video_frame(data: bytes, frame_info):
                 self.video_frame_count += 1
-                if self.video_frame_count % 30 == 0:  # Log every 30 frames
+                
+                # Parse NAL units using manual parsing
+                # Note: libdatachannel's NalUnit class is primarily for creating NAL units,
+                # not for parsing existing H.264 stream data
+                nal_units = []
+                try:
+                    # Parse the H.264 frame data for NAL units
+                    offset = 0
+                    while offset < len(data):
+                        # Look for start code (0x00000001 or 0x000001)
+                        if offset + 4 <= len(data) and data[offset:offset+4] == b'\x00\x00\x00\x01':
+                            start_code_len = 4
+                        elif offset + 3 <= len(data) and data[offset:offset+3] == b'\x00\x00\x01':
+                            start_code_len = 3
+                        else:
+                            offset += 1
+                            continue
+                        
+                        # Find the start of NAL unit data
+                        nal_start = offset + start_code_len
+                        if nal_start >= len(data):
+                            break
+                            
+                        # Find the next start code or end of data
+                        next_offset = nal_start
+                        while next_offset < len(data):
+                            if (next_offset + 4 <= len(data) and data[next_offset:next_offset+4] == b'\x00\x00\x00\x01') or \
+                               (next_offset + 3 <= len(data) and data[next_offset:next_offset+3] == b'\x00\x00\x01'):
+                                break
+                            next_offset += 1
+                        
+                        # Extract NAL unit
+                        nal_data = data[nal_start:next_offset]
+                        if nal_data:
+                            # Create NalUnit object from bytes
+                            try:
+                                nal_unit = NalUnit(nal_data)
+                                
+                                # Get NAL unit properties from the NalUnit object
+                                nal_type = nal_unit.unit_type()
+                                nal_ref_idc = nal_unit.nri()
+                                forbidden_bit = 1 if nal_unit.forbidden_bit() else 0
+                                
+                                nal_units.append({
+                                    'type': nal_type,
+                                    'ref_idc': nal_ref_idc,
+                                    'forbidden': forbidden_bit,
+                                    'size': len(nal_data),
+                                    'type_name': self._get_nal_type_name(nal_type),
+                                    'nal_unit_obj': nal_unit  # Store the NalUnit object
+                                })
+                            except Exception:
+                                # Fallback to manual parsing if NalUnit construction fails
+                                nal_header = nal_data[0]
+                                nal_type = nal_header & 0x1F
+                                nal_ref_idc = (nal_header >> 5) & 0x03
+                                forbidden_bit = (nal_header >> 7) & 0x01
+                                
+                                nal_units.append({
+                                    'type': nal_type,
+                                    'ref_idc': nal_ref_idc,
+                                    'forbidden': forbidden_bit,
+                                    'size': len(nal_data),
+                                    'type_name': self._get_nal_type_name(nal_type)
+                                })
+                        
+                        offset = next_offset
+                
+                except Exception as e:
+                    logger.error(f"Error parsing NAL units: {e}")
+                
+                if self.video_frame_count % 30 == 0 or any(unit['type'] in [5, 7, 8] for unit in nal_units):  # Log every 30 frames or key frames
                     logger.info(
                         f"Video frame #{self.video_frame_count}: "
-                        f"size={len(data)} bytes, timestamp={frame_info.timestamp}"
+                        f"size={len(data)} bytes, timestamp={frame_info.timestamp}, "
+                        f"NAL units: {len(nal_units)}"
                     )
+                    for i, unit in enumerate(nal_units):
+                        logger.info(
+                            f"  NAL[{i}]: type={unit['type']} ({unit['type_name']}), "
+                            f"ref_idc={unit['ref_idc']}, size={unit['size']} bytes, "
+                            f"forbidden={unit['forbidden']}"
+                        )
             
             self.video_track.on_frame(on_video_frame)
             self.video_track.set_media_handler(h264_depacketizer)
