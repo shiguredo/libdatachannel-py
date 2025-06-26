@@ -7,12 +7,10 @@ import sys
 from buildbase import (
     Platform,
     add_path,
-    apply_patch,
     cd,
     cmake_path,
     cmd,
     cmdcap,
-    download,
     get_macos_osver,
     get_windows_osver,
     git_clone_shallow,
@@ -77,11 +75,6 @@ def install_deps(
             libdatachannel_dir,
             submodule=True,
         )
-        with cd(libdatachannel_dir):
-            download(
-                "https://github.com/cisco/libsrtp/commit/91ceb8176afdbc5f2bdde0e409da011e99e22d9c.diff"
-            )
-            apply_patch("91ceb8176afdbc5f2bdde0e409da011e99e22d9c.diff", "deps/libsrtp", 1)
 
     macos_cmake_args = []
     if platform.target.os == "macos":
