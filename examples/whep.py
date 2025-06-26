@@ -43,6 +43,7 @@ class WHEPClient:
         # Track counters
         self.video_frame_count = 0
         self.audio_frame_count = 0
+        self.decoded_frame_count = 0
         
         # Decoder
         self.video_decoder = None
@@ -314,6 +315,32 @@ class WHEPClient:
                 except Exception as e:
                     logger.error(f"Error parsing NAL units: {e}")
                 
+                # Decode the frame with OpenH264 if decoder is available
+                if self.video_decoder and len(data) > 0:
+                    try:
+                        from libdatachannel.codec import EncodedImage
+                        import numpy as np
+                        
+                        # Create EncodedImage with the H.264 frame data
+                        encoded_image = EncodedImage()
+                        # Convert bytes to numpy array - make a copy to ensure correct format
+                        np_data = np.frombuffer(data, dtype=np.uint8).copy()
+                        encoded_image.data = np_data
+                        # Convert timestamp to timedelta (microseconds)
+                        from datetime import timedelta
+                        encoded_image.timestamp = timedelta(microseconds=frame_info.timestamp)
+                        
+                        # Decode the frame
+                        self.video_decoder.decode(encoded_image)
+                        
+                        if self.video_frame_count % 30 == 0:
+                            logger.debug(f"Decoded video frame #{self.video_frame_count}")
+                    except Exception as e:
+                        if self.video_frame_count <= 2:
+                            logger.error(f"Error decoding video frame: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
+                
                 if self.video_frame_count % 30 == 0 or any(unit['type'] in [5, 7, 8] for unit in nal_units):  # Log every 30 frames or key frames
                     logger.info(
                         f"Video frame #{self.video_frame_count}: "
@@ -371,7 +398,12 @@ class WHEPClient:
                 
                 # Set up decoder callback
                 def on_decoded_frame(frame):
-                    logger.debug(f"Decoded video frame: {frame.width}x{frame.height}, format={frame.format}")
+                    self.decoded_frame_count += 1
+                    if self.decoded_frame_count % 30 == 0:  # Log every 30 decoded frames
+                        logger.info(
+                            f"Decoded frame #{self.decoded_frame_count}: "
+                            f"{frame.width()}x{frame.height()}, format={frame.format}"
+                        )
                 
                 self.video_decoder.set_on_decode(on_decoded_frame)
             else:
@@ -440,6 +472,8 @@ class WHEPClient:
         logger.info(
             f"Receive completed. Total frames - Video: {self.video_frame_count}, Audio: {self.audio_frame_count}"
         )
+        if self.video_decoder:
+            logger.info(f"Total decoded frames: {self.decoded_frame_count}")
 
     def disconnect(self):
         """Disconnect from WHEP server with graceful shutdown"""
