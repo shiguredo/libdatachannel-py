@@ -36,12 +36,6 @@ class WHEPClient:
         # Track counters
         self.video_frame_count = 0
         self.audio_frame_count = 0
-        
-        # RTP packet statistics
-        self.video_packets_received = 0
-        self.video_bytes_received = 0
-        self.audio_packets_received = 0
-        self.audio_bytes_received = 0
 
     def _handle_error(self, context: str, error: Exception):
         """Unified error handling"""
@@ -209,13 +203,6 @@ class WHEPClient:
             # Default is LongStartSequence (0x00000001)
             h264_depacketizer = H264RtpDepacketizer()
             
-            # Set up message handler for raw RTP packets
-            def on_video_message(data: bytes):
-                self.video_packets_received += 1
-                self.video_bytes_received += len(data)
-                if self.video_packets_received % 100 == 0:  # Log every 100 packets
-                    logger.info(f"Video RTP stats: {self.video_packets_received} packets, {self.video_bytes_received} bytes")
-            
             # Set up frame handler for H.264 frames
             def on_video_frame(data: bytes, frame_info):
                 self.video_frame_count += 1
@@ -225,7 +212,6 @@ class WHEPClient:
                         f"size={len(data)} bytes, timestamp={frame_info.timestamp}"
                     )
             
-            self.video_track.on_message(on_video_message)
             self.video_track.on_frame(on_video_frame)
             self.video_track.set_media_handler(h264_depacketizer)
             logger.info("H.264 depacketizer and handlers set for video track")
@@ -234,13 +220,6 @@ class WHEPClient:
         if self.audio_track:
             # OpusRtpDepacketizer for Opus packets
             opus_depacketizer = OpusRtpDepacketizer()
-            
-            # Set up message handler for raw RTP packets
-            def on_audio_message(data: bytes):
-                self.audio_packets_received += 1
-                self.audio_bytes_received += len(data)
-                if self.audio_packets_received % 100 == 0:  # Log every 100 packets
-                    logger.info(f"Audio RTP stats: {self.audio_packets_received} packets, {self.audio_bytes_received} bytes")
             
             # Set up frame handler for Opus frames
             def on_audio_frame(data: bytes, frame_info):
@@ -251,7 +230,6 @@ class WHEPClient:
                         f"size={len(data)} bytes, timestamp={frame_info.timestamp}"
                     )
             
-            self.audio_track.on_message(on_audio_message)
             self.audio_track.on_frame(on_audio_frame)
             self.audio_track.set_media_handler(opus_depacketizer)
             logger.info("Opus depacketizer and handlers set for audio track")
@@ -311,10 +289,6 @@ class WHEPClient:
                         f"Stats: Video {video_fps} fps (total: {self.video_frame_count} frames), "
                         f"Audio {audio_fps} fps (total: {self.audio_frame_count} frames)"
                     )
-                    logger.info(
-                        f"  RTP: Video {self.video_packets_received} packets ({self.video_bytes_received} bytes), "
-                        f"Audio {self.audio_packets_received} packets ({self.audio_bytes_received} bytes)"
-                    )
 
                 time.sleep(0.1)
 
@@ -323,10 +297,6 @@ class WHEPClient:
 
         logger.info(
             f"Receive completed. Total frames - Video: {self.video_frame_count}, Audio: {self.audio_frame_count}"
-        )
-        logger.info(
-            f"Total RTP packets - Video: {self.video_packets_received} ({self.video_bytes_received} bytes), "
-            f"Audio: {self.audio_packets_received} ({self.audio_bytes_received} bytes)"
         )
 
     def disconnect(self):
