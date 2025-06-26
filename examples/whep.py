@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 import cv2
 import httpx
+from wish import get_nal_type_name, handle_error, parse_link_header
 
 from libdatachannel import (
     Configuration,
@@ -23,8 +24,6 @@ from libdatachannel.codec import (
     VideoDecoder,
     create_openh264_video_decoder,
 )
-
-from .wish import get_nal_type_name, handle_error, parse_link_header
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -62,6 +61,9 @@ class WHEPClient:
         # OpenCV display
         self.window_name = "WHEP Video"
         self.frame_queue = queue.Queue(maxsize=10) if display_video else None
+        
+        # Running flag
+        self.running = True
 
     def connect(self):
         """Connect to WHEP server"""
@@ -155,6 +157,133 @@ class WHEPClient:
 
         logger.info("Connected to WHEP server")
 
+    def _on_video_frame(self, data: bytes, frame_info):
+        """Handle video frames"""
+        self.video_frame_count += 1
+
+        # Parse NAL units using manual parsing
+        # Note: libdatachannel's NalUnit class is primarily for creating NAL units,
+        # not for parsing existing H.264 stream data
+        nal_units = []
+        try:
+            # Parse the H.264 frame data for NAL units
+            offset = 0
+            while offset < len(data):
+                # Look for start code (0x00000001 or 0x000001)
+                if offset + 4 <= len(data) and data[offset : offset + 4] == b"\x00\x00\x00\x01":
+                    start_code_len = 4
+                elif offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01":
+                    start_code_len = 3
+                else:
+                    offset += 1
+                    continue
+
+                # Find the start of NAL unit data
+                nal_start = offset + start_code_len
+                if nal_start >= len(data):
+                    break
+
+                # Find the next start code or end of data
+                next_offset = nal_start
+                while next_offset < len(data):
+                    if (
+                        next_offset + 4 <= len(data)
+                        and data[next_offset : next_offset + 4] == b"\x00\x00\x00\x01"
+                    ) or (
+                        next_offset + 3 <= len(data)
+                        and data[next_offset : next_offset + 3] == b"\x00\x00\x01"
+                    ):
+                        break
+                    next_offset += 1
+
+                # Extract NAL unit
+                nal_data = data[nal_start:next_offset]
+                if nal_data:
+                    # Create NalUnit object from bytes
+                    try:
+                        nal_unit = NalUnit(nal_data)
+
+                        # Get NAL unit properties from the NalUnit object
+                        nal_type = nal_unit.unit_type()
+                        nal_ref_idc = nal_unit.nri()
+                        forbidden_bit = 1 if nal_unit.forbidden_bit() else 0
+
+                        nal_units.append(
+                            {
+                                "type": nal_type,
+                                "ref_idc": nal_ref_idc,
+                                "forbidden": forbidden_bit,
+                                "size": len(nal_data),
+                                "type_name": get_nal_type_name(nal_type),
+                                "nal_unit_obj": nal_unit,  # Store the NalUnit object
+                            }
+                        )
+                    except Exception:
+                        # Fallback to manual parsing if NalUnit construction fails
+                        nal_header = nal_data[0]
+                        nal_type = nal_header & 0x1F
+                        nal_ref_idc = (nal_header >> 5) & 0x03
+                        forbidden_bit = (nal_header >> 7) & 0x01
+
+                        nal_units.append(
+                            {
+                                "type": nal_type,
+                                "ref_idc": nal_ref_idc,
+                                "forbidden": forbidden_bit,
+                                "size": len(nal_data),
+                                "type_name": get_nal_type_name(nal_type),
+                            }
+                        )
+
+                offset = next_offset
+
+        except Exception as e:
+            logger.error(f"Error parsing NAL units: {e}")
+
+        # Decode the frame with OpenH264 if decoder is available
+        if self.video_decoder and len(data) > 0:
+            try:
+                import numpy as np
+
+                from libdatachannel.codec import EncodedImage
+
+                # Create EncodedImage with the H.264 frame data
+                encoded_image = EncodedImage()
+                # Convert bytes to numpy array - make a copy to ensure correct format
+                np_data = np.frombuffer(data, dtype=np.uint8).copy()
+                encoded_image.data = np_data
+                # Convert timestamp to timedelta (microseconds)
+                from datetime import timedelta
+
+                encoded_image.timestamp = timedelta(microseconds=frame_info.timestamp)
+
+                # Decode the frame
+                self.video_decoder.decode(encoded_image)
+
+                if self.video_frame_count % 30 == 0:
+                    logger.debug(f"Decoded video frame #{self.video_frame_count}")
+            except Exception as e:
+                if self.video_frame_count <= 2:
+                    logger.error(f"Error decoding video frame: {e}")
+                    import traceback
+
+                    logger.error(traceback.format_exc())
+
+        if self.video_frame_count % 30 == 0 or any(
+            unit["type"] in [5, 7, 8] for unit in nal_units
+        ):  # Log every 30 frames or key frames
+            logger.info(
+                f"Video frame #{self.video_frame_count}: "
+                f"size={len(data)} bytes, timestamp={frame_info.timestamp}, "
+                f"NAL units: {len(nal_units)}"
+            )
+            for i, unit in enumerate(nal_units):
+                logger.info(
+                    f"  NAL[{i}]: type={unit['type']} ({unit['type_name']}), "
+                    f"ref_idc={unit['ref_idc']}, size={unit['size']} bytes, "
+                    f"forbidden={unit['forbidden']}"
+                )
+
     def _setup_video_depacketizer(self):
         """Set up H.264 RTP depacketizer for video track"""
         if self.video_track:
@@ -162,141 +291,18 @@ class WHEPClient:
             # Default is LongStartSequence (0x00000001)
             h264_depacketizer = H264RtpDepacketizer()
 
-            # Set up frame handler for H.264 frames
-            def on_video_frame(data: bytes, frame_info):
-                self.video_frame_count += 1
-
-                # Parse NAL units using manual parsing
-                # Note: libdatachannel's NalUnit class is primarily for creating NAL units,
-                # not for parsing existing H.264 stream data
-                nal_units = []
-                try:
-                    # Parse the H.264 frame data for NAL units
-                    offset = 0
-                    while offset < len(data):
-                        # Look for start code (0x00000001 or 0x000001)
-                        if (
-                            offset + 4 <= len(data)
-                            and data[offset : offset + 4] == b"\x00\x00\x00\x01"
-                        ):
-                            start_code_len = 4
-                        elif (
-                            offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01"
-                        ):
-                            start_code_len = 3
-                        else:
-                            offset += 1
-                            continue
-
-                        # Find the start of NAL unit data
-                        nal_start = offset + start_code_len
-                        if nal_start >= len(data):
-                            break
-
-                        # Find the next start code or end of data
-                        next_offset = nal_start
-                        while next_offset < len(data):
-                            if (
-                                next_offset + 4 <= len(data)
-                                and data[next_offset : next_offset + 4] == b"\x00\x00\x00\x01"
-                            ) or (
-                                next_offset + 3 <= len(data)
-                                and data[next_offset : next_offset + 3] == b"\x00\x00\x01"
-                            ):
-                                break
-                            next_offset += 1
-
-                        # Extract NAL unit
-                        nal_data = data[nal_start:next_offset]
-                        if nal_data:
-                            # Create NalUnit object from bytes
-                            try:
-                                nal_unit = NalUnit(nal_data)
-
-                                # Get NAL unit properties from the NalUnit object
-                                nal_type = nal_unit.unit_type()
-                                nal_ref_idc = nal_unit.nri()
-                                forbidden_bit = 1 if nal_unit.forbidden_bit() else 0
-
-                                nal_units.append(
-                                    {
-                                        "type": nal_type,
-                                        "ref_idc": nal_ref_idc,
-                                        "forbidden": forbidden_bit,
-                                        "size": len(nal_data),
-                                        "type_name": get_nal_type_name(nal_type),
-                                        "nal_unit_obj": nal_unit,  # Store the NalUnit object
-                                    }
-                                )
-                            except Exception:
-                                # Fallback to manual parsing if NalUnit construction fails
-                                nal_header = nal_data[0]
-                                nal_type = nal_header & 0x1F
-                                nal_ref_idc = (nal_header >> 5) & 0x03
-                                forbidden_bit = (nal_header >> 7) & 0x01
-
-                                nal_units.append(
-                                    {
-                                        "type": nal_type,
-                                        "ref_idc": nal_ref_idc,
-                                        "forbidden": forbidden_bit,
-                                        "size": len(nal_data),
-                                        "type_name": get_nal_type_name(nal_type),
-                                    }
-                                )
-
-                        offset = next_offset
-
-                except Exception as e:
-                    logger.error(f"Error parsing NAL units: {e}")
-
-                # Decode the frame with OpenH264 if decoder is available
-                if self.video_decoder and len(data) > 0:
-                    try:
-                        import numpy as np
-
-                        from libdatachannel.codec import EncodedImage
-
-                        # Create EncodedImage with the H.264 frame data
-                        encoded_image = EncodedImage()
-                        # Convert bytes to numpy array - make a copy to ensure correct format
-                        np_data = np.frombuffer(data, dtype=np.uint8).copy()
-                        encoded_image.data = np_data
-                        # Convert timestamp to timedelta (microseconds)
-                        from datetime import timedelta
-
-                        encoded_image.timestamp = timedelta(microseconds=frame_info.timestamp)
-
-                        # Decode the frame
-                        self.video_decoder.decode(encoded_image)
-
-                        if self.video_frame_count % 30 == 0:
-                            logger.debug(f"Decoded video frame #{self.video_frame_count}")
-                    except Exception as e:
-                        if self.video_frame_count <= 2:
-                            logger.error(f"Error decoding video frame: {e}")
-                            import traceback
-
-                            logger.error(traceback.format_exc())
-
-                if self.video_frame_count % 30 == 0 or any(
-                    unit["type"] in [5, 7, 8] for unit in nal_units
-                ):  # Log every 30 frames or key frames
-                    logger.info(
-                        f"Video frame #{self.video_frame_count}: "
-                        f"size={len(data)} bytes, timestamp={frame_info.timestamp}, "
-                        f"NAL units: {len(nal_units)}"
-                    )
-                    for i, unit in enumerate(nal_units):
-                        logger.info(
-                            f"  NAL[{i}]: type={unit['type']} ({unit['type_name']}), "
-                            f"ref_idc={unit['ref_idc']}, size={unit['size']} bytes, "
-                            f"forbidden={unit['forbidden']}"
-                        )
-
-            self.video_track.on_frame(on_video_frame)
+            self.video_track.on_frame(self._on_video_frame)
             self.video_track.set_media_handler(h264_depacketizer)
             logger.info("H.264 depacketizer and handlers set for video track")
+
+    def _on_audio_frame(self, data: bytes, frame_info):
+        """Handle audio frames"""
+        self.audio_frame_count += 1
+        if self.audio_frame_count % 50 == 0:  # Log every 50 frames
+            logger.info(
+                f"Audio frame #{self.audio_frame_count}: "
+                f"size={len(data)} bytes, timestamp={frame_info.timestamp}"
+            )
 
     def _setup_audio_depacketizer(self):
         """Set up Opus RTP depacketizer for audio track"""
@@ -304,18 +310,60 @@ class WHEPClient:
             # OpusRtpDepacketizer for Opus packets
             opus_depacketizer = OpusRtpDepacketizer()
 
-            # Set up frame handler for Opus frames
-            def on_audio_frame(data: bytes, frame_info):
-                self.audio_frame_count += 1
-                if self.audio_frame_count % 50 == 0:  # Log every 50 frames
-                    logger.info(
-                        f"Audio frame #{self.audio_frame_count}: "
-                        f"size={len(data)} bytes, timestamp={frame_info.timestamp}"
-                    )
-
-            self.audio_track.on_frame(on_audio_frame)
+            self.audio_track.on_frame(self._on_audio_frame)
             self.audio_track.set_media_handler(opus_depacketizer)
             logger.info("Opus depacketizer and handlers set for audio track")
+
+    def _on_decoded_frame(self, frame):
+        """Handle decoded video frames"""
+        self.decoded_frame_count += 1
+        if self.decoded_frame_count % 30 == 0:  # Log every 30 decoded frames
+            logger.info(
+                f"Decoded frame #{self.decoded_frame_count}: "
+                f"{frame.width()}x{frame.height()}, format={frame.format}"
+            )
+
+        # Put frame in queue for display if enabled
+        if self.display_video and self.frame_queue:
+            try:
+                # Convert I420 to RGB for OpenCV display
+                import numpy as np
+
+                from libdatachannel import libyuv
+
+                width = frame.width()
+                height = frame.height()
+
+                # Create RGB buffer
+                rgb_buffer = np.zeros((height, width, 3), dtype=np.uint8)
+
+                # Convert I420 to RGB using libyuv
+                if frame.format.name == "I420" and frame.i420_buffer:
+                    i420_buffer = frame.i420_buffer
+                    libyuv.i420_to_rgb24(
+                        i420_buffer.y,
+                        i420_buffer.u,
+                        i420_buffer.v,
+                        i420_buffer.stride_y(),
+                        i420_buffer.stride_u(),
+                        i420_buffer.stride_v(),
+                        rgb_buffer,
+                        width * 3,
+                        width,
+                        height,
+                    )
+
+                    # Put frame in queue (non-blocking)
+                    try:
+                        self.frame_queue.put_nowait(rgb_buffer)
+                        if self.decoded_frame_count == 1:
+                            logger.info("First frame added to display queue")
+                    except queue.Full:
+                        # Drop frame if queue is full
+                        if self.decoded_frame_count % 30 == 0:
+                            logger.warning("Display queue is full, dropping frame")
+            except Exception as e:
+                logger.error(f"Error converting frame for display: {e}")
 
     def _setup_video_decoder(self):
         """Set up OpenH264 video decoder"""
@@ -338,57 +386,7 @@ class WHEPClient:
                 logger.info(f"OpenH264 decoder initialized successfully from: {self.openh264_path}")
 
                 # Set up decoder callback
-                def on_decoded_frame(frame):
-                    self.decoded_frame_count += 1
-                    if self.decoded_frame_count % 30 == 0:  # Log every 30 decoded frames
-                        logger.info(
-                            f"Decoded frame #{self.decoded_frame_count}: "
-                            f"{frame.width()}x{frame.height()}, format={frame.format}"
-                        )
-
-                    # Put frame in queue for display if enabled
-                    if self.display_video and self.frame_queue:
-                        try:
-                            # Convert I420 to RGB for OpenCV display
-                            import numpy as np
-
-                            from libdatachannel import libyuv
-
-                            width = frame.width()
-                            height = frame.height()
-
-                            # Create RGB buffer
-                            rgb_buffer = np.zeros((height, width, 3), dtype=np.uint8)
-
-                            # Convert I420 to RGB using libyuv
-                            if frame.format.name == "I420" and frame.i420_buffer:
-                                i420_buffer = frame.i420_buffer
-                                libyuv.i420_to_rgb24(
-                                    i420_buffer.y,
-                                    i420_buffer.u,
-                                    i420_buffer.v,
-                                    i420_buffer.stride_y(),
-                                    i420_buffer.stride_u(),
-                                    i420_buffer.stride_v(),
-                                    rgb_buffer,
-                                    width * 3,
-                                    width,
-                                    height,
-                                )
-
-                                # Put frame in queue (non-blocking)
-                                try:
-                                    self.frame_queue.put_nowait(rgb_buffer)
-                                    if self.decoded_frame_count == 1:
-                                        logger.info("First frame added to display queue")
-                                except queue.Full:
-                                    # Drop frame if queue is full
-                                    if self.decoded_frame_count % 30 == 0:
-                                        logger.warning("Display queue is full, dropping frame")
-                        except Exception as e:
-                            logger.error(f"Error converting frame for display: {e}")
-
-                self.video_decoder.set_on_decode(on_decoded_frame)
+                self.video_decoder.set_on_decode(self._on_decoded_frame)
             else:
                 logger.error("Failed to initialize OpenH264 decoder")
                 self.video_decoder = None
@@ -428,7 +426,7 @@ class WHEPClient:
         last_audio_count = 0
 
         try:
-            while True:
+            while self.running:
                 current_time = time.time()
 
                 # Check duration
@@ -516,18 +514,20 @@ class WHEPClient:
         logger.info("Graceful shutdown completed")
 
 
-def display_frames(client: WHEPClient, stop_event: threading.Event):
+def display_frames(client: WHEPClient):
     """Display frames from queue using OpenCV (must run on main thread for macOS)"""
     logger.info("Starting display_frames function")
 
     logger.info(f"Creating window: {client.window_name}")
-    cv2.namedWindow(client.window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(client.window_name, 640, 480)  # Set initial window size
+    # Use WINDOW_AUTOSIZE for macOS to get native window decorations
+    cv2.namedWindow(client.window_name, cv2.WINDOW_AUTOSIZE)
     cv2.moveWindow(client.window_name, 100, 100)  # Position window
-    logger.info("Window created")
+    logger.info("Window created (Press 'q' or Cmd+W to close)")
 
     frame_count = 0
-    while not stop_event.is_set():
+    window_closed = False
+    
+    while True:
         try:
             # Get frame from queue with timeout
             frame = client.frame_queue.get(timeout=0.1)
@@ -543,18 +543,43 @@ def display_frames(client: WHEPClient, stop_event: threading.Event):
             if frame_count % 30 == 0:
                 logger.info(f"Displayed {frame_count} frames")
 
-            # Check for 'q' key press to quit
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                logger.info("User pressed 'q', stopping display")
-                stop_event.set()
+            # Check for 'q' key press or ESC key
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q") or key == 27:  # 27 is ESC key
+                logger.info("User pressed 'q' or ESC, stopping display")
+                break
+                
+            # Check if window was closed
+            try:
+                if cv2.getWindowProperty(client.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    logger.info("Window was closed by user")
+                    window_closed = True
+                    break
+            except cv2.error:
+                # Window doesn't exist anymore
+                logger.info("Window was closed")
+                window_closed = True
                 break
 
         except queue.Empty:
             # No frame available, continue
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                logger.info("User pressed 'q' while waiting, stopping display")
-                stop_event.set()
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q") or key == 27:  # 27 is ESC key
+                logger.info("User pressed 'q' or ESC while waiting, stopping display")
                 break
+                
+            # Check if window was closed
+            try:
+                if cv2.getWindowProperty(client.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    logger.info("Window was closed by user")
+                    window_closed = True
+                    break
+            except cv2.error:
+                # Window doesn't exist anymore
+                logger.info("Window no longer exists")
+                window_closed = True
+                break
+                
         except Exception as e:
             logger.error(f"Error displaying frame: {e}")
             import traceback
@@ -562,8 +587,12 @@ def display_frames(client: WHEPClient, stop_event: threading.Event):
             logger.error(traceback.format_exc())
 
     logger.info(f"Exiting display loop. Total frames displayed: {frame_count}")
-    cv2.destroyAllWindows()
-    logger.info("Windows destroyed")
+    if not window_closed:
+        cv2.destroyAllWindows()
+    logger.info("Display finished")
+    
+    # Return True if window was closed (to signal main to exit)
+    return window_closed
 
 
 def main():
@@ -585,48 +614,60 @@ def main():
 
     client = WHEPClient(args.url, args.token, args.openh264, args.display)
 
-    # Event to signal stop
-    stop_event = threading.Event()
+    try:
+        client.connect()
+        
+        if args.display:
+            if not args.openh264:
+                logger.error("--openh264 is required when --display is specified")
+                return
 
-    # Start connection in a separate thread
-    def run_client():
-        try:
-            client.connect()
-            client.receive_frames(args.duration)
-        except KeyboardInterrupt:
-            logger.info("Interrupted by user (Ctrl+C)")
-        except Exception as e:
-            client._handle_error("", e)
-        finally:
-            stop_event.set()
-            # Always disconnect gracefully
+            logger.info("Display mode enabled")
+            
+            # Start receive in a thread
+            def receive_thread():
+                try:
+                    client.receive_frames(args.duration)
+                except KeyboardInterrupt:
+                    logger.info("Receive thread interrupted")
+                except Exception as e:
+                    handle_error("receiving frames", e)
+                finally:
+                    client.running = False
+            
+            # Start receiver thread
+            receiver = threading.Thread(target=receive_thread)
+            receiver.daemon = True
+            receiver.start()
+            
+            # Display frames on main thread (required for macOS)
             try:
-                client.disconnect()
-            except Exception as e:
-                logger.error(f"Error during disconnect: {e}")
-
-    if args.display:
-        if not args.openh264:
-            logger.error("--openh264 is required when --display is specified")
-            return
-
-        logger.info("Display mode enabled, starting client in thread")
-        # Start client in a thread
-        client_thread = threading.Thread(target=run_client)
-        client_thread.start()
-
-        # Display frames on main thread (required for macOS)
-        logger.info("Starting display on main thread")
-        display_frames(client, stop_event)
-
-        # Wait for client thread to finish
-        logger.info("Waiting for client thread to finish")
-        client_thread.join()
-        logger.info("Client thread finished")
-    else:
-        # Run client directly if no display
-        logger.info("Display mode disabled, running client directly")
-        run_client()
+                window_closed = display_frames(client)
+                if window_closed:
+                    logger.info("Exiting because window was closed")
+            except KeyboardInterrupt:
+                logger.info("\nInterrupted by user (Ctrl+C)")
+            finally:
+                client.running = False
+                
+            # Wait a bit for receiver to finish
+            receiver.join(timeout=2.0)
+            
+        else:
+            # No display mode
+            logger.info("Display mode disabled")
+            client.receive_frames(args.duration)
+            
+    except KeyboardInterrupt:
+        logger.info("\nInterrupted by user (Ctrl+C)")
+    except Exception as e:
+        handle_error("running client", e)
+    finally:
+        # Always disconnect gracefully
+        try:
+            client.disconnect()
+        except Exception as e:
+            logger.error(f"Error during disconnect: {e}")
 
 
 if __name__ == "__main__":

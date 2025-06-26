@@ -10,6 +10,7 @@ import cv2
 import httpx
 import numpy as np
 import sounddevice as sd
+from wish import handle_error, parse_link_header
 
 from libdatachannel import (
     AV1RtpPacketizer,
@@ -38,8 +39,6 @@ from libdatachannel.codec import (
 from libdatachannel.libyuv import (
     rgb24_to_i420,
 )
-
-from .wish import handle_error, parse_link_header
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
