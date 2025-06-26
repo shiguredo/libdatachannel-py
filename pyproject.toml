@@ -23,16 +23,18 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "nanobind>=2.7",
-    "pytest>=8",
+    "pytest",
     "setuptools>=80.9",
     "build>=1.2.2.post1",
     "wheel>=0.45.1",
     "numpy>=2.2",
     "ty",
-    "hypothesis>=6.132.0",
+    "hypothesis",
     "mypy",
     "pyrefly",
     "pyright",
+    "aiohttp",
+    "pytest-aiohttp",
 ]
 
 [tool.uv.workspace]

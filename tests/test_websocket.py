@@ -1,11 +1,13 @@
 import time
 
+import pytest
+
 from libdatachannel import WebSocket, WebSocketConfiguration
 
 
 # https://github.com/paullouisageneau/libdatachannel/blob/0e40aeb058b947014a918a448ce2d346e6ab14fe/test/websocket.cpp
 # を Python に直したもの
-def test_websocket():
+def test_websocket(echo_websocket_server):
     my_message = "Hello world from libdatachannel"
     config = WebSocketConfiguration()
     config.disable_tls_verification = True
@@ -37,7 +39,7 @@ def test_websocket():
     ws.on_closed(ws_on_closed)
     ws.on_message(ws_on_message)
 
-    ws.open("wss://echo.websocket.org:443/")
+    ws.open(echo_websocket_server)
 
     attempts = 20
     while (not ws.is_open() or not received) and attempts > 0:
