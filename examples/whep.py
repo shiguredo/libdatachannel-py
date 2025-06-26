@@ -597,11 +597,9 @@ def display_frames(client: WHEPClient, stop_event: threading.Event):
             if frame_count == 1:
                 logger.info(f"Got first frame from queue: shape={frame.shape}")
             
-            # Convert RGB to BGR for OpenCV
-            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            
-            # Display frame
-            cv2.imshow(client.window_name, bgr_frame)
+            # Display frame directly
+            # Note: libyuv's i420_to_rgb24 might actually output BGR
+            cv2.imshow(client.window_name, frame)
             
             if frame_count % 30 == 0:
                 logger.info(f"Displayed {frame_count} frames")
