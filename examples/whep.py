@@ -16,6 +16,11 @@ from libdatachannel import (
     PeerConnection,
     Track,
 )
+from libdatachannel.codec import (
+    VideoCodecType,
+    VideoDecoder,
+    create_openh264_video_decoder,
+)
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -26,9 +31,10 @@ logger = logging.getLogger(__name__)
 class WHEPClient:
     """Minimal WHEP client for receiving test video and audio"""
 
-    def __init__(self, whep_url: str, bearer_token: Optional[str] = None):
+    def __init__(self, whep_url: str, bearer_token: Optional[str] = None, openh264_path: Optional[str] = None):
         self.whep_url = whep_url
         self.bearer_token = bearer_token
+        self.openh264_path = openh264_path
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
         self.audio_track: Optional[Track] = None
@@ -37,6 +43,9 @@ class WHEPClient:
         # Track counters
         self.video_frame_count = 0
         self.audio_frame_count = 0
+        
+        # Decoder
+        self.video_decoder = None
 
     def _handle_error(self, context: str, error: Exception):
         """Unified error handling"""
@@ -140,6 +149,10 @@ class WHEPClient:
         # Set up depacketizers and handlers
         self._setup_video_depacketizer()
         self._setup_audio_depacketizer()
+        
+        # Initialize video decoder if OpenH264 path is provided
+        if self.openh264_path:
+            self._setup_video_decoder()
 
         # Create offer
         self.pc.set_local_description()
@@ -337,6 +350,37 @@ class WHEPClient:
             self.audio_track.set_media_handler(opus_depacketizer)
             logger.info("Opus depacketizer and handlers set for audio track")
 
+    def _setup_video_decoder(self):
+        """Set up OpenH264 video decoder"""
+        try:
+            # Load OpenH264 library
+            import os
+            if not os.path.exists(self.openh264_path):
+                logger.error(f"OpenH264 library not found at: {self.openh264_path}")
+                return
+                
+            # Create OpenH264 decoder
+            self.video_decoder = create_openh264_video_decoder(self.openh264_path)
+            
+            # Initialize decoder settings
+            settings = VideoDecoder.Settings()
+            settings.codec_type = VideoCodecType.H264
+            
+            if self.video_decoder.init(settings):
+                logger.info(f"OpenH264 decoder initialized successfully from: {self.openh264_path}")
+                
+                # Set up decoder callback
+                def on_decoded_frame(frame):
+                    logger.debug(f"Decoded video frame: {frame.width}x{frame.height}, format={frame.format}")
+                
+                self.video_decoder.set_on_decode(on_decoded_frame)
+            else:
+                logger.error("Failed to initialize OpenH264 decoder")
+                self.video_decoder = None
+                
+        except Exception as e:
+            logger.error(f"Error setting up OpenH264 decoder: {e}")
+            self.video_decoder = None
 
     def receive_frames(self, duration: Optional[int] = None):
         """Receive video and audio frames"""
@@ -429,6 +473,16 @@ class WHEPClient:
         # Clean up resources in proper order
         logger.info("Cleaning up resources...")
         
+        # Clean up video decoder if it exists
+        if self.video_decoder:
+            try:
+                self.video_decoder.release()
+                logger.info("Video decoder released")
+            except Exception as e:
+                self._handle_error("releasing video decoder", e)
+            finally:
+                self.video_decoder = None
+        
         # Close tracks before closing PeerConnection
         self.video_track = None
         self.audio_track = None
@@ -450,13 +504,16 @@ def main():
     parser.add_argument("--url", required=True, help="WHEP endpoint URL")
     parser.add_argument("--token", help="Bearer token for authentication")
     parser.add_argument("--duration", type=int, help="Duration in seconds")
+    parser.add_argument("--openh264", help="Path to OpenH264 library for H.264 decoding")
 
     args = parser.parse_args()
 
     logger.info("Starting WHEP client...")
     logger.info(f"WHEP endpoint: {args.url}")
+    if args.openh264:
+        logger.info(f"OpenH264 library path: {args.openh264}")
 
-    client = WHEPClient(args.url, args.token)
+    client = WHEPClient(args.url, args.token, args.openh264)
 
     try:
         client.connect()
