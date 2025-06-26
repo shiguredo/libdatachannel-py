@@ -18,4 +18,4 @@ uv run pytest test/test_rtp_depacketizer.py
 
 ## libdatachannel ソース
 
-`_source` ディレクトリに libdatachannel のソースコードが含まれています。
+`_source` ディレクトリに libdatachannel のソースコードが含まれている。
