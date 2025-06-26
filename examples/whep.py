@@ -1,10 +1,14 @@
 import argparse
 import logging
+import queue
+import threading
 import time
 from typing import Optional
 from urllib.parse import urljoin
 
 import httpx
+import numpy as np
+import cv2
 
 from libdatachannel import (
     Configuration,
@@ -31,10 +35,11 @@ logger = logging.getLogger(__name__)
 class WHEPClient:
     """Minimal WHEP client for receiving test video and audio"""
 
-    def __init__(self, whep_url: str, bearer_token: Optional[str] = None, openh264_path: Optional[str] = None):
+    def __init__(self, whep_url: str, bearer_token: Optional[str] = None, openh264_path: Optional[str] = None, display_video: bool = False):
         self.whep_url = whep_url
         self.bearer_token = bearer_token
         self.openh264_path = openh264_path
+        self.display_video = display_video
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
         self.audio_track: Optional[Track] = None
@@ -47,6 +52,10 @@ class WHEPClient:
         
         # Decoder
         self.video_decoder = None
+        
+        # OpenCV display
+        self.window_name = "WHEP Video"
+        self.frame_queue = queue.Queue(maxsize=10) if display_video else None
 
     def _handle_error(self, context: str, error: Exception):
         """Unified error handling"""
@@ -404,6 +413,41 @@ class WHEPClient:
                             f"Decoded frame #{self.decoded_frame_count}: "
                             f"{frame.width()}x{frame.height()}, format={frame.format}"
                         )
+                    
+                    # Put frame in queue for display if enabled
+                    if self.display_video and self.frame_queue:
+                        try:
+                            # Convert I420 to RGB for OpenCV display
+                            import numpy as np
+                            from libdatachannel import libyuv
+                            
+                            width = frame.width()
+                            height = frame.height()
+                            
+                            # Create RGB buffer
+                            rgb_buffer = np.zeros((height, width, 3), dtype=np.uint8)
+                            
+                            # Convert I420 to RGB using libyuv
+                            if frame.format.name == "I420" and frame.i420_buffer:
+                                i420_buffer = frame.i420_buffer
+                                libyuv.i420_to_rgb24(
+                                    i420_buffer.y, i420_buffer.u, i420_buffer.v,
+                                    i420_buffer.stride_y(), i420_buffer.stride_u(), i420_buffer.stride_v(),
+                                    rgb_buffer, width * 3,
+                                    width, height
+                                )
+                                
+                                # Put frame in queue (non-blocking)
+                                try:
+                                    self.frame_queue.put_nowait(rgb_buffer)
+                                    if self.decoded_frame_count == 1:
+                                        logger.info("First frame added to display queue")
+                                except queue.Full:
+                                    # Drop frame if queue is full
+                                    if self.decoded_frame_count % 30 == 0:
+                                        logger.warning("Display queue is full, dropping frame")
+                        except Exception as e:
+                            logger.error(f"Error converting frame for display: {e}")
                 
                 self.video_decoder.set_on_decode(on_decoded_frame)
             else:
@@ -533,12 +577,64 @@ class WHEPClient:
         logger.info("Graceful shutdown completed")
 
 
+def display_frames(client: WHEPClient, stop_event: threading.Event):
+    """Display frames from queue using OpenCV (must run on main thread for macOS)"""
+    logger.info("Starting display_frames function")
+    
+    logger.info(f"Creating window: {client.window_name}")
+    cv2.namedWindow(client.window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(client.window_name, 640, 480)  # Set initial window size
+    cv2.moveWindow(client.window_name, 100, 100)   # Position window
+    logger.info("Window created")
+    
+    frame_count = 0
+    while not stop_event.is_set():
+        try:
+            # Get frame from queue with timeout
+            frame = client.frame_queue.get(timeout=0.1)
+            frame_count += 1
+            
+            if frame_count == 1:
+                logger.info(f"Got first frame from queue: shape={frame.shape}")
+            
+            # Convert RGB to BGR for OpenCV
+            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # Display frame
+            cv2.imshow(client.window_name, bgr_frame)
+            
+            if frame_count % 30 == 0:
+                logger.info(f"Displayed {frame_count} frames")
+            
+            # Check for 'q' key press to quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                logger.info("User pressed 'q', stopping display")
+                stop_event.set()
+                break
+                
+        except queue.Empty:
+            # No frame available, continue
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                logger.info("User pressed 'q' while waiting, stopping display")
+                stop_event.set()
+                break
+        except Exception as e:
+            logger.error(f"Error displaying frame: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    logger.info(f"Exiting display loop. Total frames displayed: {frame_count}")
+    cv2.destroyAllWindows()
+    logger.info("Windows destroyed")
+
+
 def main():
     parser = argparse.ArgumentParser(description="WHEP client for receiving media")
     parser.add_argument("--url", required=True, help="WHEP endpoint URL")
     parser.add_argument("--token", help="Bearer token for authentication")
     parser.add_argument("--duration", type=int, help="Duration in seconds")
     parser.add_argument("--openh264", help="Path to OpenH264 library for H.264 decoding")
+    parser.add_argument("--display", action="store_true", help="Display video using OpenCV")
 
     args = parser.parse_args()
 
@@ -546,22 +642,53 @@ def main():
     logger.info(f"WHEP endpoint: {args.url}")
     if args.openh264:
         logger.info(f"OpenH264 library path: {args.openh264}")
+    if args.display:
+        logger.info("Video display enabled")
 
-    client = WHEPClient(args.url, args.token, args.openh264)
-
-    try:
-        client.connect()
-        client.receive_frames(args.duration)
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user (Ctrl+C)")
-    except Exception as e:
-        client._handle_error("", e)
-    finally:
-        # Always disconnect gracefully
+    client = WHEPClient(args.url, args.token, args.openh264, args.display)
+    
+    # Event to signal stop
+    stop_event = threading.Event()
+    
+    # Start connection in a separate thread
+    def run_client():
         try:
-            client.disconnect()
+            client.connect()
+            client.receive_frames(args.duration)
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user (Ctrl+C)")
         except Exception as e:
-            logger.error(f"Error during disconnect: {e}")
+            client._handle_error("", e)
+        finally:
+            stop_event.set()
+            # Always disconnect gracefully
+            try:
+                client.disconnect()
+            except Exception as e:
+                logger.error(f"Error during disconnect: {e}")
+    
+    if args.display:
+        if not args.openh264:
+            logger.error("--openh264 is required when --display is specified")
+            return
+            
+        logger.info("Display mode enabled, starting client in thread")
+        # Start client in a thread
+        client_thread = threading.Thread(target=run_client)
+        client_thread.start()
+        
+        # Display frames on main thread (required for macOS)
+        logger.info("Starting display on main thread")
+        display_frames(client, stop_event)
+        
+        # Wait for client thread to finish
+        logger.info("Waiting for client thread to finish")
+        client_thread.join()
+        logger.info("Client thread finished")
+    else:
+        # Run client directly if no display
+        logger.info("Display mode disabled, running client directly")
+        run_client()
 
 
 if __name__ == "__main__":
