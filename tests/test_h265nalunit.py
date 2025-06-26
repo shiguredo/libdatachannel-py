@@ -3,7 +3,6 @@ from libdatachannel import (
     H265NalUnitFragment,
     H265NalUnitFragmentHeader,
     H265NalUnitHeader,
-    H265NalUnits,
 )
 
 
@@ -61,25 +60,3 @@ def test_h265_fragment_instance_behavior():
     assert frag.type() == H265NalUnitFragment.FragmentType.End
     assert frag.unit_type() == 34
     assert frag.payload() == b"\xcc\xdd"
-
-
-def test_h265_fragments_from_nalu():
-    nalu = H265NalUnit()
-    nalu.set_payload(b"\x90" * 60)
-    fragments = H265NalUnitFragment.fragments_from(nalu, max_fragment_size=20)
-
-    assert isinstance(fragments, list)
-    assert all(isinstance(f, H265NalUnitFragment) for f in fragments)
-    assert len(fragments) >= 3  # Start / Middle / End
-
-
-def test_h265_nalunits_generate_fragments():
-    h265 = H265NalUnits()
-    fragments = h265.generate_fragments(max_fragment_size=64)
-    assert isinstance(fragments, list)
-    assert all(isinstance(f, bytes) for f in fragments)
-
-
-def test_h265_default_fragment_size_constant():
-    assert H265NalUnits.DEFAULT_MAXIMUM_FRAGMENT_SIZE > 0
-    assert isinstance(H265NalUnits.DEFAULT_MAXIMUM_FRAGMENT_SIZE, int)

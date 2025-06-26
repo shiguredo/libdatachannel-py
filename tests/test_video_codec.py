@@ -7,7 +7,6 @@ import pytest
 
 from libdatachannel import (
     NalUnit,
-    NalUnitFragmentA,
 )
 from libdatachannel.codec import (
     EncodedImage,
@@ -371,11 +370,6 @@ def test_openh264_with_nal_units():
     assert nal_units[0].unit_type() == 7  # SPS
     assert nal_units[1].unit_type() == 8  # PPS
     assert nal_units[2].unit_type() == 5  # IDR
-
-    # 複数のNALユニットに分割（フラグメント化）のテスト
-    fragments = NalUnitFragmentA.fragments_from(nal_units[2], max_fragment_size=100)
-    assert len(fragments) == 5
-    print(f"Generated {len(fragments)} fragments")
 
     # デコーダーでデコード
     decoder = create_openh264_video_decoder(openh264)

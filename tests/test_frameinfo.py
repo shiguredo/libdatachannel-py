@@ -2,10 +2,10 @@ import libdatachannel
 
 
 def test_frame_info_creation():
-    info = libdatachannel.FrameInfo(100, 654321)
-    assert info.payload_type == 100
+    # 新しい API を使用（timestamp のみ）
+    info = libdatachannel.FrameInfo(654321)
     assert info.timestamp == 654321
-    info.payload_type = 127
+    info.payload_type = 100  # payload_type は別途設定
     info.timestamp = 999999
-    assert info.payload_type == 127
+    assert info.payload_type == 100
     assert info.timestamp == 999999
