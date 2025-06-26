@@ -138,8 +138,8 @@ class WHEPClient:
         logger.info("Video track added with H.264 codec (PT=96)")
 
         # Set up depacketizers and handlers
-        self._setup_depacketizers()
-        self._setup_track_handlers()
+        self._setup_video_depacketizer()
+        self._setup_audio_depacketizer()
 
         # Create offer
         self.pc.set_local_description()
@@ -220,9 +220,8 @@ class WHEPClient:
         }
         return nal_type_names.get(nal_type, f"Reserved/Unknown ({nal_type})")
 
-    def _setup_depacketizers(self):
-        """Set up RTP depacketizers for audio and video"""
-        # Video H.264 depacketizer
+    def _setup_video_depacketizer(self):
+        """Set up H.264 RTP depacketizer for video track"""
         if self.video_track:
             # H264RtpDepacketizer takes a NalUnit.Separator type
             # Default is LongStartSequence (0x00000001)
@@ -318,8 +317,9 @@ class WHEPClient:
             self.video_track.on_frame(on_video_frame)
             self.video_track.set_media_handler(h264_depacketizer)
             logger.info("H.264 depacketizer and handlers set for video track")
-        
-        # Audio Opus depacketizer
+
+    def _setup_audio_depacketizer(self):
+        """Set up Opus RTP depacketizer for audio track"""
         if self.audio_track:
             # OpusRtpDepacketizer for Opus packets
             opus_depacketizer = OpusRtpDepacketizer()
@@ -337,11 +337,6 @@ class WHEPClient:
             self.audio_track.set_media_handler(opus_depacketizer)
             logger.info("Opus depacketizer and handlers set for audio track")
 
-    def _setup_track_handlers(self):
-        """Set up message handlers for receiving raw RTP packets (if depacketizers are not used)"""
-        # Note: When using depacketizers, these handlers won't be called
-        # as the depacketizer intercepts the RTP packets
-        pass
 
     def receive_frames(self, duration: Optional[int] = None):
         """Receive video and audio frames"""
