@@ -25,6 +25,13 @@ from libdatachannel import (
     TransportPolicy,
     RtcpReceivingSession,
 )
+from libdatachannel.codec import (
+    VideoCodecType,
+    VideoDecoder,
+    EncodedImage,
+    VideoFrame,
+    create_openh264_video_decoder,
+)
 
 # ロギング設定
 logging.basicConfig(
@@ -77,11 +84,18 @@ class MediaStats:
 
 class H264DepacketizerHandler(PyMediaHandler):
     """H.264 RTPデパケタイザーのPythonハンドラー"""
-    def __init__(self, stats: MediaStats):
+    def __init__(self, stats: MediaStats, openh264_path: Optional[str] = None):
         super().__init__()
         self.stats = stats
         self.depacketizer = H264RtpDepacketizer()
         self.frame_count = 0
+        self.decoder = None
+        self.openh264_path = openh264_path
+        self.decoded_frame_count = 0
+        
+        # OpenH264デコーダーを初期化
+        if self.openh264_path:
+            self._init_decoder()
     
     def incoming(self, messages, send):
         """RTPパケットを受信してデパケタイズ"""
@@ -101,6 +115,48 @@ class H264DepacketizerHandler(PyMediaHandler):
         
         # デパケタイズされたメッセージを返す（次のハンドラーに渡される）
         return depacketized
+    
+    def _init_decoder(self):
+        """OpenH264デコーダーを初期化"""
+        try:
+            self.decoder = create_openh264_video_decoder(self.openh264_path)
+            
+            # デコーダー設定
+            settings = VideoDecoder.Settings()
+            settings.codec_type = VideoCodecType.H264
+            
+            if not self.decoder.init(settings):
+                logger.error("Failed to initialize OpenH264 decoder")
+                self.decoder = None
+                return
+            
+            # デコードコールバックを設定
+            self.decoder.set_on_decode(self._on_decoded_frame)
+            logger.info(f"OpenH264 decoder initialized successfully with library: {self.openh264_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create OpenH264 decoder: {e}")
+            self.decoder = None
+    
+    def _on_decoded_frame(self, frame: VideoFrame):
+        """デコードされたフレームを処理"""
+        self.decoded_frame_count += 1
+        
+        if self.decoded_frame_count <= 5:
+            logger.info(f"Decoded frame #{self.decoded_frame_count}:")
+            logger.info(f"  Format: {frame.format}")
+            logger.info(f"  Size: {frame.width()}x{frame.height()}")
+            logger.info(f"  Timestamp: {frame.timestamp}")
+            
+            # フレームタイプに応じてバッファを取得
+            if frame.format == ImageFormat.I420:
+                buffer = frame.i420_buffer
+                if buffer:
+                    logger.info(f"  I420 buffer - Y stride: {buffer.stride_y()}, U stride: {buffer.stride_u()}, V stride: {buffer.stride_v()}")
+            elif frame.format == ImageFormat.NV12:
+                buffer = frame.nv12_buffer
+                if buffer:
+                    logger.info(f"  NV12 buffer - Y stride: {buffer.stride_y()}, UV stride: {buffer.stride_uv()}")
     
     def _log_frame_details(self, msg, size):
         """フレームの詳細をログ出力"""
@@ -162,20 +218,47 @@ class H264DepacketizerHandler(PyMediaHandler):
                         
                 except Exception as e:
                     logger.error(f"  Failed to parse NAL unit: {e}")
+        
+        # デコーダーが有効な場合はデコード
+        if self.decoder and size > 0:
+            try:
+                import numpy as np
+                
+                # EncodedImageを作成
+                encoded_image = EncodedImage()
+                # データはすでにスタートコード付きでデパケタイズされているので、そのままnumpy配列に変換
+                encoded_image.data = np.frombuffer(data, dtype=np.uint8)
+                
+                # frame_infoからタイムスタンプを設定
+                if hasattr(msg, 'frame_info') and msg.frame_info:
+                    # タイムスタンプをtimedeltaに変換（RTPタイムスタンプは90kHzの場合が多い）
+                    timestamp_ms = msg.frame_info.timestamp / 90.0  # 90kHz -> ms
+                    encoded_image.timestamp = timestamp_ms / 1000.0  # ms -> seconds
+                
+                # デバッグ用：引数の型を確認
+                logger.debug(f"Decoding with encoded_image type: {type(encoded_image)}, data type: {type(encoded_image.data)}")
+                
+                # デコード実行（numpy配列を直接渡す）
+                self.decoder.decode(encoded_image.data)
+                
+            except Exception as e:
+                logger.error(f"Failed to decode frame: {e}")
 
 
 
 class WHEPClient:
     """WHEP クライアントの実装"""
     
-    def __init__(self, endpoint_url: str, bearer_token: Optional[str] = None):
+    def __init__(self, endpoint_url: str, bearer_token: Optional[str] = None, openh264_path: Optional[str] = None):
         self.endpoint_url = endpoint_url
         self.bearer_token = bearer_token
+        self.openh264_path = openh264_path
         self.session_url: Optional[str] = None
         self.pc: Optional[PeerConnection] = None
         self.session: Optional[httpx.Client] = None
         self.stats = MediaStats()
         self._running = False
+        self.video_handler = None
     
     def connect(self):
         """WHEP エンドポイントに接続"""
@@ -348,8 +431,8 @@ class WHEPClient:
         self.video_track.set_media_handler(video_rtcp)
         
         # H264デパケタイザーハンドラーをチェーンに追加（カスタム実装）
-        video_handler = H264DepacketizerHandler(self.stats)
-        video_rtcp.add_to_chain(video_handler)
+        self.video_handler = H264DepacketizerHandler(self.stats, self.openh264_path)
+        video_rtcp.add_to_chain(self.video_handler)
         
         # on_frameコールバックは設定しない（MediaHandlerチェーンが処理）
         
@@ -532,6 +615,17 @@ class WHEPClient:
             f"Video frames: {self.stats.video_frames}, "
             f"Total bytes: {self.stats.audio_bytes + self.stats.video_bytes:,}"
         )
+        
+        # デコーダーの統計も出力
+        if self.video_handler and self.video_handler.decoder:
+            logger.info(f"Decoded frames: {self.video_handler.decoded_frame_count}")
+        
+        # デコーダーをクリーンアップ
+        if self.video_handler and self.video_handler.decoder:
+            try:
+                self.video_handler.decoder.release()
+            except Exception as e:
+                logger.error(f"Error releasing decoder: {e}")
 
 
 def main():
@@ -555,6 +649,10 @@ def main():
         action="store_true",
         help="Enable debug logging"
     )
+    parser.add_argument(
+        "--openh264",
+        help="Path to OpenH264 library for H.264 decoding"
+    )
     
     args = parser.parse_args()
     
@@ -562,7 +660,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
     
     # WHEP クライアントを作成
-    client = WHEPClient(args.url, args.token)
+    client = WHEPClient(args.url, args.token, args.openh264)
     
     # シグナルハンドラーを設定
     def signal_handler(sig, frame):
