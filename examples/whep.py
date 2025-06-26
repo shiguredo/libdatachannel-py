@@ -6,15 +6,13 @@ import time
 from typing import Optional
 from urllib.parse import urljoin
 
-import httpx
-import numpy as np
 import cv2
+import httpx
 
 from libdatachannel import (
     Configuration,
     Description,
     H264RtpDepacketizer,
-    IceServer,
     NalUnit,
     OpusRtpDepacketizer,
     PeerConnection,
@@ -26,6 +24,8 @@ from libdatachannel.codec import (
     create_openh264_video_decoder,
 )
 
+from .wish import get_nal_type_name, handle_error, parse_link_header
+
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
@@ -35,7 +35,13 @@ logger = logging.getLogger(__name__)
 class WHEPClient:
     """Minimal WHEP client for receiving test video and audio"""
 
-    def __init__(self, whep_url: str, bearer_token: Optional[str] = None, openh264_path: Optional[str] = None, display_video: bool = False):
+    def __init__(
+        self,
+        whep_url: str,
+        bearer_token: Optional[str] = None,
+        openh264_path: Optional[str] = None,
+        display_video: bool = False,
+    ):
         self.whep_url = whep_url
         self.bearer_token = bearer_token
         self.openh264_path = openh264_path
@@ -49,83 +55,13 @@ class WHEPClient:
         self.video_frame_count = 0
         self.audio_frame_count = 0
         self.decoded_frame_count = 0
-        
+
         # Decoder
         self.video_decoder = None
-        
+
         # OpenCV display
         self.window_name = "WHEP Video"
         self.frame_queue = queue.Queue(maxsize=10) if display_video else None
-
-    def _handle_error(self, context: str, error: Exception):
-        """Unified error handling"""
-        logger.error(f"Error {context}: {error}")
-        if logger.isEnabledFor(logging.DEBUG):
-            import traceback
-
-            traceback.print_exc()
-
-    def _parse_link_header(self, link_header: str) -> list[IceServer]:
-        """Parse Link header for ICE servers"""
-        ice_servers: list[IceServer] = []
-        if not link_header:
-            return ice_servers
-
-        # Parse Link header: <turn:turn.example.com>; rel="ice-server"; username="user"; credential="pass"
-        # Split by comma to handle multiple servers
-        entries = []
-        current = ""
-        in_quotes = False
-
-        for char in link_header:
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char == "," and not in_quotes:
-                entries.append(current.strip())
-                current = ""
-                continue
-            current += char
-        if current:
-            entries.append(current.strip())
-
-        for entry in entries:
-            # Extract URL from <...>
-            import re
-
-            url_match = re.match(r"<([^>]+)>", entry)
-            if not url_match:
-                continue
-
-            url = url_match.group(1)
-
-            # Skip TURN TCP as it's not supported by libdatachannel
-            if "transport=tcp" in url.lower() or "?tcp" in url.lower():
-                logger.info(f"Skipping TURN TCP server (not supported): {url}")
-                continue
-
-            # Check if it's an ICE server
-            if 'rel="ice-server"' not in entry:
-                continue
-
-            if url.startswith("stun:") or url.startswith("turn:"):
-                ice_server = IceServer(url)
-
-                # Extract username
-                username_match = re.search(r'username="([^"]+)"', entry)
-                if username_match:
-                    ice_server.username = username_match.group(1)
-
-                # Extract credential
-                credential_match = re.search(r'credential="([^"]+)"', entry)
-                if credential_match:
-                    ice_server.password = credential_match.group(1)
-
-                ice_servers.append(ice_server)
-                logger.info(f"Added ICE server from Link header: {url}")
-                if hasattr(ice_server, "username") and ice_server.username:
-                    logger.info(f"  with username: {ice_server.username}")
-
-        return ice_servers
 
     def connect(self):
         """Connect to WHEP server"""
@@ -159,7 +95,7 @@ class WHEPClient:
         # Set up depacketizers and handlers
         self._setup_video_depacketizer()
         self._setup_audio_depacketizer()
-        
+
         # Initialize video decoder if OpenH264 path is provided
         if self.openh264_path:
             self._setup_video_decoder()
@@ -204,7 +140,7 @@ class WHEPClient:
             # Parse Link header for ICE servers
             link_header = response.headers.get("Link")
             if link_header:
-                ice_servers = self._parse_link_header(link_header)
+                ice_servers = parse_link_header(link_header)
                 if ice_servers:
                     logger.info(f"Found {len(ice_servers)} ICE server(s) in Link header")
                     # Try to add ICE servers if method is available
@@ -219,41 +155,17 @@ class WHEPClient:
 
         logger.info("Connected to WHEP server")
 
-    def _get_nal_type_name(self, nal_type: int) -> str:
-        """Get human-readable name for NAL unit type"""
-        nal_type_names = {
-            0: "Unspecified",
-            1: "Coded slice (non-IDR)",
-            2: "Coded slice data partition A",
-            3: "Coded slice data partition B",
-            4: "Coded slice data partition C",
-            5: "Coded slice (IDR)",
-            6: "SEI",
-            7: "SPS",
-            8: "PPS",
-            9: "Access unit delimiter",
-            10: "End of sequence",
-            11: "End of stream",
-            12: "Filler data",
-            13: "SPS extension",
-            14: "Prefix NAL unit",
-            15: "Subset SPS",
-            19: "Coded slice of auxiliary picture",
-            20: "Coded slice extension",
-        }
-        return nal_type_names.get(nal_type, f"Reserved/Unknown ({nal_type})")
-
     def _setup_video_depacketizer(self):
         """Set up H.264 RTP depacketizer for video track"""
         if self.video_track:
             # H264RtpDepacketizer takes a NalUnit.Separator type
             # Default is LongStartSequence (0x00000001)
             h264_depacketizer = H264RtpDepacketizer()
-            
+
             # Set up frame handler for H.264 frames
             def on_video_frame(data: bytes, frame_info):
                 self.video_frame_count += 1
-                
+
                 # Parse NAL units using manual parsing
                 # Note: libdatachannel's NalUnit class is primarily for creating NAL units,
                 # not for parsing existing H.264 stream data
@@ -263,73 +175,88 @@ class WHEPClient:
                     offset = 0
                     while offset < len(data):
                         # Look for start code (0x00000001 or 0x000001)
-                        if offset + 4 <= len(data) and data[offset:offset+4] == b'\x00\x00\x00\x01':
+                        if (
+                            offset + 4 <= len(data)
+                            and data[offset : offset + 4] == b"\x00\x00\x00\x01"
+                        ):
                             start_code_len = 4
-                        elif offset + 3 <= len(data) and data[offset:offset+3] == b'\x00\x00\x01':
+                        elif (
+                            offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01"
+                        ):
                             start_code_len = 3
                         else:
                             offset += 1
                             continue
-                        
+
                         # Find the start of NAL unit data
                         nal_start = offset + start_code_len
                         if nal_start >= len(data):
                             break
-                            
+
                         # Find the next start code or end of data
                         next_offset = nal_start
                         while next_offset < len(data):
-                            if (next_offset + 4 <= len(data) and data[next_offset:next_offset+4] == b'\x00\x00\x00\x01') or \
-                               (next_offset + 3 <= len(data) and data[next_offset:next_offset+3] == b'\x00\x00\x01'):
+                            if (
+                                next_offset + 4 <= len(data)
+                                and data[next_offset : next_offset + 4] == b"\x00\x00\x00\x01"
+                            ) or (
+                                next_offset + 3 <= len(data)
+                                and data[next_offset : next_offset + 3] == b"\x00\x00\x01"
+                            ):
                                 break
                             next_offset += 1
-                        
+
                         # Extract NAL unit
                         nal_data = data[nal_start:next_offset]
                         if nal_data:
                             # Create NalUnit object from bytes
                             try:
                                 nal_unit = NalUnit(nal_data)
-                                
+
                                 # Get NAL unit properties from the NalUnit object
                                 nal_type = nal_unit.unit_type()
                                 nal_ref_idc = nal_unit.nri()
                                 forbidden_bit = 1 if nal_unit.forbidden_bit() else 0
-                                
-                                nal_units.append({
-                                    'type': nal_type,
-                                    'ref_idc': nal_ref_idc,
-                                    'forbidden': forbidden_bit,
-                                    'size': len(nal_data),
-                                    'type_name': self._get_nal_type_name(nal_type),
-                                    'nal_unit_obj': nal_unit  # Store the NalUnit object
-                                })
+
+                                nal_units.append(
+                                    {
+                                        "type": nal_type,
+                                        "ref_idc": nal_ref_idc,
+                                        "forbidden": forbidden_bit,
+                                        "size": len(nal_data),
+                                        "type_name": get_nal_type_name(nal_type),
+                                        "nal_unit_obj": nal_unit,  # Store the NalUnit object
+                                    }
+                                )
                             except Exception:
                                 # Fallback to manual parsing if NalUnit construction fails
                                 nal_header = nal_data[0]
                                 nal_type = nal_header & 0x1F
                                 nal_ref_idc = (nal_header >> 5) & 0x03
                                 forbidden_bit = (nal_header >> 7) & 0x01
-                                
-                                nal_units.append({
-                                    'type': nal_type,
-                                    'ref_idc': nal_ref_idc,
-                                    'forbidden': forbidden_bit,
-                                    'size': len(nal_data),
-                                    'type_name': self._get_nal_type_name(nal_type)
-                                })
-                        
+
+                                nal_units.append(
+                                    {
+                                        "type": nal_type,
+                                        "ref_idc": nal_ref_idc,
+                                        "forbidden": forbidden_bit,
+                                        "size": len(nal_data),
+                                        "type_name": get_nal_type_name(nal_type),
+                                    }
+                                )
+
                         offset = next_offset
-                
+
                 except Exception as e:
                     logger.error(f"Error parsing NAL units: {e}")
-                
+
                 # Decode the frame with OpenH264 if decoder is available
                 if self.video_decoder and len(data) > 0:
                     try:
-                        from libdatachannel.codec import EncodedImage
                         import numpy as np
-                        
+
+                        from libdatachannel.codec import EncodedImage
+
                         # Create EncodedImage with the H.264 frame data
                         encoded_image = EncodedImage()
                         # Convert bytes to numpy array - make a copy to ensure correct format
@@ -337,20 +264,24 @@ class WHEPClient:
                         encoded_image.data = np_data
                         # Convert timestamp to timedelta (microseconds)
                         from datetime import timedelta
+
                         encoded_image.timestamp = timedelta(microseconds=frame_info.timestamp)
-                        
+
                         # Decode the frame
                         self.video_decoder.decode(encoded_image)
-                        
+
                         if self.video_frame_count % 30 == 0:
                             logger.debug(f"Decoded video frame #{self.video_frame_count}")
                     except Exception as e:
                         if self.video_frame_count <= 2:
                             logger.error(f"Error decoding video frame: {e}")
                             import traceback
+
                             logger.error(traceback.format_exc())
-                
-                if self.video_frame_count % 30 == 0 or any(unit['type'] in [5, 7, 8] for unit in nal_units):  # Log every 30 frames or key frames
+
+                if self.video_frame_count % 30 == 0 or any(
+                    unit["type"] in [5, 7, 8] for unit in nal_units
+                ):  # Log every 30 frames or key frames
                     logger.info(
                         f"Video frame #{self.video_frame_count}: "
                         f"size={len(data)} bytes, timestamp={frame_info.timestamp}, "
@@ -362,7 +293,7 @@ class WHEPClient:
                             f"ref_idc={unit['ref_idc']}, size={unit['size']} bytes, "
                             f"forbidden={unit['forbidden']}"
                         )
-            
+
             self.video_track.on_frame(on_video_frame)
             self.video_track.set_media_handler(h264_depacketizer)
             logger.info("H.264 depacketizer and handlers set for video track")
@@ -372,7 +303,7 @@ class WHEPClient:
         if self.audio_track:
             # OpusRtpDepacketizer for Opus packets
             opus_depacketizer = OpusRtpDepacketizer()
-            
+
             # Set up frame handler for Opus frames
             def on_audio_frame(data: bytes, frame_info):
                 self.audio_frame_count += 1
@@ -381,7 +312,7 @@ class WHEPClient:
                         f"Audio frame #{self.audio_frame_count}: "
                         f"size={len(data)} bytes, timestamp={frame_info.timestamp}"
                     )
-            
+
             self.audio_track.on_frame(on_audio_frame)
             self.audio_track.set_media_handler(opus_depacketizer)
             logger.info("Opus depacketizer and handlers set for audio track")
@@ -391,20 +322,21 @@ class WHEPClient:
         try:
             # Load OpenH264 library
             import os
+
             if not os.path.exists(self.openh264_path):
                 logger.error(f"OpenH264 library not found at: {self.openh264_path}")
                 return
-                
+
             # Create OpenH264 decoder
             self.video_decoder = create_openh264_video_decoder(self.openh264_path)
-            
+
             # Initialize decoder settings
             settings = VideoDecoder.Settings()
             settings.codec_type = VideoCodecType.H264
-            
+
             if self.video_decoder.init(settings):
                 logger.info(f"OpenH264 decoder initialized successfully from: {self.openh264_path}")
-                
+
                 # Set up decoder callback
                 def on_decoded_frame(frame):
                     self.decoded_frame_count += 1
@@ -413,30 +345,37 @@ class WHEPClient:
                             f"Decoded frame #{self.decoded_frame_count}: "
                             f"{frame.width()}x{frame.height()}, format={frame.format}"
                         )
-                    
+
                     # Put frame in queue for display if enabled
                     if self.display_video and self.frame_queue:
                         try:
                             # Convert I420 to RGB for OpenCV display
                             import numpy as np
+
                             from libdatachannel import libyuv
-                            
+
                             width = frame.width()
                             height = frame.height()
-                            
+
                             # Create RGB buffer
                             rgb_buffer = np.zeros((height, width, 3), dtype=np.uint8)
-                            
+
                             # Convert I420 to RGB using libyuv
                             if frame.format.name == "I420" and frame.i420_buffer:
                                 i420_buffer = frame.i420_buffer
                                 libyuv.i420_to_rgb24(
-                                    i420_buffer.y, i420_buffer.u, i420_buffer.v,
-                                    i420_buffer.stride_y(), i420_buffer.stride_u(), i420_buffer.stride_v(),
-                                    rgb_buffer, width * 3,
-                                    width, height
+                                    i420_buffer.y,
+                                    i420_buffer.u,
+                                    i420_buffer.v,
+                                    i420_buffer.stride_y(),
+                                    i420_buffer.stride_u(),
+                                    i420_buffer.stride_v(),
+                                    rgb_buffer,
+                                    width * 3,
+                                    width,
+                                    height,
                                 )
-                                
+
                                 # Put frame in queue (non-blocking)
                                 try:
                                     self.frame_queue.put_nowait(rgb_buffer)
@@ -448,12 +387,12 @@ class WHEPClient:
                                         logger.warning("Display queue is full, dropping frame")
                         except Exception as e:
                             logger.error(f"Error converting frame for display: {e}")
-                
+
                 self.video_decoder.set_on_decode(on_decoded_frame)
             else:
                 logger.error("Failed to initialize OpenH264 decoder")
                 self.video_decoder = None
-                
+
         except Exception as e:
             logger.error(f"Error setting up OpenH264 decoder: {e}")
             self.video_decoder = None
@@ -550,17 +489,17 @@ class WHEPClient:
 
         # Clean up resources in proper order
         logger.info("Cleaning up resources...")
-        
+
         # Clean up video decoder if it exists
         if self.video_decoder:
             try:
                 self.video_decoder.release()
                 logger.info("Video decoder released")
             except Exception as e:
-                self._handle_error("releasing video decoder", e)
+                handle_error("releasing video decoder", e)
             finally:
                 self.video_decoder = None
-        
+
         # Close tracks before closing PeerConnection
         self.video_track = None
         self.audio_track = None
@@ -570,7 +509,7 @@ class WHEPClient:
             try:
                 self.pc.close()
             except Exception as e:
-                self._handle_error("closing PeerConnection", e)
+                handle_error("closing PeerConnection", e)
             finally:
                 self.pc = None
 
@@ -580,47 +519,48 @@ class WHEPClient:
 def display_frames(client: WHEPClient, stop_event: threading.Event):
     """Display frames from queue using OpenCV (must run on main thread for macOS)"""
     logger.info("Starting display_frames function")
-    
+
     logger.info(f"Creating window: {client.window_name}")
     cv2.namedWindow(client.window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(client.window_name, 640, 480)  # Set initial window size
-    cv2.moveWindow(client.window_name, 100, 100)   # Position window
+    cv2.moveWindow(client.window_name, 100, 100)  # Position window
     logger.info("Window created")
-    
+
     frame_count = 0
     while not stop_event.is_set():
         try:
             # Get frame from queue with timeout
             frame = client.frame_queue.get(timeout=0.1)
             frame_count += 1
-            
+
             if frame_count == 1:
                 logger.info(f"Got first frame from queue: shape={frame.shape}")
-            
+
             # Display frame directly
             # Note: libyuv's i420_to_rgb24 might actually output BGR
             cv2.imshow(client.window_name, frame)
-            
+
             if frame_count % 30 == 0:
                 logger.info(f"Displayed {frame_count} frames")
-            
+
             # Check for 'q' key press to quit
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord("q"):
                 logger.info("User pressed 'q', stopping display")
                 stop_event.set()
                 break
-                
+
         except queue.Empty:
             # No frame available, continue
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord("q"):
                 logger.info("User pressed 'q' while waiting, stopping display")
                 stop_event.set()
                 break
         except Exception as e:
             logger.error(f"Error displaying frame: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
-    
+
     logger.info(f"Exiting display loop. Total frames displayed: {frame_count}")
     cv2.destroyAllWindows()
     logger.info("Windows destroyed")
@@ -644,10 +584,10 @@ def main():
         logger.info("Video display enabled")
 
     client = WHEPClient(args.url, args.token, args.openh264, args.display)
-    
+
     # Event to signal stop
     stop_event = threading.Event()
-    
+
     # Start connection in a separate thread
     def run_client():
         try:
@@ -664,21 +604,21 @@ def main():
                 client.disconnect()
             except Exception as e:
                 logger.error(f"Error during disconnect: {e}")
-    
+
     if args.display:
         if not args.openh264:
             logger.error("--openh264 is required when --display is specified")
             return
-            
+
         logger.info("Display mode enabled, starting client in thread")
         # Start client in a thread
         client_thread = threading.Thread(target=run_client)
         client_thread.start()
-        
+
         # Display frames on main thread (required for macOS)
         logger.info("Starting display on main thread")
         display_frames(client, stop_event)
-        
+
         # Wait for client thread to finish
         logger.info("Waiting for client thread to finish")
         client_thread.join()
