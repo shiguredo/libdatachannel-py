@@ -43,10 +43,15 @@ jobs:
           # リポジトリ名から組織名を抽出
           ORG=$(echo "${{ github.repository }}" | cut -d'/' -f1)
           
+          # デバッグログ: ユーザー名と組織名を出力
+          echo "Checking permission for user: ${{ github.event.comment.user.login }} in org: ${ORG}"
+          
           # ユーザーが組織のメンバーかチェック
           if gh api "/orgs/${ORG}/members/${{ github.event.comment.user.login }}" --silent 2>/dev/null; then
+            echo "User is a member of the organization"
             echo "has_permission=true" >> $GITHUB_OUTPUT
           else
+            echo "User is NOT a member of the organization"
             echo "has_permission=false" >> $GITHUB_OUTPUT
           fi
 

@@ -5,6 +5,7 @@ on:
   push:
     paths-ignore:
       - "**.md"
+      - ".github/workflows/claude.yml"
       # - "tests/**"
     branches-ignore:
       - "feature/e2e-test*"
