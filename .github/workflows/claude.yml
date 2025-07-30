@@ -10,6 +10,7 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
+  actions: read
 
 env:
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_SORA_OSS_SONNET }}
@@ -34,26 +35,13 @@ jobs:
     if: github.event.comment.user.login != 'voluntas'
     runs-on: ubuntu-24.04
     outputs:
-      has_permission: ${{ steps.check.outputs.has_permission }}
+      has_permission: ${{ steps.check.outputs.has-permission }}
     steps:
+      - uses: actions/checkout@v4
       - id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # リポジトリ名から組織名を抽出
-          ORG=$(echo "${{ github.repository }}" | cut -d'/' -f1)
-          
-          # デバッグログ: ユーザー名と組織名を出力
-          echo "Checking permission for user: ${{ github.event.comment.user.login }} in org: ${ORG}"
-          
-          # ユーザーが組織のメンバーかチェック
-          if gh api "/orgs/${ORG}/members/${{ github.event.comment.user.login }}" --silent 2>/dev/null; then
-            echo "User is a member of the organization"
-            echo "has_permission=true" >> $GITHUB_OUTPUT
-          else
-            echo "User is NOT a member of the organization"
-            echo "has_permission=false" >> $GITHUB_OUTPUT
-          fi
+        uses: ./.github/actions/permission
+        with:
+          username: ${{ github.event.comment.user.login }}
 
   claude-sonnet-response-others:
     needs: check-permission

@@ -1,0 +1,43 @@
+name: 'Check Repository Permission'
+description: 'Check if a user has write permission to the repository'
+inputs:
+  username:
+    description: 'GitHub username to check'
+    required: true
+outputs:
+  has-permission:
+    description: 'Whether the user has write permission (true/false)'
+    value: ${{ steps.check.outputs.has_permission }}
+  permission-level:
+    description: 'The permission level (admin/write/maintain/read/none)'
+    value: ${{ steps.check.outputs.permission_level }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # デバッグログ: ユーザー名を出力
+        echo "Checking permission for user: ${{ inputs.username }}"
+        
+        # REST APIを使用してユーザーの権限をチェック
+        RESPONSE=$(gh api "/repos/${{ github.repository }}/collaborators/${{ inputs.username }}/permission" 2>/dev/null || echo '{"permission":"none"}')
+        echo "API response: ${RESPONSE}"
+        
+        # レスポンスから権限を抽出
+        PERM=$(echo "${RESPONSE}" | jq -r '.permission // "none"')
+        echo "User permission level: ${PERM}"
+        
+        # 権限レベルを出力
+        echo "permission_level=${PERM}" >> $GITHUB_OUTPUT
+        
+        if [[ "${PERM}" == "admin" ]] || [[ "${PERM}" == "write" ]] || [[ "${PERM}" == "maintain" ]]; then
+          echo "User has sufficient permissions (${PERM})"
+          echo "has_permission=true" >> $GITHUB_OUTPUT
+        else
+          echo "User does not have sufficient permissions (${PERM})"
+          echo "has_permission=false" >> $GITHUB_OUTPUT
+        fi
