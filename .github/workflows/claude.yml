@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: check
-        uses: ./.github/actions/permission
+        uses: shiguredo/github-actions/.github/actions/check-write-permission@main
         with:
           username: ${{ github.event.comment.user.login }}
 
