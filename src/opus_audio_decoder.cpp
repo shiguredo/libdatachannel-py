@@ -25,7 +25,8 @@ class OpusAudioDecoder : public AudioDecoder {
     }
 
     int error = 0;
-    decoder_ = opus_decoder_create(settings_.sample_rate, settings_.channels, &error);
+    decoder_ =
+        opus_decoder_create(settings_.sample_rate, settings_.channels, &error);
     if (error != OPUS_OK) {
       PLOG_ERROR << "Failed to create opus decoder";
       return false;
@@ -50,8 +51,9 @@ class OpusAudioDecoder : public AudioDecoder {
       return;
     }
 
-    int samples = opus_decode_float(decoder_, encoded.data.data(), encoded.data.shape(0),
-                                    pcm_buf_.data(), pcm_buf_.size() / settings_.channels, 0);
+    int samples = opus_decode_float(decoder_, encoded.data.data(),
+                                    encoded.data.shape(0), pcm_buf_.data(),
+                                    pcm_buf_.size() / settings_.channels, 0);
     if (samples < 0) {
       PLOG_ERROR << "Failed to opus_decode_float: result=" << samples;
       return;
@@ -62,19 +64,19 @@ class OpusAudioDecoder : public AudioDecoder {
     frame.sample_rate = settings_.sample_rate;
     frame.timestamp = encoded.timestamp;
     frame.pcm = CreatePCMFloat(samples, settings_.channels);
-    
+
     // PCMデータをコピー
     // frame.pcm.data() で生のポインタを取得
     float* pcm_data = static_cast<float*>(frame.pcm.data());
-    memcpy(pcm_data, pcm_buf_.data(), samples * settings_.channels * sizeof(float));
+    memcpy(pcm_data, pcm_buf_.data(),
+           samples * settings_.channels * sizeof(float));
 
     if (on_decode_) {
       on_decode_(frame);
     }
   }
 
-  void SetOnDecode(
-      std::function<void(const AudioFrame&)> on_decode) override {
+  void SetOnDecode(std::function<void(const AudioFrame&)> on_decode) override {
     on_decode_ = on_decode;
   }
 

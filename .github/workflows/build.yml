@@ -41,7 +41,7 @@ jobs:
       - run: uv sync
       - name: Generate pyi
         run: |
-          uv run python run.py ubuntu-24.04_x86_64
+          uv run python run.py build ubuntu-24.04_x86_64
           mkdir libdatachannel/
           cp src/libdatachannel/py.typed libdatachannel/
           cp src/libdatachannel/libdatachannel_ext.pyi libdatachannel/
@@ -92,7 +92,7 @@ jobs:
           uv sync
 
       - run: |
-          uv run python run.py ${{ matrix.platform.target }}
+          uv run python run.py build ${{ matrix.platform.target }}
           uv run python -m build
 
       - run: |
@@ -150,7 +150,7 @@ jobs:
           uv sync
 
       - run: |
-          uv run python run.py ${{ matrix.platform.target }} --debug
+          uv run python run.py build ${{ matrix.platform.target }} --debug
           uv run python -m build --outdir dist_debug
         env:
           BUILD_PROFILE: debug
@@ -274,7 +274,7 @@ jobs:
       - run: |
           uv python pin ${{ matrix.python_version }}
           uv sync
-          uv run python run.py ${{ matrix.platform.target }} --debug
+          uv run python run.py build ${{ matrix.platform.target }} --debug
           uv run python -m build --outdir dist_debug
         env:
           BUILD_PROFILE: debug
