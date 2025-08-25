@@ -211,7 +211,7 @@ jobs:
       - run: |
           uv python pin ${{ matrix.python_version }}
           uv sync
-          uv run python run.py ${{ matrix.platform.target }}
+          uv run python run.py build ${{ matrix.platform.target }}
           uv run python -m build
         env:
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
