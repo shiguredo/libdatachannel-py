@@ -151,7 +151,7 @@ jobs:
 
       - run: |
           uv run python run.py build ${{ matrix.platform.target }} --debug
-          uv build --outdir dist_debug
+          uv build --out-dir dist_debug
         env:
           BUILD_PROFILE: debug
 
@@ -275,7 +275,7 @@ jobs:
           uv python pin ${{ matrix.python_version }}
           uv sync
           uv run python run.py build ${{ matrix.platform.target }} --debug
-          uv build --outdir dist_debug
+          uv build --out-dir dist_debug
         env:
           BUILD_PROFILE: debug
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
