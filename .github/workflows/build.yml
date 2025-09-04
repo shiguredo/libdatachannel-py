@@ -93,7 +93,7 @@ jobs:
 
       - run: |
           uv run python run.py build ${{ matrix.platform.target }}
-          uv run python -m build
+          uv build
 
       - run: |
           curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
@@ -151,7 +151,7 @@ jobs:
 
       - run: |
           uv run python run.py build ${{ matrix.platform.target }} --debug
-          uv run python -m build --outdir dist_debug
+          uv build --outdir dist_debug
         env:
           BUILD_PROFILE: debug
 
@@ -212,7 +212,7 @@ jobs:
           uv python pin ${{ matrix.python_version }}
           uv sync
           uv run python run.py build ${{ matrix.platform.target }}
-          uv run python -m build
+          uv build
         env:
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
           ARCHFLAGS: ${{ matrix.platform.archflags }}
@@ -275,7 +275,7 @@ jobs:
           uv python pin ${{ matrix.python_version }}
           uv sync
           uv run python run.py build ${{ matrix.platform.target }} --debug
-          uv run python -m build --outdir dist_debug
+          uv build --outdir dist_debug
         env:
           BUILD_PROFILE: debug
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
