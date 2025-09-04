@@ -130,6 +130,7 @@ def install_deps(
         "install_dir": install_dir,
         "configuration": "Debug" if debug else "Release",
         "cmake_args": macos_cmake_args,
+        "expected_sha256": version.get("OPUS_SHA256_HASH"),
     }
     install_opus(**install_opus_args)
 

@@ -29,6 +29,7 @@ import logging
 import multiprocessing
 import os
 import platform
+import hashlib
 import shlex
 import shutil
 import stat
@@ -143,7 +144,12 @@ def add_path(path: str, is_after=False):
         os.environ["PATH"] = path + PATH_SEPARATOR + os.environ["PATH"]
 
 
-def download(url: str, output_dir: Optional[str] = None, filename: Optional[str] = None) -> str:
+def download(
+    url: str,
+    output_dir: Optional[str] = None,
+    filename: Optional[str] = None,
+    expected_sha256: Optional[str] = None,
+) -> str:
     if filename is None:
         output_path = urllib.parse.urlparse(url).path.split("/")[-1]
     else:
@@ -153,20 +159,51 @@ def download(url: str, output_dir: Optional[str] = None, filename: Optional[str]
         output_path = os.path.join(output_dir, output_path)
 
     if os.path.exists(output_path):
-        return output_path
+        if expected_sha256 is not None:
+            try:
+                verify_sha256(output_path, expected_sha256)
+            except ValueError:
+                logging.warning(f"Existing file has invalid hash, removing: {output_path}")
+                os.remove(output_path)
+                return download(url, output_dir, filename, expected_sha256)
+        else:
+            return output_path
 
     try:
+        logging.info(f"Downloading {url} to {output_path}")
         if shutil.which("curl") is not None:
             cmd(["curl", "-fLo", output_path, url])
         else:
             cmd(["wget", "-cO", output_path, url])
+
+        if expected_sha256 is not None:
+            verify_sha256(output_path, expected_sha256)
     except Exception:
         # ゴミを残さないようにする
         if os.path.exists(output_path):
+            logging.error(f"Removing incomplete/invalid file: {output_path}")
             os.remove(output_path)
         raise
 
     return output_path
+
+
+def verify_sha256(file_path: str, expected_sha256: str):
+    logging.info(f"Verifying SHA256 hash for {file_path}")
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    actual_sha256 = sha256_hash.hexdigest()
+    if actual_sha256 != expected_sha256.lower():
+        error_msg = (
+            f"SHA256 hash mismatch for {file_path}:\n"
+            f"  Expected: {expected_sha256.lower()}\n"
+            f"  Actual:   {actual_sha256}"
+        )
+        logging.error(error_msg)
+        raise ValueError(error_msg)
+    logging.info(f"SHA256 hash verified successfully for {file_path}")
 
 
 def read_version_file(path: str) -> Dict[str, str]:
@@ -1732,7 +1769,13 @@ def install_boringssl(
 
 @versioned
 def install_opus(
-    version, source_dir, build_dir, install_dir, configuration: str, cmake_args: List[str]
+    version,
+    source_dir,
+    build_dir,
+    install_dir,
+    configuration: str,
+    cmake_args: List[str],
+    expected_sha256: Optional[str] = None,
 ):
     opus_source_dir = os.path.join(source_dir, "opus")
     opus_build_dir = os.path.join(build_dir, "opus")
@@ -1740,7 +1783,14 @@ def install_opus(
     rm_rf(opus_source_dir)
     rm_rf(opus_build_dir)
     rm_rf(opus_install_dir)
-    git_clone_shallow("https://gitlab.xiph.org/xiph/opus", version, opus_source_dir)
+    # Git クローンではなく、配布アーカイブをダウンロードして展開する
+    # 例: OPUS_VERSION=v1.5.2 -> https://oss-mirrors.shiguredo.jp/opus-1.5.2.tar.gz
+    version_nov = version[1:] if version.startswith("v") else version
+    archive_filename = f"opus-{version_nov}.tar.gz"
+    # 公式サイトに負荷をかけないための時雨堂によるミラー
+    url = f"https://oss-mirrors.shiguredo.jp/{archive_filename}"
+    archive_path = download(url, source_dir, expected_sha256=expected_sha256)
+    extract(archive_path, source_dir, "opus")
     mkdir_p(opus_build_dir)
     with cd(opus_build_dir):
         cmd(
