@@ -1,8 +1,10 @@
 import argparse
+import glob
 import multiprocessing
 import os
 import shutil
 import sys
+from typing import Optional
 
 from buildbase import (
     Platform,
@@ -121,6 +123,7 @@ def install_deps(
         "install_dir": install_dir,
         "configuration": "Debug" if debug else "Release",
         "cmake_args": macos_cmake_args,
+        "expected_sha256": version.get("OPUS_SHA256_HASH"),
     }
     install_opus(**install_opus_args)
 
@@ -172,29 +175,52 @@ AVAILABLE_TARGETS = [
 ]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--relwithdebinfo", action="store_true")
-    parser.add_argument("target", choices=AVAILABLE_TARGETS)
+def _find_clang_binary(name: str) -> Optional[str]:
+    if shutil.which(name) is not None:
+        return name
+    else:
+        for n in range(50, 14, -1):
+            if shutil.which(f"{name}-{n}") is not None:
+                return f"{name}-{n}"
+    return None
 
-    args = parser.parse_args()
-    if args.target == "windows_x86_64":
+
+def _format(
+    clang_format_path: Optional[str] = None,
+):
+    if clang_format_path is None:
+        clang_format_path = _find_clang_binary("clang-format")
+    if clang_format_path is None:
+        raise Exception("clang-format not found. Please install it or specify the path.")
+    patterns = [
+        "src/**/*.cpp",
+        "src/**/*.h",
+    ]
+    target_files = []
+    for pattern in patterns:
+        files = glob.glob(pattern, recursive=True)
+        target_files.extend(files)
+    cmd([clang_format_path, "-i"] + target_files)
+
+
+def _build(args):
+    target = args.target
+    if target == "windows_x86_64":
         platform = Platform("windows", get_windows_osver(), "x86_64")
-    elif args.target == "macos_x86_64":
+    elif target == "macos_x86_64":
         platform = Platform("macos", get_macos_osver(), "x86_64")
-    elif args.target == "macos_arm64":
+    elif target == "macos_arm64":
         platform = Platform("macos", get_macos_osver(), "arm64")
-    elif args.target == "ubuntu-22.04_x86_64":
+    elif target == "ubuntu-22.04_x86_64":
         platform = Platform("ubuntu", "22.04", "x86_64")
-    elif args.target == "ubuntu-24.04_x86_64":
+    elif target == "ubuntu-24.04_x86_64":
         platform = Platform("ubuntu", "24.04", "x86_64")
-    elif args.target == "ubuntu-24.04_armv8":
+    elif target == "ubuntu-24.04_armv8":
         platform = Platform("ubuntu", "24.04", "armv8")
-    elif args.target == "ubuntu-22.04_armv8_jetson":
+    elif target == "ubuntu-22.04_armv8_jetson":
         platform = Platform("jetson", None, "armv8", "ubuntu-22.04")
     else:
-        raise Exception(f"Unknown target {args.target}")
+        raise Exception(f"Unknown target {target}")
 
     source_dir = os.path.join(BASE_DIR, "_source", platform.target.package_name)
     build_dir = os.path.join(BASE_DIR, "_build", platform.target.package_name)
@@ -332,6 +358,30 @@ def main():
                     os.path.join(libdatachannelpy_build_target_dir, "codec", file),
                     os.path.join(libdatachannelpy_src_dir, "codec", file),
                 )
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sp = parser.add_subparsers(dest="command")
+
+    # build コマンド
+    bp = sp.add_parser("build")
+    bp.add_argument("target", choices=AVAILABLE_TARGETS)
+    bp.add_argument("--debug", action="store_true")
+    bp.add_argument("--relwithdebinfo", action="store_true")
+
+    # format コマンド
+    fp = sp.add_parser("format")
+    fp.add_argument("--clang-format-path", type=str, default=None)
+
+    args = parser.parse_args()
+
+    if args.command == "build":
+        _build(args)
+    elif args.command == "format":
+        _format(clang_format_path=args.clang_format_path)
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

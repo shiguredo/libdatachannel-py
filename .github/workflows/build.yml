@@ -5,6 +5,7 @@ on:
   push:
     paths-ignore:
       - "**.md"
+      - ".github/workflows/claude.yml"
       # - "tests/**"
     branches-ignore:
       - "feature/e2e-test*"
@@ -40,7 +41,7 @@ jobs:
       - run: uv sync
       - name: Generate pyi
         run: |
-          uv run python run.py ubuntu-24.04_x86_64
+          uv run python run.py build ubuntu-24.04_x86_64
           mkdir libdatachannel/
           cp src/libdatachannel/py.typed libdatachannel/
           cp src/libdatachannel/libdatachannel_ext.pyi libdatachannel/
@@ -58,11 +59,9 @@ jobs:
           - name: ubuntu-24.04_x86_64
             target: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
-            openh264_arch: "linux64"
           - name: ubuntu-24.04_armv8
             target: ubuntu-24.04_armv8
             runs_on: ubuntu-24.04-arm
-            openh264_arch: "linux-arm64"
         python_version:
           # - "3.11"
           # - "3.12"
@@ -91,16 +90,19 @@ jobs:
           uv sync
 
       - run: |
-          uv run python run.py ${{ matrix.platform.target }}
-          uv run python -m build
+          uv run python run.py build ${{ matrix.platform.target }}
+          uv build
 
-      - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
-          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+      - name: Download OpenH264
+        uses: shiguredo/github-actions/.github/actions/download-openh264@main
+        id: openh264
+        with:
+          platform_name: ${{ matrix.platform.name }}
+          openh264_version: ${{ env.OPENH264_VERSION }}
 
-      - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so
-          uv run pytest tests/ -v
+      - run: uv run pytest tests/ -v
+        env:
+          OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -116,11 +118,9 @@ jobs:
           - name: ubuntu-24.04_x86_64
             target: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
-            openh264_arch: "linux64"
           - name: ubuntu-24.04_armv8
             target: ubuntu-24.04_armv8
             runs_on: ubuntu-24.04-arm
-            openh264_arch: "linux-arm64"
         python_version:
           # - "3.11"
           # - "3.12"
@@ -149,18 +149,21 @@ jobs:
           uv sync
 
       - run: |
-          uv run python run.py ${{ matrix.platform.target }} --debug
-          uv run python -m build --outdir dist_debug
+          uv run python run.py build ${{ matrix.platform.target }} --debug
+          uv build --out-dir dist_debug
         env:
           BUILD_PROFILE: debug
 
-      - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
-          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so.bz2
+      - name: Download OpenH264
+        uses: shiguredo/github-actions/.github/actions/download-openh264@main
+        id: openh264
+        with:
+          platform_name: ${{ matrix.platform.name }}
+          openh264_version: ${{ env.OPENH264_VERSION }}
 
-      - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.8.so
-          uv run pytest tests/ -v
+      - run: uv run pytest tests/ -v
+        env:
+          OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -179,7 +182,6 @@ jobs:
             os: macos
             python_host_platform: "macosx-15.0-arm64"
             archflags: "-arch arm64"
-            openh264_arch: "mac-arm64"
           # - name: macos-14_arm64
           #   target: macos_arm64
           #   runs_on: macos-14
@@ -210,20 +212,23 @@ jobs:
       - run: |
           uv python pin ${{ matrix.python_version }}
           uv sync
-          uv run python run.py ${{ matrix.platform.target }}
-          uv run python -m build
+          uv run python run.py build ${{ matrix.platform.target }}
+          uv build
         env:
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
           ARCHFLAGS: ${{ matrix.platform.archflags }}
 
-      - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
-          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+      - name: Download OpenH264
+        uses: shiguredo/github-actions/.github/actions/download-openh264@main
+        id: openh264
+        with:
+          platform_name: ${{ matrix.platform.name }}
+          openh264_version: ${{ env.OPENH264_VERSION }}
 
-      - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib
-          export ENABLE_VIDEOTOOLBOX=1
-          uv run pytest tests/ -v
+      - run: uv run pytest tests/ -v
+        env:
+          OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
+          ENABLE_VIDEOTOOLBOX: 1
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -242,7 +247,6 @@ jobs:
             os: macos
             python_host_platform: "macosx-15.0-arm64"
             archflags: "-arch arm64"
-            openh264_arch: "mac-arm64"
           # - name: macos-14_arm64
           #   target: macos_arm64
           #   runs_on: macos-14
@@ -273,21 +277,24 @@ jobs:
       - run: |
           uv python pin ${{ matrix.python_version }}
           uv sync
-          uv run python run.py ${{ matrix.platform.target }} --debug
-          uv run python -m build --outdir dist_debug
+          uv run python run.py build ${{ matrix.platform.target }} --debug
+          uv build --out-dir dist_debug
         env:
           BUILD_PROFILE: debug
           _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
           ARCHFLAGS: ${{ matrix.platform.archflags }}
 
-      - run: |
-          curl -LO http://ciscobinary.openh264.org/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
-          bunzip2 libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib.bz2
+      - name: Download OpenH264
+        uses: shiguredo/github-actions/.github/actions/download-openh264@main
+        id: openh264
+        with:
+          platform_name: ${{ matrix.platform.name }}
+          openh264_version: ${{ env.OPENH264_VERSION }}
 
-      - run: |
-          export OPENH264_PATH=`pwd`/libopenh264-${{ env.OPENH264_VERSION }}-${{ matrix.platform.openh264_arch }}.dylib
-          export ENABLE_VIDEOTOOLBOX=1
-          uv run pytest tests/ -v
+      - run: uv run pytest tests/ -v
+        env:
+          OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
+          ENABLE_VIDEOTOOLBOX: 1
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

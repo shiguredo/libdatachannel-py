@@ -17,24 +17,20 @@ Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
 
 [build-system]
-requires = ["setuptools>=80.9", "wheel>=0.45.1"]
+requires = ["setuptools>=80.9"]
 build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "nanobind>=2.7",
-    "pytest",
+    "nanobind==2.9.2",
     "setuptools>=80.9",
-    "build>=1.2.2.post1",
-    "wheel>=0.45.1",
-    "numpy>=2.2",
+    "pytest",
+    "pytest-aiohttp",
+    "numpy",
     "ty",
     "hypothesis",
-    "mypy",
-    "pyrefly",
-    "pyright",
     "aiohttp",
-    "pytest-aiohttp",
+    "ruff",
 ]
 
 [tool.uv.workspace]
@@ -43,7 +39,3 @@ members = ["examples"]
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-
-[tool.pyrefly]
-project-includes = ["**/*"]
-project-excludes = ["**/*venv/**/*"]
