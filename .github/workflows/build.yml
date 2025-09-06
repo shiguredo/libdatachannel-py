@@ -16,8 +16,7 @@ on:
     # 1-5 で 月曜日から金曜日
     - cron: "0 1 * * 1-5"
 
-env:
-  OPENH264_VERSION: "2.6.0"
+  
 
 permissions:
   contents: write
@@ -32,6 +31,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - run: |
           sudo apt-get -y install libx11-dev nasm
       - uses: astral-sh/setup-uv@v6
@@ -71,6 +75,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v4
         with:
           name: libdatachannel
@@ -130,6 +139,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v4
         with:
           name: libdatachannel
@@ -197,6 +211,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v4
         with:
           name: libdatachannel
@@ -262,6 +281,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v4
         with:
           name: libdatachannel
