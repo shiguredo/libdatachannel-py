@@ -289,7 +289,7 @@ dev = [
     { name = "numpy" },
     { name = "pytest" },
     { name = "pytest-aiohttp" },
-    { name = "ruff", specifier = ">=0.12.12" },
+    { name = "ruff" },
     { name = "setuptools", specifier = ">=80.9" },
     { name = "ty" },
 ]

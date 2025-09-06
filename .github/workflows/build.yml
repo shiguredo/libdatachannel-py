@@ -241,7 +241,7 @@ jobs:
         uses: shiguredo/github-actions/.github/actions/download-openh264@main
         id: openh264
         with:
-          platform_name: ${{ matrix.platform.name }}
+          platform_name: ${{ matrix.platform.target }}
           openh264_version: ${{ env.OPENH264_VERSION }}
 
       - run: uv run pytest tests/ -v
@@ -312,7 +312,7 @@ jobs:
         uses: shiguredo/github-actions/.github/actions/download-openh264@main
         id: openh264
         with:
-          platform_name: ${{ matrix.platform.name }}
+          platform_name: ${{ matrix.platform.target }}
           openh264_version: ${{ env.OPENH264_VERSION }}
 
       - run: uv run pytest tests/ -v
