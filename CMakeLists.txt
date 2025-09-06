@@ -7,16 +7,57 @@ cmake_policy(SET CMP0091 NEW)
 
 project(libdatachannel-py)
 
+#[[ 
+  scikit-build-core が編集可能インストールやメタデータ生成の段階で
+  CMake の configure を実行するため、依存（Opus など）が未指定の場合に
+  失敗しないよう、拡張ビルドをスキップできるガードを入れる。
+]]
+# 依存が指定されているかをざっくり判定
+set(_ALL_DEPS_PROVIDED TRUE)
+foreach(_var IN ITEMS LIBDATACHANNEL_DIR OPUS_DIR LIBJPEG_TURBO_DIR LIBYUV_DIR AOM_DIR OPENH264_DIR)
+  if(NOT DEFINED ${_var} OR "${${_var}}" STREQUAL "")
+    set(_ALL_DEPS_PROVIDED FALSE)
+  endif()
+endforeach()
+
+option(LIBDATACHANNEL_PY_REQUIRE_DEPS "依存が無い場合はエラーにする" OFF)
+
+if(NOT _ALL_DEPS_PROVIDED)
+  if(LIBDATACHANNEL_PY_REQUIRE_DEPS)
+    message(FATAL_ERROR "Required dependencies are missing. Set *_DIR variables or provide CMAKE_ARGS.")
+  else()
+    message(STATUS "Dependencies not provided; skipping extension build (metadata/editable phase)")
+    # Python パッケージの .py / .pyi / py.typed を同梱（wheel 側での配置用）
+    install(
+      DIRECTORY src/libdatachannel/
+      DESTINATION libdatachannel
+      FILES_MATCHING
+        PATTERN "*.py"
+        PATTERN "*.pyi"
+        PATTERN "py.typed"
+    )
+    return()
+  endif()
+endif()
+
 list(APPEND CMAKE_PREFIX_PATH
   ${OPUS_DIR}/lib/cmake
   ${LIBJPEG_TURBO_DIR}/lib/cmake
 )
 
 if (NOT CMAKE_CROSSCOMPILING)
-  set(Python_VERSION "${PYTHON_VERSION_STRING}")
-  set(Python_EXECUTABLE "${PYTHON_EXECUTABLE}")
-  set(Python_INCLUDE_DIR "${PYTHON_INCLUDE_DIR}")
-  set(Python_LIBRARIES "${PYTHON_LIBRARY}")
+  if(DEFINED PYTHON_VERSION_STRING AND NOT "${PYTHON_VERSION_STRING}" STREQUAL "")
+    set(Python_VERSION "${PYTHON_VERSION_STRING}")
+  endif()
+  if(DEFINED PYTHON_EXECUTABLE AND NOT "${PYTHON_EXECUTABLE}" STREQUAL "")
+    set(Python_EXECUTABLE "${PYTHON_EXECUTABLE}")
+  endif()
+  if(DEFINED PYTHON_INCLUDE_DIR AND NOT "${PYTHON_INCLUDE_DIR}" STREQUAL "")
+    set(Python_INCLUDE_DIR "${PYTHON_INCLUDE_DIR}")
+  endif()
+  if(DEFINED PYTHON_LIBRARY AND NOT "${PYTHON_LIBRARY}" STREQUAL "")
+    set(Python_LIBRARIES "${PYTHON_LIBRARY}")
+  endif()
   find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 endif()
 
@@ -166,7 +207,20 @@ target_link_libraries(libdatachannel_ext
     ${AOM_DIR}/lib/libaom.a
 )
 
-install(TARGETS libdatachannel_ext LIBRARY DESTINATION .)
+install(TARGETS libdatachannel_ext
+  LIBRARY DESTINATION libdatachannel
+  RUNTIME DESTINATION libdatachannel
+)
 if (LIBDATACHANNEL_PY_GEN_PYI)
-  install(FILES py.typed libdatachannel_ext.pyi DESTINATION ".")
+  install(FILES py.typed libdatachannel_ext.pyi DESTINATION "libdatachannel")
 endif()
+
+# Python パッケージの .py / .pyi / py.typed を同梱
+install(
+  DIRECTORY src/libdatachannel/
+  DESTINATION libdatachannel
+  FILES_MATCHING
+    PATTERN "*.py"
+    PATTERN "*.pyi"
+    PATTERN "py.typed"
+)

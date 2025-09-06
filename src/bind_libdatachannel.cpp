@@ -549,8 +549,15 @@ void bind_message(nb::module_& m) {
       [](std::vector<byte> data, Message::Type type, unsigned int stream,
          std::shared_ptr<Reliability> reliability,
          std::shared_ptr<FrameInfo> frameInfo) {
-        return make_message(std::move(data), type, stream, reliability,
-                            frameInfo);
+        if (frameInfo) {
+          auto msg = make_message(std::move(data), frameInfo);
+          msg->type = type;
+          msg->stream = stream;
+          msg->reliability = reliability;
+          return msg;
+        } else {
+          return make_message(std::move(data), type, stream, reliability);
+        }
       },
       "data"_a, "type"_a = Message::Binary, "stream"_a = 0,
       "reliability"_a = nullptr, "frame_info"_a = nullptr);
@@ -996,10 +1003,10 @@ void bind_rtpdepacketizer(nb::module_& m) {
 // ---- h264depacketizer.hpp ----
 
 void bind_h264depacketizer(nb::module_& m) {
-  nb::class_<H264RtpDepacketizer, MediaHandler>(m, "H264RtpDepacketizer")
+  nb::class_<H264RtpDepacketizer, RtpDepacketizer>(m, "H264RtpDepacketizer")
       .def(nb::init<NalUnit::Separator>(),
            "separator"_a = NalUnit::Separator::LongStartSequence)
-      .def("incoming", &H264RtpDepacketizer::incoming);
+      ;
 }
 
 // ---- pacinghandler.hpp ----

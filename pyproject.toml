@@ -17,13 +17,16 @@ Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
 
 [build-system]
-requires = ["setuptools>=80.9"]
-build-backend = "setuptools.build_meta"
+requires = [
+    "scikit-build-core>=0.9",
+    "nanobind>=2.9",
+    "numpy",
+]
+build-backend = "scikit_build_core.build"
 
 [dependency-groups]
 dev = [
     "nanobind==2.9.2",
-    "setuptools>=80.9",
     "pytest",
     "pytest-aiohttp",
     "numpy",
@@ -39,3 +42,8 @@ members = ["examples"]
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "VERSION"
+regex = "^(?P<value>.+)$"

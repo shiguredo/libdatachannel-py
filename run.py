@@ -28,7 +28,7 @@ from buildbase import (
     mkdir_p,
     read_version_file,
 )
-from pypath import get_python_include_dir, get_python_library, get_python_version
+# pypath 依存を廃止。CMake の FindPython に任せる。
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -258,14 +258,7 @@ def _build(args):
         cmake_args.append(
             f"-DLIBDATACHANNEL_DIR={cmake_path(os.path.join(source_dir, 'libdatachannel'))}"
         )
-        python_version = get_python_version()
-        cmake_args.append(f"-DPYTHON_VERSION_STRING={python_version}")
-        cmake_args.append(f"-DPYTHON_INCLUDE_DIR={get_python_include_dir(python_version)}")
-        cmake_args.append(f"-DPYTHON_EXECUTABLE={cmake_path(sys.executable)}")
-        python_library = get_python_library(python_version)
-        if python_library is None:
-            raise Exception("Failed to get Python library")
-        cmake_args.append(f"-DPYTHON_LIBRARY={cmake_path(python_library)}")
+        # Python の検出は CMake の FindPython に任せる
 
         # libdatachannel
         cmake_args.append("-DUSE_MBEDTLS=ON")
