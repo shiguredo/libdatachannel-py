@@ -331,10 +331,12 @@ def _build(args):
             ):
                 os.remove(os.path.join(libdatachannelpy_src_dir, file))
 
+        prebuilt_ext = None
         for file in os.listdir(libdatachannelpy_build_target_dir):
             if file.startswith("libdatachannel_ext.") and (
                 file.endswith(".so") or file.endswith(".dylib") or file.endswith(".pyd")
             ):
+                prebuilt_ext = os.path.join(libdatachannelpy_build_target_dir, file)
                 shutil.copyfile(
                     os.path.join(libdatachannelpy_build_target_dir, file),
                     os.path.join(libdatachannelpy_src_dir, file),
@@ -345,19 +347,55 @@ def _build(args):
                     os.path.join(libdatachannelpy_src_dir, file),
                 )
 
+        prebuilt_libyuv_pyi = None
         for file in os.listdir(os.path.join(libdatachannelpy_build_target_dir, "libyuv")):
             if file in ("__init__.pyi",):
+                prebuilt_libyuv_pyi = os.path.join(
+                    libdatachannelpy_build_target_dir, "libyuv", file
+                )
                 shutil.copyfile(
                     os.path.join(libdatachannelpy_build_target_dir, "libyuv", file),
                     os.path.join(libdatachannelpy_src_dir, "libyuv", file),
                 )
 
+        prebuilt_codec_pyi = None
         for file in os.listdir(os.path.join(libdatachannelpy_build_target_dir, "codec")):
             if file in ("__init__.pyi",):
+                prebuilt_codec_pyi = os.path.join(
+                    libdatachannelpy_build_target_dir, "codec", file
+                )
                 shutil.copyfile(
                     os.path.join(libdatachannelpy_build_target_dir, "codec", file),
                     os.path.join(libdatachannelpy_src_dir, "codec", file),
                 )
+
+
+        # CMake 用のヒントファイルも出力し、sdist からの wheel ビルド時に参照させる
+        hints_path = os.path.join(BASE_DIR, "build_hints.cmake")
+        with open(hints_path, "w", encoding="utf-8") as f:
+            f.write(
+                "\n".join(
+                    [
+                        f"set(TARGET_OS {platform.target.os} CACHE STRING \"\" FORCE)",
+                        f"set(LIBDATACHANNEL_DIR {cmake_path(os.path.join(source_dir, 'libdatachannel'))} CACHE PATH \"\" FORCE)",
+                        f"set(MbedTLS_ROOT {cmake_path(os.path.join(install_dir, 'mbedtls'))} CACHE PATH \"\" FORCE)",
+                        f"set(OPENH264_DIR {cmake_path(os.path.join(install_dir, 'openh264'))} CACHE PATH \"\" FORCE)",
+                        f"set(OPUS_DIR {cmake_path(os.path.join(install_dir, 'opus'))} CACHE PATH \"\" FORCE)",
+                        f"set(LIBJPEG_TURBO_DIR {cmake_path(os.path.join(install_dir, 'libjpeg-turbo'))} CACHE PATH \"\" FORCE)",
+                        f"set(LIBYUV_DIR {cmake_path(os.path.join(install_dir, 'libyuv'))} CACHE PATH \"\" FORCE)",
+                        f"set(AOM_DIR {cmake_path(os.path.join(install_dir, 'aom'))} CACHE PATH \"\" FORCE)",
+                        (f"set(LIBDATACHANNEL_PY_PREBUILT_EXT {cmake_path(prebuilt_ext)} CACHE FILEPATH \"\" FORCE)"
+                         if prebuilt_ext else ""),
+                        (f"set(LIBDATACHANNEL_PY_PREBUILT_PYI {cmake_path(os.path.join(libdatachannelpy_build_target_dir, 'libdatachannel_ext.pyi'))} CACHE FILEPATH \"\" FORCE)"
+                         if os.path.exists(os.path.join(libdatachannelpy_build_target_dir, 'libdatachannel_ext.pyi')) else ""),
+                        (f"set(LIBDATACHANNEL_PY_PREBUILT_CODEC_PYI {cmake_path(prebuilt_codec_pyi)} CACHE FILEPATH \"\" FORCE)"
+                         if prebuilt_codec_pyi else ""),
+                        (f"set(LIBDATACHANNEL_PY_PREBUILT_LIBYUV_PYI {cmake_path(prebuilt_libyuv_pyi)} CACHE FILEPATH \"\" FORCE)"
+                         if prebuilt_libyuv_pyi else ""),
+                        "",
+                    ]
+                )
+            )
 
 
 def main():

@@ -5,7 +5,86 @@ cmake_policy(SET CMP0054 NEW)
 # MSVC runtime library flags are selected by an abstraction.
 cmake_policy(SET CMP0091 NEW)
 
+# CMake 4 以降では 3.5 未満の互換モードが削除されているため、
+# 古いサブプロジェクトの cmake_minimum_required(VERSION 2.x) などで
+# 失敗しないよう最低ポリシーバージョンを 3.5 に固定する
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM OR "${CMAKE_POLICY_VERSION_MINIMUM}" STREQUAL "")
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+
 project(libdatachannel-py)
+
+# run.py が生成するヒントファイルを読み込む（存在すれば）
+if(EXISTS "${CMAKE_SOURCE_DIR}/build_hints.cmake")
+  include("${CMAKE_SOURCE_DIR}/build_hints.cmake")
+endif()
+
+#[[
+  run.py で依存を事前構築した後に uv build だけで完結させるため、
+  未指定の依存パスを _install/_source 配下から自動推測する。
+  ただし editable/sdist 段階では走らせず、wheel 段階のみ有効にする。
+]]
+if("$ENV{SKBUILD_STATE}" STREQUAL "wheel")
+  set(_AUTO_DIR "")
+  if(APPLE)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+      set(_AUTO_DIR "macos_arm64")
+    else()
+      set(_AUTO_DIR "macos_x86_64")
+    endif()
+  elseif(WIN32)
+    set(_AUTO_DIR "windows_x86_64")
+  elseif(UNIX)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+      foreach(d "ubuntu-24.04_x86_64" "ubuntu-22.04_x86_64")
+        if(EXISTS "${CMAKE_SOURCE_DIR}/_install/${d}")
+          set(_AUTO_DIR "${d}")
+          break()
+        endif()
+      endforeach()
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64|armv8")
+      foreach(d "ubuntu-24.04_armv8" "ubuntu-22.04_armv8_jetson")
+        if(EXISTS "${CMAKE_SOURCE_DIR}/_install/${d}")
+          set(_AUTO_DIR "${d}")
+          break()
+        endif()
+      endforeach()
+    endif()
+  endif()
+
+  if(NOT "${_AUTO_DIR}" STREQUAL "")
+    set(_AUTO_INSTALL_DIR "${CMAKE_SOURCE_DIR}/_install/${_AUTO_DIR}")
+    set(_AUTO_SOURCE_DIR  "${CMAKE_SOURCE_DIR}/_source/${_AUTO_DIR}")
+
+    macro(define_if_empty var value)
+      if(NOT DEFINED ${var} OR "${${var}}" STREQUAL "")
+        set(${var} "${value}" CACHE PATH "" FORCE)
+      endif()
+    endmacro()
+
+    define_if_empty(LIBDATACHANNEL_DIR "${_AUTO_SOURCE_DIR}/libdatachannel")
+    define_if_empty(MbedTLS_ROOT         "${_AUTO_INSTALL_DIR}/mbedtls")
+    define_if_empty(OPENH264_DIR         "${_AUTO_INSTALL_DIR}/openh264")
+    define_if_empty(OPUS_DIR             "${_AUTO_INSTALL_DIR}/opus")
+    define_if_empty(LIBJPEG_TURBO_DIR    "${_AUTO_INSTALL_DIR}/libjpeg-turbo")
+    define_if_empty(LIBYUV_DIR           "${_AUTO_INSTALL_DIR}/libyuv")
+    define_if_empty(AOM_DIR              "${_AUTO_INSTALL_DIR}/aom")
+
+    if(NOT DEFINED TARGET_OS OR "${TARGET_OS}" STREQUAL "")
+      if(APPLE)
+        set(TARGET_OS "macos" CACHE STRING "" FORCE)
+      elseif(WIN32)
+        set(TARGET_OS "windows" CACHE STRING "" FORCE)
+      else()
+        if(_AUTO_DIR MATCHES "jetson")
+          set(TARGET_OS "jetson" CACHE STRING "" FORCE)
+        else()
+          set(TARGET_OS "ubuntu" CACHE STRING "" FORCE)
+        endif()
+      endif()
+    endif()
+  endif()
+endif()
 
 #[[ 
   scikit-build-core が編集可能インストールやメタデータ生成の段階で
@@ -26,23 +105,48 @@ if(NOT _ALL_DEPS_PROVIDED)
   if(LIBDATACHANNEL_PY_REQUIRE_DEPS)
     message(FATAL_ERROR "Required dependencies are missing. Set *_DIR variables or provide CMAKE_ARGS.")
   else()
-    message(STATUS "Dependencies not provided; skipping extension build (metadata/editable phase)")
-    # Python パッケージの .py / .pyi / py.typed を同梱（wheel 側での配置用）
-    install(
-      DIRECTORY src/libdatachannel/
-      DESTINATION libdatachannel
-      FILES_MATCHING
-        PATTERN "*.py"
-        PATTERN "*.pyi"
-        PATTERN "py.typed"
-    )
-    return()
+    if(DEFINED LIBDATACHANNEL_PY_PREBUILT_EXT AND EXISTS "${LIBDATACHANNEL_PY_PREBUILT_EXT}")
+      message(STATUS "Using prebuilt extension: ${LIBDATACHANNEL_PY_PREBUILT_EXT}")
+      # 拡張本体
+      install(FILES "${LIBDATACHANNEL_PY_PREBUILT_EXT}" DESTINATION libdatachannel)
+      # stub / pyi
+      if(DEFINED LIBDATACHANNEL_PY_PREBUILT_PYI AND EXISTS "${LIBDATACHANNEL_PY_PREBUILT_PYI}")
+        install(FILES "${LIBDATACHANNEL_PY_PREBUILT_PYI}" DESTINATION libdatachannel)
+      endif()
+      if(DEFINED LIBDATACHANNEL_PY_PREBUILT_CODEC_PYI AND EXISTS "${LIBDATACHANNEL_PY_PREBUILT_CODEC_PYI}")
+        install(FILES "${LIBDATACHANNEL_PY_PREBUILT_CODEC_PYI}" DESTINATION libdatachannel/codec RENAME "__init__.pyi")
+      endif()
+      if(DEFINED LIBDATACHANNEL_PY_PREBUILT_LIBYUV_PYI AND EXISTS "${LIBDATACHANNEL_PY_PREBUILT_LIBYUV_PYI}")
+        install(FILES "${LIBDATACHANNEL_PY_PREBUILT_LIBYUV_PYI}" DESTINATION libdatachannel/libyuv RENAME "__init__.pyi")
+      endif()
+      # パッケージの .py 類
+      install(
+        DIRECTORY src/libdatachannel/
+        DESTINATION libdatachannel
+        FILES_MATCHING
+          PATTERN "*.py"
+          PATTERN "py.typed"
+      )
+      return()
+    else()
+      message(STATUS "Dependencies not provided; skipping extension build (metadata/editable phase)")
+      # Python パッケージの .py / .pyi / py.typed を同梱（wheel 側での配置用）
+      install(
+        DIRECTORY src/libdatachannel/
+        DESTINATION libdatachannel
+        FILES_MATCHING
+          PATTERN "*.py"
+          PATTERN "*.pyi"
+          PATTERN "py.typed"
+      )
+      return()
+    endif()
   endif()
 endif()
 
 list(APPEND CMAKE_PREFIX_PATH
-  ${OPUS_DIR}/lib/cmake
-  ${LIBJPEG_TURBO_DIR}/lib/cmake
+  ${OPUS_DIR}
+  ${LIBJPEG_TURBO_DIR}
 )
 
 if (NOT CMAKE_CROSSCOMPILING)
@@ -97,7 +201,6 @@ find_package(Opus REQUIRED)
 find_package(libjpeg-turbo REQUIRED)
 
 add_subdirectory(${LIBDATACHANNEL_DIR} libdatachannel EXCLUDE_FROM_ALL)
-add_subdirectory(${LIBDATACHANNEL_DIR}/deps/json json EXCLUDE_FROM_ALL)
 
 nanobind_add_module(
   libdatachannel_ext
