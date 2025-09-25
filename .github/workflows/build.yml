@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Export OPENH264_VERSION from DEPS
         run: |
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
@@ -74,13 +74,13 @@ jobs:
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Export OPENH264_VERSION from DEPS
         run: |
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
           ver=${ver#v}
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: libdatachannel
           path: libdatachannel/
@@ -138,13 +138,13 @@ jobs:
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Export OPENH264_VERSION from DEPS
         run: |
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
           ver=${ver#v}
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: libdatachannel
           path: libdatachannel/
@@ -210,13 +210,13 @@ jobs:
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Export OPENH264_VERSION from DEPS
         run: |
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
           ver=${ver#v}
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: libdatachannel
           path: libdatachannel/
@@ -280,13 +280,13 @@ jobs:
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Export OPENH264_VERSION from DEPS
         run: |
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
           ver=${ver#v}
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: libdatachannel
           path: libdatachannel/
@@ -338,8 +338,8 @@ jobs:
   #         # - "3.12"
   #         - "3.13"
   #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/download-artifact@v4
+  #     - uses: actions/checkout@v5
+  #     - uses: actions/download-artifact@v5
   #       with:
   #         name: libdatachannel
   #         path: libdatachannel/
@@ -394,7 +394,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
           path: dist
@@ -434,7 +434,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # - uses: ./.github/actions/download
       #   with:
       #     platform: "ubuntu-24.04_x86_64"
