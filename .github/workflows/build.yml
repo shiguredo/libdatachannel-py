@@ -16,8 +16,6 @@ on:
     # 1-5 で 月曜日から金曜日
     - cron: "0 1 * * 1-5"
 
-  
-
 permissions:
   contents: write
 
@@ -41,8 +39,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
-      - run: uv python pin 3.13
-      - run: uv sync
+          python-version: 3.13
+      - run: |
+          uv sync
       - name: Generate pyi
         run: |
           uv run python run.py build ubuntu-24.04_x86_64
@@ -70,7 +69,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
-    needs: [build_pyi] 
+    needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
@@ -94,10 +93,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
+          python-version: ${{ matrix.python_version }}
       - run: |
-          uv python pin ${{ matrix.python_version }}
           uv sync
-
       - run: |
           uv run python run.py build ${{ matrix.platform.target }}
           uv build
@@ -134,7 +132,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
-    needs: [build_pyi] 
+    needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
@@ -158,8 +156,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
+          python-version: ${{ matrix.python_version }}
       - run: |
-          uv python pin ${{ matrix.python_version }}
           uv sync
 
       - run: |
@@ -190,6 +188,12 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - name: macos-26_arm64
+            target: macos_arm64
+            runs_on: macos-26
+            os: macos
+            python_host_platform: "macosx-26.0-arm64"
+            archflags: "-arch arm64"
           - name: macos-15_arm64
             target: macos_arm64
             runs_on: macos-15
@@ -206,7 +210,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
-    needs: [build_pyi] 
+    needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
@@ -228,9 +232,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
+          python-version: ${{ matrix.python_version }}
       - run: |
-          uv python pin ${{ matrix.python_version }}
           uv sync
+      - run: |
           uv run python run.py build ${{ matrix.platform.target }}
           uv build
         env:
@@ -276,7 +281,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
-    needs: [build_pyi] 
+    needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
     steps:
@@ -298,9 +303,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
+          python-version: ${{ matrix.python_version }}
       - run: |
-          uv python pin ${{ matrix.python_version }}
           uv sync
+      - run: |
           uv run python run.py build ${{ matrix.platform.target }} --debug
           uv build --out-dir dist_debug
         env:
@@ -327,7 +333,7 @@ jobs:
           path: "dist_debug/"
 
   # build_windows:
-  #   needs: [build_pyi] 
+  #   needs: [build_pyi]
   #   runs-on: windows-2025
   #   timeout-minutes: 15
   #   strategy:
@@ -367,7 +373,7 @@ jobs:
           SLACK_COLOR: danger
           SLACK_TITLE: "FAILED"
           SLACK_ICON_EMOJI: ":japanese_ogre:"
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}  
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   publish_wheel:
     if: contains(github.ref, 'tags/202')
@@ -443,7 +449,7 @@ jobs:
       #   with:
       #     platform: "ubuntu-24.04_x86_64"
       #     python_version: "3.12"
-      
+
       - uses: ./.github/actions/download
         with:
           platform: "ubuntu-24.04_x86_64"
@@ -493,23 +499,23 @@ jobs:
         uses: ./.github/actions/download
         with:
           platform: ubuntu-24.04_x86_64
-          python_version: '3.13'
-          debug: 'true'
+          python_version: "3.13"
+          debug: "true"
 
       - name: Download Ubuntu armv8 Debug Artifact
         uses: ./.github/actions/download
         with:
           platform: ubuntu-24.04_armv8
-          python_version: '3.13'
-          debug: 'true'
+          python_version: "3.13"
+          debug: "true"
 
       - name: Download macOS arm64 Debug Artifact
         uses: ./.github/actions/download
         with:
           platform: macos-15_arm64
-          python_version: '3.13'
-          debug: 'true'
-      
+          python_version: "3.13"
+          debug: "true"
+
       - name: Env to output
         run: |
           echo "package_paths<<EOF" >> $GITHUB_OUTPUT
