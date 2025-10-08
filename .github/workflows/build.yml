@@ -25,6 +25,12 @@ jobs:
   # １箇所で pyi を生成してアーティファクトにアップロードして、
   # それを各ビルドで利用する形にする。
   build_pyi:
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version:
+          - "3.13"
+          - "3.14"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -39,7 +45,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: false
-          python-version: 3.13
+          python-version: ${{ matrix.python_version }}
       - run: |
           uv sync
       - name: Generate pyi
@@ -51,7 +57,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libdatachannel
+          name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
 
   build_ubuntu:
@@ -69,6 +75,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
+          - "3.14"
     needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
@@ -81,7 +88,7 @@ jobs:
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v5
         with:
-          name: libdatachannel
+          name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
       - run: |
           cp libdatachannel/py.typed src/libdatachannel/py.typed
@@ -132,6 +139,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
+          - "3.14"
     needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
@@ -144,7 +152,7 @@ jobs:
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v5
         with:
-          name: libdatachannel
+          name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
       - run: |
           cp libdatachannel/py.typed src/libdatachannel/py.typed
@@ -210,6 +218,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
+          - "3.14"
     needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
@@ -222,7 +231,7 @@ jobs:
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v5
         with:
-          name: libdatachannel
+          name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
       - run: |
           cp libdatachannel/py.typed src/libdatachannel/py.typed
@@ -281,6 +290,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
+          - "3.14"
     needs: [build_pyi]
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: 15
@@ -293,7 +303,7 @@ jobs:
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
       - uses: actions/download-artifact@v5
         with:
-          name: libdatachannel
+          name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
       - run: |
           cp libdatachannel/py.typed src/libdatachannel/py.typed
@@ -394,6 +404,7 @@ jobs:
           # - "3.11"
           # - "3.12"
           - "3.13"
+          - "3.14"
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: pypi
@@ -410,7 +421,7 @@ jobs:
           fi
       # matrix の中で１個だけソースディストリビューション用のデータを残しておく
       - run: mv *.tar.gz dist/
-        if: ${{ matrix.platform.name == 'macos-15_arm64' && matrix.python_version == '3.13' }}
+        if: ${{ matrix.platform.name == 'macos-15_arm64' && matrix.python_version == '3.14' }}
 
       # テスト用
       # - name: Publish package to TestPyPI
