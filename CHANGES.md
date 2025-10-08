@@ -11,6 +11,11 @@
 
 ## develop
 
+- [UPDATE] build_pyi ジョブを matrix 化し Python バージョンごとに pyi を生成
+  - Python 3.13 と 3.14 の両方で pyi を生成するように変更
+  - 各ビルドジョブで対応する Python バージョンの pyi をダウンロード
+  - @voluntas
+
 ### misc
 
 - [CHANGE] リリースを GH コマンドに変更
