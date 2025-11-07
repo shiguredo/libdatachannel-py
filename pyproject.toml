@@ -12,26 +12,22 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.13"
+
 [project.urls]
 Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
 
 [build-system]
-requires = ["setuptools>=80.9"]
+requires = ["setuptools>=80.9", "wheel==0.45.1"]
 build-backend = "setuptools.build_meta"
 
 [dependency-groups]
-dev = [
-    "nanobind==2.9.2",
-    "setuptools>=80.9",
-    "pytest",
-    "pytest-aiohttp",
-    "numpy",
-    "ty",
-    "hypothesis",
-    "aiohttp",
-    "ruff",
-]
+dev = ["nanobind==2.9.2"]
+test = ["pytest", "pytest-aiohttp", "numpy", "hypothesis", "aiohttp"]
+lint = ["ruff", "ty"]
+
+[tool.uv]
+default-groups = ["dev", "test", "lint"]
 
 [tool.uv.workspace]
 members = ["examples"]

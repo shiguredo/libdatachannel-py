@@ -19,7 +19,7 @@ runs:
   steps:
     - name: Download artifact (release)
       if: inputs.debug == 'false'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: ${{ inputs.platform }}_python-${{ inputs.python_version }}
         path: ${{ inputs.platform }}_python-${{ inputs.python_version }}
@@ -28,7 +28,7 @@ runs:
 
     - name: Download artifact (debug)
       if: inputs.debug == 'true'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: ${{ inputs.platform }}_python-${{ inputs.python_version }}${{ !contains(inputs.python_version, '+debug') && '_debug' || '' }}
         path: dist_debug/${{ inputs.platform }}_python-${{ inputs.python_version }}${{ !contains(inputs.python_version, '+debug') && '_debug' || '' }}
