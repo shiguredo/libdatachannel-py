@@ -72,8 +72,6 @@ jobs:
             target: ubuntu-24.04_armv8
             runs_on: ubuntu-24.04-arm
         python_version:
-          # - "3.11"
-          # - "3.12"
           - "3.13"
           - "3.14"
     needs: [build_pyi]
@@ -111,7 +109,6 @@ jobs:
         uses: shiguredo/github-actions/.github/actions/download-openh264@main
         id: openh264
         with:
-          platform_name: ${{ matrix.platform.target }}
           openh264_version: ${{ env.OPENH264_VERSION }}
 
       - run: uv run pytest tests/ -v
@@ -178,7 +175,6 @@ jobs:
         uses: shiguredo/github-actions/.github/actions/download-openh264@main
         id: openh264
         with:
-          platform_name: ${{ matrix.platform.name }}
           openh264_version: ${{ env.OPENH264_VERSION }}
 
       - run: uv run pytest tests/ -v
