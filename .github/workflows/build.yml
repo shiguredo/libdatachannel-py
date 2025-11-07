@@ -116,7 +116,7 @@ jobs:
           OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
           path: "dist/"
@@ -185,7 +185,6 @@ jobs:
         uses: shiguredo/github-actions/.github/actions/download-openh264@main
         id: openh264
         with:
-          platform_name: ${{ matrix.platform.target }}
           openh264_version: ${{ env.OPENH264_VERSION }}
 
       - run: uv run pytest tests/ -v
@@ -194,7 +193,7 @@ jobs:
           ENABLE_VIDEOTOOLBOX: 1
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
           path: "dist/"
