@@ -308,14 +308,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "ubuntu-24.04_x86_64"
-      #     python_version: "3.11"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "ubuntu-24.04_x86_64"
-      #     python_version: "3.12"
 
       - uses: ./.github/actions/download
         with:
@@ -333,14 +325,6 @@ jobs:
         with:
           platform: "ubuntu-24.04_armv8"
           python_version: "3.14"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "macos-15_arm64"
-      #     python_version: "3.11"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "macos-15_arm64"
-      #     python_version: "3.12"
       - uses: ./.github/actions/download
         with:
           platform: "macos-15_arm64"
@@ -349,72 +333,6 @@ jobs:
         with:
           platform: "macos-15_arm64"
           python_version: "3.14"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "macos-14_arm64"
-      #     python_version: "3.11"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "macos-14_arm64"
-      #     python_version: "3.12"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "macos-14_arm64"
-      #     python_version: "3.13"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "windows-2025"
-      #     python_version: "3.11"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "windows-2025"
-      #     python_version: "3.12"
-      # - uses: ./.github/actions/download
-      #   with:
-      #     platform: "windows-2025"
-      #     python_version: "3.13"
-
-      - name: Download Ubuntu x86_64 Debug Artifact (3.13)
-        uses: ./.github/actions/download
-        with:
-          platform: ubuntu-24.04_x86_64
-          python_version: "3.13"
-          debug: "true"
-
-      - name: Download Ubuntu x86_64 Debug Artifact (3.14)
-        uses: ./.github/actions/download
-        with:
-          platform: ubuntu-24.04_x86_64
-          python_version: "3.14"
-          debug: "true"
-
-      - name: Download Ubuntu armv8 Debug Artifact (3.13)
-        uses: ./.github/actions/download
-        with:
-          platform: ubuntu-24.04_armv8
-          python_version: "3.13"
-          debug: "true"
-
-      - name: Download Ubuntu armv8 Debug Artifact (3.14)
-        uses: ./.github/actions/download
-        with:
-          platform: ubuntu-24.04_armv8
-          python_version: "3.14"
-          debug: "true"
-
-      - name: Download macOS arm64 Debug Artifact (3.13)
-        uses: ./.github/actions/download
-        with:
-          platform: macos-15_arm64
-          python_version: "3.13"
-          debug: "true"
-
-      - name: Download macOS arm64 Debug Artifact (3.14)
-        uses: ./.github/actions/download
-        with:
-          platform: macos-15_arm64
-          python_version: "3.14"
-          debug: "true"
 
       - name: Env to output
         run: |
