@@ -17,10 +17,8 @@
 
 ## ビルド
 
-uv run python3 run.py でアーキテクチャを指定する。
-
 ```bash
-uv run python3 run.py macos_arm64
+make wheel
 ```
 
 ## テスト実行
@@ -28,7 +26,7 @@ uv run python3 run.py macos_arm64
 uv run pytest を利用する。
 
 ```bash
-uv run pytest test/test_rtp_depacketizer.py
+make test
 ```
 
 ## libdatachannel ソース
