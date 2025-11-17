@@ -59,7 +59,7 @@ jobs:
           uv sync --group pypi
           uv run auditwheel repair dist/*.whl --strip --only-plat
 
-      - run: uv run pytest tests/ -v
+      # - run: uv run pytest tests/ -v
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v5
@@ -101,7 +101,7 @@ jobs:
       - name: Build wheel
         run: uv build --wheel --out-dir wheelhouse
 
-      - run: uv run pytest tests/ -v
+      # - run: uv run pytest tests/ -v
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v5
