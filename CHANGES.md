@@ -11,6 +11,11 @@
 
 ## develop
 
+- [CHANGE] 音声/映像関連の機能を削除
+  - webcodecs-py を利用するように変更
+  - @voluntas
+- [CHANGE] ビルド方法を scikit-build-core に切り替える
+  - @voluntas
 - [UPDATE] build_pyi ジョブを matrix 化し Python バージョンごとに pyi を生成
   - Python 3.13 と 3.14 の両方で pyi を生成するように変更
   - 各ビルドジョブで対応する Python バージョンの pyi をダウンロード
