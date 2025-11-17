@@ -23,9 +23,8 @@ make wheel
 
 ## テスト実行
 
-uv run pytest を利用する。
-
 ```bash
+uv sync
 make test
 ```
 
