@@ -39,7 +39,6 @@ build-dir = "_build"
 [tool.scikit-build.cmake]
 version = ">=4.1"
 define = { "CMAKE_CXX_STANDARD" = "20" }
-args = ["-DBUILD_TESTING=OFF"]
 
 [tool.scikit-build.build]
 verbose = false
