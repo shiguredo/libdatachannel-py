@@ -6,8 +6,7 @@ if(NOT APPLE AND NOT UNIX AND NOT WIN32)
   message(FATAL_ERROR "This package supports macOS, Linux (Ubuntu), and Windows.")
 endif()
 
-# レイアウト: ExternalProject の依存関係は _deps 配下で管理
-# SKBUILD_PROJECT_DIR が利用可能な場合は使用（scikit-build-core）、そうでなければ CMAKE_CURRENT_SOURCE_DIR にフォールバック
+# ExternalProject の依存関係は _deps 配下で管理
 if(DEFINED SKBUILD_PROJECT_DIR)
   set(PROJECT_ROOT "${SKBUILD_PROJECT_DIR}")
 else()
@@ -189,9 +188,6 @@ if(APPLE)
   target_link_libraries(libdatachannel_ext
     PRIVATE
       "-framework CoreFoundation"
-      "-framework CoreVideo"
-      "-framework CoreMedia"
-      "-framework VideoToolbox"
   )
 elseif(WIN32)
   # 文字コードを utf-8 として扱うのと、シンボルテーブル数を増やす
