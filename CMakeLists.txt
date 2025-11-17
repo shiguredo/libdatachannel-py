@@ -9,7 +9,6 @@ project(libdatachannel-py)
 
 list(APPEND CMAKE_PREFIX_PATH
   ${OPUS_DIR}/lib/cmake
-  ${LIBJPEG_TURBO_DIR}/lib/cmake
 )
 
 if (NOT CMAKE_CROSSCOMPILING)
@@ -53,7 +52,6 @@ set(LIBDATACHANNEL_DIR "" CACHE PATH "libdatachannel のルートディレクト
 
 find_package(nanobind CONFIG REQUIRED)
 find_package(Opus REQUIRED)
-find_package(libjpeg-turbo REQUIRED)
 
 add_subdirectory(${LIBDATACHANNEL_DIR} libdatachannel EXCLUDE_FROM_ALL)
 add_subdirectory(${LIBDATACHANNEL_DIR}/deps/json json EXCLUDE_FROM_ALL)
@@ -63,16 +61,12 @@ nanobind_add_module(
   NB_STATIC
   src/aom_video_decoder.cpp
   src/aom_video_encoder.cpp
-  src/audio_codec.cpp
-  src/bind_codec.cpp
   src/bind_libdatachannel.cpp
-  src/bind_libyuv.cpp
   src/libdatachannel_ext.cpp
   src/openh264_video_encoder.cpp
   src/openh264_video_decoder.cpp
   src/opus_audio_encoder.cpp
   src/opus_audio_decoder.cpp
-  src/video_codec.cpp
   src/videotoolbox_video_encoder.cpp
 )
 
@@ -84,20 +78,6 @@ if (LIBDATACHANNEL_PY_GEN_PYI)
     PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
     DEPENDS libdatachannel_ext
     MARKER_FILE py.typed
-  )
-  nanobind_add_stub(
-    libdatachannel_ext_codec_stub
-    MODULE libdatachannel_ext.codec
-    OUTPUT codec/__init__.pyi
-    PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
-    DEPENDS libdatachannel_ext
-  )
-  nanobind_add_stub(
-    libdatachannel_ext_libyuv_stub
-    MODULE libdatachannel_ext.libyuv
-    OUTPUT libyuv/__init__.pyi
-    PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
-    DEPENDS libdatachannel_ext
   )
 endif()
 
@@ -144,17 +124,6 @@ target_link_libraries(libdatachannel_ext
     $<BUILD_INTERFACE:plog::plog>
 )
 target_link_libraries(nanobind-static PRIVATE LibDataChannel::LibDataChannelStatic)
-
-# libyuv には cmake 用の設定が無いので直接指定する
-target_include_directories(libdatachannel_ext
-  PRIVATE
-    ${LIBYUV_DIR}/include
-)
-target_link_libraries(libdatachannel_ext
-  PRIVATE
-    ${LIBYUV_DIR}/lib/libyuv.a
-    libjpeg-turbo::turbojpeg-static
-)
 
 # AOM も同様
 target_include_directories(libdatachannel_ext
