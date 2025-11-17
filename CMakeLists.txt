@@ -89,7 +89,10 @@ else()
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     BUILD_COMMAND ${CMAKE_COMMAND} --build ${MBEDTLS_BUILD_DIR} --config Release --parallel ${PARALLEL_JOBS}
     INSTALL_COMMAND ${CMAKE_COMMAND} --build ${MBEDTLS_BUILD_DIR} --config Release --target install
-    BUILD_BYPRODUCTS ${MBEDTLS_LIB}
+    BUILD_BYPRODUCTS
+      ${MBEDTLS_LIB}
+      ${MBEDTLS_INSTALL_DIR}/lib/libmbedx509.a
+      ${MBEDTLS_INSTALL_DIR}/lib/libmbedcrypto.a
   )
 endif()
 
@@ -138,7 +141,11 @@ else()
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     BUILD_COMMAND ${CMAKE_COMMAND} --build ${LIBDATACHANNEL_BUILD_DIR} --config Release --parallel ${PARALLEL_JOBS}
     INSTALL_COMMAND ${CMAKE_COMMAND} --build ${LIBDATACHANNEL_BUILD_DIR} --config Release --target install
-    BUILD_BYPRODUCTS ${LIBDATACHANNEL_LIB}
+    BUILD_BYPRODUCTS
+      ${LIBDATACHANNEL_LIB}
+      ${LIBDATACHANNEL_INSTALL_DIR}/lib/libjuice.a
+      ${LIBDATACHANNEL_INSTALL_DIR}/lib/libsrtp2.a
+      ${LIBDATACHANNEL_INSTALL_DIR}/lib/libusrsctp.a
     DEPENDS mbedtls_build
   )
 endif()
