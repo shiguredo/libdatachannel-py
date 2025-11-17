@@ -4,6 +4,7 @@ __pycache__
 /_source
 /_build
 /_install
+/_deps
 /src/libdatachannel/*.so
 /src/libdatachannel/*.dll
 /src/libdatachannel/*.pyd
