@@ -30,6 +30,10 @@ dev = [{ include-group = "test" }, { include-group = "lint" }]
 test = ["pytest", "pytest-aiohttp", "pytest-timeout", "numpy", "hypothesis", "aiohttp"]
 lint = ["ruff", "ty"]
 pypi = ["auditwheel", "patchelf"]
+example = [
+    "blend2d-py>=2025.2.0",
+    "webcodecs-py>=2025.1.0.dev1",
+]
 
 [tool.scikit-build]
 minimum-version = "0.11"

@@ -61,7 +61,7 @@ class WHEPClient:
         # OpenCV display
         self.window_name = "WHEP Video"
         self.frame_queue = queue.Queue(maxsize=10) if display_video else None
-        
+
         # Running flag
         self.running = True
 
@@ -526,7 +526,7 @@ def display_frames(client: WHEPClient):
 
     frame_count = 0
     window_closed = False
-    
+
     while True:
         try:
             # Get frame from queue with timeout
@@ -548,7 +548,7 @@ def display_frames(client: WHEPClient):
             if key == ord("q") or key == 27:  # 27 is ESC key
                 logger.info("User pressed 'q' or ESC, stopping display")
                 break
-                
+
             # Check if window was closed
             try:
                 if cv2.getWindowProperty(client.window_name, cv2.WND_PROP_VISIBLE) < 1:
@@ -567,7 +567,7 @@ def display_frames(client: WHEPClient):
             if key == ord("q") or key == 27:  # 27 is ESC key
                 logger.info("User pressed 'q' or ESC while waiting, stopping display")
                 break
-                
+
             # Check if window was closed
             try:
                 if cv2.getWindowProperty(client.window_name, cv2.WND_PROP_VISIBLE) < 1:
@@ -579,7 +579,7 @@ def display_frames(client: WHEPClient):
                 logger.info("Window no longer exists")
                 window_closed = True
                 break
-                
+
         except Exception as e:
             logger.error(f"Error displaying frame: {e}")
             import traceback
@@ -590,7 +590,7 @@ def display_frames(client: WHEPClient):
     if not window_closed:
         cv2.destroyAllWindows()
     logger.info("Display finished")
-    
+
     # Return True if window was closed (to signal main to exit)
     return window_closed
 
@@ -616,14 +616,14 @@ def main():
 
     try:
         client.connect()
-        
+
         if args.display:
             if not args.openh264:
                 logger.error("--openh264 is required when --display is specified")
                 return
 
             logger.info("Display mode enabled")
-            
+
             # Start receive in a thread
             def receive_thread():
                 try:
@@ -634,12 +634,12 @@ def main():
                     handle_error("receiving frames", e)
                 finally:
                     client.running = False
-            
+
             # Start receiver thread
             receiver = threading.Thread(target=receive_thread)
             receiver.daemon = True
             receiver.start()
-            
+
             # Display frames on main thread (required for macOS)
             try:
                 window_closed = display_frames(client)
@@ -649,15 +649,15 @@ def main():
                 logger.info("\nInterrupted by user (Ctrl+C)")
             finally:
                 client.running = False
-                
+
             # Wait a bit for receiver to finish
             receiver.join(timeout=2.0)
-            
+
         else:
             # No display mode
             logger.info("Display mode disabled")
             client.receive_frames(args.duration)
-            
+
     except KeyboardInterrupt:
         logger.info("\nInterrupted by user (Ctrl+C)")
     except Exception as e:
