@@ -1,6 +1,23 @@
+"""
+WHIP (WebRTC-HTTP Ingestion Protocol) クライアント
+
+webcodecs-py でエンコードして libdatachannel-py で WHIP 配信します。
+
+使い方:
+    # テストパターンで配信
+    uv run python examples/whip.py --url https://example.com/whip/channel
+
+    # カメラとマイクを使用
+    uv run python examples/whip.py --url https://example.com/whip/channel --camera --microphone
+
+    # H.265 で配信
+    uv run python examples/whip.py --url https://example.com/whip/channel --codec h265
+"""
+
 import argparse
 import logging
 import queue
+import random
 import threading
 import time
 from typing import Optional
@@ -12,10 +29,32 @@ import numpy as np
 import sounddevice as sd
 from wish import handle_error, parse_link_header
 
+# webcodecs-py
+from webcodecs import (
+    AudioData,
+    AudioDataInit,
+    AudioEncoder,
+    AudioEncoderConfig,
+    AudioSampleFormat,
+    EncodedAudioChunk,
+    EncodedVideoChunk,
+    HardwareAccelerationEngine,
+    LatencyMode,
+    VideoEncoder,
+    VideoEncoderConfig,
+    VideoFrame,
+    VideoFrameBufferInit,
+    VideoPixelFormat,
+)
+
+# libdatachannel-py
 from libdatachannel import (
     AV1RtpPacketizer,
     Configuration,
     Description,
+    H264RtpPacketizer,
+    H265RtpPacketizer,
+    NalUnit,
     OpusRtpPacketizer,
     PeerConnection,
     PliHandler,
@@ -23,21 +62,6 @@ from libdatachannel import (
     RtcpSrReporter,
     RtpPacketizationConfig,
     Track,
-)
-from libdatachannel.codec import (
-    AudioCodecType,
-    AudioEncoder,
-    AudioFrame,
-    ImageFormat,
-    VideoCodecType,
-    VideoEncoder,
-    VideoFrame,
-    VideoFrameBufferI420,
-    create_aom_video_encoder,
-    create_opus_audio_encoder,
-)
-from libdatachannel.libyuv import (
-    rgb24_to_i420,
 )
 
 logging.basicConfig(
@@ -47,17 +71,28 @@ logger = logging.getLogger(__name__)
 
 
 class WHIPClient:
-    """Minimal WHIP client for sending test video and audio"""
+    """WHIP クライアント（webcodecs-py ベース）"""
 
-    def __init__(self, whip_url: str, bearer_token: Optional[str] = None):
+    def __init__(
+        self,
+        whip_url: str,
+        bearer_token: Optional[str] = None,
+        codec: str = "h264",
+        use_camera: bool = False,
+        use_microphone: bool = False,
+    ):
         self.whip_url = whip_url
         self.bearer_token = bearer_token
+        self.codec = codec.lower()
+        self.use_camera = use_camera
+        self.use_microphone = use_microphone
+
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
         self.audio_track: Optional[Track] = None
         self.session_url: Optional[str] = None
 
-        # Encoders
+        # webcodecs Encoders
         self.video_encoder: Optional[VideoEncoder] = None
         self.audio_encoder: Optional[AudioEncoder] = None
 
@@ -68,226 +103,79 @@ class WHIPClient:
         self.audio_sr_reporter = None
         self.pli_handler = None
         self.nack_responder = None
+        self.video_config: Optional[RtpPacketizationConfig] = None
+        self.audio_config: Optional[RtpPacketizationConfig] = None
 
         # Frame counters
         self.video_frame_number = 0
-        self.audio_timestamp_ms = 0
+        self.audio_frame_number = 0
+        self.encoded_video_count = 0
+        self.encoded_audio_count = 0
 
         # Video settings
-        self.video_width = 1280
-        self.video_height = 720
-        self.video_fps = 30
+        self.video_width = 1920
+        self.video_height = 1080
+        self.video_fps = 60
 
         # Audio settings
         self.audio_sample_rate = 48000
         self.audio_channels = 2
+        self.audio_frame_size = 960  # 20ms @ 48kHz
 
-        # Key frame interval settings
-        self.key_frame_interval_seconds = 2.0
-        self.last_key_frame_time = None
-        self.key_frame_count = 0
+        # Key frame interval
+        self.key_frame_interval_frames = self.video_fps * 2  # 2秒ごと
 
-        # Camera and audio capture
+        # Camera capture
         self.camera = None
         self.camera_thread = None
-        self.audio_thread = None
-        self.audio_queue = queue.Queue(maxsize=10)  # Reduce buffer to minimize latency
-        self.video_queue = queue.Queue(maxsize=30)
+        self.video_queue: queue.Queue = queue.Queue(maxsize=30)
         self.capture_active = False
 
-        # Debug counters
-        self._audio_callback_count = 0
-        self._mic_callback_count = 0
-        self._audio_send_count = 0
-        self._last_audio_send_time = None
+        # Audio capture
+        self.audio_stream = None
+        self.audio_queue: queue.Queue = queue.Queue(maxsize=50)
 
-        # Audio accumulation buffer for 10ms blocks
-        self.audio_accumulator = []
+        # Test pattern state
+        self.pattern_seed = 0
 
-    # def _create_black_i420_buffer(self) -> VideoFrameBufferI420:
-    #     """Create a black I420 video buffer"""
-    #     buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
-
-    #     # Fill with black (Y=16, U=128, V=128)
-    #     buffer.y = np.full((self.video_height, buffer.stride_y()), 16, dtype=np.uint8)
-    #     buffer.u = np.full((self.video_height // 2, buffer.stride_u()), 128, dtype=np.uint8)
-    #     buffer.v = np.full((self.video_height // 2, buffer.stride_v()), 128, dtype=np.uint8)
-
-    #     return buffer
-
-    def _create_pattern_i420_buffer(self) -> VideoFrameBufferI420:
-        """Create a patterned I420 video buffer that changes with each key frame"""
-        buffer: VideoFrameBufferI420 = VideoFrameBufferI420.create(
-            self.video_width, self.video_height
-        )
-
-        import random
-
-        # Random gradient direction and color every key frame
-        random.seed(self.key_frame_count)
-        direction: str = random.choice(["horizontal", "vertical", "diagonal"])
-
-        # Random RGB colors for gradient start and end
-        # Generate two random colors
-        r1, g1, b1 = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
-        r2, g2, b2 = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
-
-        # Convert RGB to YUV using standard conversion
-        # Y = 0.299*R + 0.587*G + 0.114*B
-        # U = -0.169*R - 0.331*G + 0.5*B + 128
-        # V = 0.5*R - 0.419*G - 0.081*B + 128
-        y1 = int(0.299 * r1 + 0.587 * g1 + 0.114 * b1)
-        u1 = int(-0.169 * r1 - 0.331 * g1 + 0.5 * b1 + 128)
-        v1 = int(0.5 * r1 - 0.419 * g1 - 0.081 * b1 + 128)
-
-        y2 = int(0.299 * r2 + 0.587 * g2 + 0.114 * b2)
-        u2 = int(-0.169 * r2 - 0.331 * g2 + 0.5 * b2 + 128)
-        v2 = int(0.5 * r2 - 0.419 * g2 - 0.081 * b2 + 128)
-
-        # Clamp values to valid range
-        y1, y2 = np.clip([y1, y2], 16, 235)
-        u1, u2 = np.clip([u1, u2], 16, 240)
-        v1, v2 = np.clip([v1, v2], 16, 240)
-
-        # Create gradient for Y channel
-        if direction == "horizontal":
-            # Gradient from left to right
-            y_gradient = np.linspace(y1, y2, self.video_width, dtype=np.uint8)
-            buffer.y[: self.video_height, : self.video_width] = y_gradient
-
-            # Color gradient for U and V (subsampled by 2)
-            u_gradient = np.linspace(u1, u2, self.video_width // 2, dtype=np.uint8)
-            v_gradient = np.linspace(v1, v2, self.video_width // 2, dtype=np.uint8)
-            buffer.u[: self.video_height // 2, : self.video_width // 2] = u_gradient
-            buffer.v[: self.video_height // 2, : self.video_width // 2] = v_gradient
-
-        elif direction == "vertical":
-            # Gradient from top to bottom
-            y_gradient = np.linspace(y1, y2, self.video_height, dtype=np.uint8).reshape(-1, 1)
-            buffer.y[: self.video_height, : self.video_width] = y_gradient
-
-            # Color gradient for U and V (subsampled by 2)
-            u_gradient = np.linspace(u1, u2, self.video_height // 2, dtype=np.uint8).reshape(-1, 1)
-            v_gradient = np.linspace(v1, v2, self.video_height // 2, dtype=np.uint8).reshape(-1, 1)
-            buffer.u[: self.video_height // 2, : self.video_width // 2] = u_gradient
-            buffer.v[: self.video_height // 2, : self.video_width // 2] = v_gradient
-
-        else:  # diagonal
-            # Gradient from top-left to bottom-right
-            x_grad = np.linspace(0, 1, self.video_width)
-            y_grad = np.linspace(0, 1, self.video_height).reshape(-1, 1)
-            diagonal = (x_grad + y_grad) / 2
-            buffer.y[: self.video_height, : self.video_width] = (y1 + (y2 - y1) * diagonal).astype(
-                np.uint8
-            )
-
-            # Color gradient for U and V (subsampled by 2)
-            x_grad_half = np.linspace(0, 1, self.video_width // 2)
-            y_grad_half = np.linspace(0, 1, self.video_height // 2).reshape(-1, 1)
-            diagonal_half = (x_grad_half + y_grad_half) / 2
-            buffer.u[: self.video_height // 2, : self.video_width // 2] = (
-                u1 + (u2 - u1) * diagonal_half
-            ).astype(np.uint8)
-            buffer.v[: self.video_height // 2, : self.video_width // 2] = (
-                v1 + (v2 - v1) * diagonal_half
-            ).astype(np.uint8)
-
-        # Fill padding if stride is larger than width
-        if buffer.stride_y() > self.video_width:
-            buffer.y[:, self.video_width : buffer.stride_y()] = 16
-        if buffer.stride_u() > self.video_width // 2:
-            buffer.u[:, self.video_width // 2 : buffer.stride_u()] = 128
-        if buffer.stride_v() > self.video_width // 2:
-            buffer.v[:, self.video_width // 2 : buffer.stride_v()] = 128
-
-        # Log the colors for debugging
-        if self.key_frame_count % 5 == 0:  # Log every 5th keyframe
-            logger.info(
-                f"Gradient colors: RGB1({r1},{g1},{b1}) -> RGB2({r2},{g2},{b2}), direction: {direction}"
-            )
-
-        return buffer
-
-    def _check_and_request_keyframe(self):
-        """Check if it's time to request a key frame"""
-        current_time = time.time()
-        if self.last_key_frame_time is None:
-            self.last_key_frame_time = current_time
-
-        time_since_last_key = current_time - self.last_key_frame_time
-        if time_since_last_key >= self.key_frame_interval_seconds:
-            logger.debug(
-                f"Requesting key frame #{self.key_frame_count} (time since last: {time_since_last_key:.2f}s)"
-            )
-            try:
-                # video_encoder must be initialized before requesting keyframe
-                if not self.video_encoder:
-                    raise RuntimeError("Video encoder is not initialized")
-                self.video_encoder.force_intra_next_frame()
-                self.key_frame_count += 1
-            except Exception as e:
-                handle_error("requesting keyframe", e)
-            self.last_key_frame_time = current_time
-
-    def connect(self):
-        """Connect to WHIP server"""
+    def connect(self) -> None:
+        """WHIP サーバーに接続"""
         logger.info(f"Connecting to WHIP endpoint: {self.whip_url}")
 
-        # Create peer connection
+        # PeerConnection を作成
         config = Configuration()
-        # No default ICE servers - will use TURN from Link header
         config.ice_servers = []
-
-        # Try to disable auto gathering if available (for later adding ICE servers from Link header)
-        if hasattr(config, "disable_auto_gathering"):
-            config.disable_auto_gathering = True
-
         self.pc = PeerConnection(config)
 
-        # Add audio track FIRST (before video)
+        # オーディオトラックを追加
         audio_desc = Description.Audio("audio", Description.Direction.SendOnly)
-        # Opus codec with proper parameters
-        # Default: maxplaybackrate=48000;stereo=1;sprop-stereo=1;minptime=10;ptime=20;useinbandfec=1;usedtx=0
         audio_desc.add_opus_codec(111)
-        # Log the actual audio description
-        logger.info("Audio description created with Opus codec")
         self.audio_track = self.pc.add_track(audio_desc)
 
-        # Add video track SECOND (after audio)
+        # ビデオトラックを追加
         video_desc = Description.Video("video", Description.Direction.SendOnly)
-        video_desc.add_av1_codec(35)
+        if self.codec == "av1":
+            video_desc.add_av1_codec(35)
+        elif self.codec == "h265":
+            video_desc.add_h265_codec(97)
+        else:
+            video_desc.add_h264_codec(96)
         self.video_track = self.pc.add_track(video_desc)
-        logger.info("Audio track added with Opus codec (PT=111)")
-        logger.info(f"Audio track state after adding: is_open={self.audio_track.is_open()}")
 
-        # Set up encoders
+        # エンコーダーをセットアップ
         self._setup_video_encoder()
         self._setup_audio_encoder()
 
-        # Create offer
+        # SDP オファーを生成
         self.pc.set_local_description()
-
-        # Get local SDP
         local_sdp = self.pc.local_description()
         if not local_sdp:
-            raise Exception("Failed to create offer")
+            raise RuntimeError("Failed to create offer")
 
-        # Log SDP for debugging
-        # Log SDP media sections order
-        sdp_lines = str(local_sdp).split("\n")
-        media_lines = [line.strip() for line in sdp_lines if line.startswith("m=")]
-        logger.info(f"SDP media sections order: {media_lines}")
-        audio_lines = [
-            line.strip() for line in sdp_lines if "opus" in line.lower() or "a=rtpmap:111" in line
-        ]
-        logger.info(f"SDP audio codec lines: {audio_lines}")
-
-        # Send offer to WHIP server
+        # WHIP サーバーにオファーを送信
         logger.info("Sending offer to WHIP server...")
         with httpx.Client(timeout=10.0) as client:
-            headers = {
-                "Content-Type": "application/sdp",
-            }
+            headers = {"Content-Type": "application/sdp"}
             if self.bearer_token:
                 headers["Authorization"] = f"Bearer {self.bearer_token}"
 
@@ -299,536 +187,301 @@ class WHIPClient:
             )
 
             if response.status_code != 201:
-                raise Exception(f"WHIP server returned {response.status_code}: {response.text}")
+                raise RuntimeError(f"WHIP server returned {response.status_code}: {response.text}")
 
-            # Get session URL
+            # セッション URL を取得
             self.session_url = response.headers.get("Location")
             if self.session_url and not self.session_url.startswith("http"):
                 self.session_url = urljoin(self.whip_url, self.session_url)
 
-            # Parse Link header for ICE servers
+            # Link ヘッダーから ICE サーバーを取得
             link_header = response.headers.get("Link")
             if link_header:
                 ice_servers = parse_link_header(link_header)
                 if ice_servers:
                     logger.info(f"Found {len(ice_servers)} ICE server(s) in Link header")
-                    # Try to add ICE servers if method is available
-                    if hasattr(self.pc, "gather_local_candidates"):
-                        self.pc.gather_local_candidates(ice_servers)
-                    else:
-                        logger.warning("Cannot add ICE servers after PeerConnection creation")
 
-            # Set remote SDP
+            # リモート SDP を設定
             answer = Description(response.text, Description.Type.Answer)
             self.pc.set_remote_description(answer)
 
         logger.info("Connected to WHIP server")
 
-    def _setup_video_encoder(self):
-        """Set up AV1 video encoder"""
-        self.video_encoder = create_aom_video_encoder()
+    def _setup_video_encoder(self) -> None:
+        """webcodecs-py ビデオエンコーダーをセットアップ"""
 
-        settings = VideoEncoder.Settings()
-        settings.codec_type = VideoCodecType.AV1
-        settings.width = self.video_width
-        settings.height = self.video_height
-        settings.bitrate = 2500000  # 2 Mbps
-        settings.fps = self.video_fps
+        def on_output(chunk: EncodedVideoChunk) -> None:
+            if self.video_track and self.video_track.is_open():
+                try:
+                    data = np.zeros(chunk.byte_length, dtype=np.uint8)
+                    chunk.copy_to(data)
+                    self.video_track.send(bytes(data))
+                    self.encoded_video_count += 1
+                    if self.encoded_video_count % 60 == 0:
+                        logger.debug(f"Sent encoded video frame #{self.encoded_video_count}")
+                except Exception as e:
+                    handle_error("sending encoded video", e)
 
-        if not self.video_encoder.init(settings):
-            raise Exception("Failed to initialize video encoder")
+        def on_error(error: str) -> None:
+            logger.error(f"Video encoder error: {error}")
 
-        # Set up RTP packetizer
-        video_config = RtpPacketizationConfig(
-            ssrc=1234567, cname="video-stream", payload_type=35, clock_rate=90000
+        self.video_encoder = VideoEncoder(on_output, on_error)
+
+        # エンコーダーを設定
+        if self.codec == "av1":
+            codec_string = "av01.0.04M.08"
+        elif self.codec == "h265":
+            codec_string = "hev1.1.6.L120.B0"
+        else:
+            codec_string = "avc1.64001F"
+
+        encoder_config: VideoEncoderConfig = {
+            "codec": codec_string,
+            "width": self.video_width,
+            "height": self.video_height,
+            "bitrate": 10_000_000,
+            "framerate": float(self.video_fps),
+            "latency_mode": LatencyMode.REALTIME,
+        }
+
+        # H.264/H.265 の場合は VideoToolbox を使用
+        if self.codec == "h264":
+            encoder_config["avc"] = {"format": "annexb"}
+            encoder_config["hardware_acceleration_engine"] = (
+                HardwareAccelerationEngine.APPLE_VIDEO_TOOLBOX
+            )
+        elif self.codec == "h265":
+            encoder_config["hevc"] = {"format": "annexb"}
+            encoder_config["hardware_acceleration_engine"] = (
+                HardwareAccelerationEngine.APPLE_VIDEO_TOOLBOX
+            )
+
+        self.video_encoder.configure(encoder_config)
+        logger.info(f"Video encoder configured: {codec_string}")
+
+        # RTP パケッタイザーをセットアップ
+        if self.codec == "av1":
+            payload_type = 35
+        elif self.codec == "h265":
+            payload_type = 97
+        else:
+            payload_type = 96
+
+        self.video_config = RtpPacketizationConfig(
+            ssrc=random.randint(1, 0xFFFFFFFF),
+            cname="video-stream",
+            payload_type=payload_type,
+            clock_rate=90000,
         )
+        self.video_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
+        self.video_config.timestamp = self.video_config.start_timestamp
+        self.video_config.sequence_number = random.randint(0, 0xFFFF)
 
-        # Initialize RTP timestamps
-        import random
+        if self.codec == "av1":
+            self.video_packetizer = AV1RtpPacketizer(
+                AV1RtpPacketizer.Packetization.TemporalUnit, self.video_config
+            )
+        elif self.codec == "h265":
+            self.video_packetizer = H265RtpPacketizer(
+                NalUnit.Separator.LongStartSequence,
+                self.video_config,
+                1200,
+            )
+        else:
+            self.video_packetizer = H264RtpPacketizer(
+                NalUnit.Separator.LongStartSequence,
+                self.video_config,
+                1200,
+            )
 
-        video_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
-        video_config.timestamp = video_config.start_timestamp
-        video_config.sequence_number = random.randint(0, 0xFFFF)
-
-        # Store config for later use
-        self.video_config = video_config
-
-        logger.info(
-            f"Video RTP config: SSRC={video_config.ssrc}, "
-            f"cname={video_config.cname}, payload_type={video_config.payload_type}, "
-            f"clock_rate={video_config.clock_rate}, "
-            f"initial_timestamp={video_config.timestamp}, initial_seq={video_config.sequence_number}"
-        )
-
-        self.video_packetizer = AV1RtpPacketizer(
-            AV1RtpPacketizer.Packetization.TemporalUnit, video_config
-        )
-
-        # Add RTCP SR reporter
-        self.video_sr_reporter = RtcpSrReporter(video_config)
+        # RTCP SR reporter
+        self.video_sr_reporter = RtcpSrReporter(self.video_config)
         self.video_packetizer.add_to_chain(self.video_sr_reporter)
 
-        # Add PLI handler
+        # PLI handler
         def on_pli():
-            logger.info("PLI received - Picture Loss Indication")
+            logger.info("PLI received - requesting keyframe")
 
         self.pli_handler = PliHandler(on_pli)
         self.video_packetizer.add_to_chain(self.pli_handler)
 
-        # Add NACK responder for retransmission
+        # NACK responder
         self.nack_responder = RtcpNackResponder()
         self.video_packetizer.add_to_chain(self.nack_responder)
-        logger.info("NACK responder added for video track")
 
-        # Set packetizer on track
-        if not self.video_track:
-            raise RuntimeError("Video track not initialized")
-        self.video_track.set_media_handler(self.video_packetizer)
+        if self.video_track:
+            self.video_track.set_media_handler(self.video_packetizer)
 
-        # Set encoder callback
-        def on_encoded(encoded_image):
-            if self.video_track and self.video_track.is_open():
+    def _setup_audio_encoder(self) -> None:
+        """webcodecs-py オーディオエンコーダーをセットアップ"""
+
+        def on_output(chunk: EncodedAudioChunk) -> None:
+            if self.audio_track and self.audio_track.is_open():
                 try:
-                    data = encoded_image.data.tobytes()
-                    self.video_track.send(data)
-                except Exception as e:
-                    handle_error("sending encoded video", e)
-
-        self.video_encoder.set_on_encode(on_encoded)
-
-    def _setup_audio_encoder(self):
-        """Set up Opus audio encoder"""
-        logger.info("Setting up audio encoder...")
-        self.audio_encoder = create_opus_audio_encoder()
-
-        settings = AudioEncoder.Settings()
-        settings.codec_type = AudioCodecType.OPUS
-        settings.sample_rate = self.audio_sample_rate
-        settings.channels = self.audio_channels
-        settings.bitrate = 96000  # 96 kbps
-        settings.frame_duration_ms = 20
-
-        # Note: Opus encoder is configured with these settings
-
-        logger.info(
-            f"Audio encoder settings: sample_rate={settings.sample_rate}, "
-            f"channels={settings.channels}, bitrate={settings.bitrate}, "
-            f"frame_duration_ms={settings.frame_duration_ms}"
-        )
-
-        if not self.audio_encoder.init(settings):
-            raise Exception("Failed to initialize audio encoder")
-        logger.info("Audio encoder initialized successfully")
-
-        # Set up RTP packetizer
-        audio_config = RtpPacketizationConfig(
-            ssrc=7654321, cname="audio-stream", payload_type=111, clock_rate=48000
-        )
-
-        # Initialize RTP timestamps
-        import random
-
-        audio_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
-        audio_config.timestamp = audio_config.start_timestamp
-        audio_config.sequence_number = random.randint(0, 0xFFFF)
-
-        # Store config for later use
-        self.audio_config = audio_config
-
-        # Track last audio timestamp for duration calculation
-        self.last_audio_timestamp_us = 0
-
-        logger.info(
-            f"Audio RTP config: SSRC={audio_config.ssrc}, "
-            f"cname={audio_config.cname}, payload_type={audio_config.payload_type}, "
-            f"clock_rate={audio_config.clock_rate}, "
-            f"initial_timestamp={audio_config.timestamp}, initial_seq={audio_config.sequence_number}"
-        )
-
-        self.audio_packetizer = OpusRtpPacketizer(audio_config)
-        logger.info("OpusRtpPacketizer created")
-
-        # Add RTCP SR reporter
-        self.audio_sr_reporter = RtcpSrReporter(audio_config)
-        self.audio_packetizer.add_to_chain(self.audio_sr_reporter)
-        logger.info("RTCP SR reporter added to audio chain")
-
-        # Set packetizer on track
-        if not self.audio_track:
-            raise RuntimeError("Audio track not initialized")
-
-        # Log track state before setting handler
-        logger.info(
-            f"Audio track state before set_media_handler: is_open={self.audio_track.is_open()}"
-        )
-
-        self.audio_track.set_media_handler(self.audio_packetizer)
-        logger.info("Audio packetizer set on track")
-
-        # Log track state after setting handler
-        logger.info(
-            f"Audio track state after set_media_handler: is_open={self.audio_track.is_open()}"
-        )
-
-        # Set encoder callback
-        def on_encoded(encoded_audio):
-            # Use info level for first few callbacks to ensure visibility
-            if not hasattr(self, "_audio_callback_count"):
-                self._audio_callback_count = 0
-            self._audio_callback_count += 1
-
-            log_level = logging.INFO if self._audio_callback_count <= 10 else logging.DEBUG
-
-            # Calculate timestamp in microseconds
-            timestamp_us = int(encoded_audio.timestamp.total_seconds() * 1000000)
-
-            logger.log(
-                log_level,
-                f"Audio on_encoded callback #{self._audio_callback_count}: "
-                f"data size={len(encoded_audio.data)}, timestamp={timestamp_us}us",
-            )
-
-            # Log first few bytes of encoded data for debugging
-            if self._audio_callback_count <= 5:
-                data_bytes = encoded_audio.data.tobytes()
-                first_bytes = " ".join(f"{b:02x}" for b in data_bytes[: min(20, len(data_bytes))])
-                logger.info(f"First bytes of encoded Opus data: {first_bytes}")
-                logger.info(
-                    f"Encoded data size: {len(data_bytes)} bytes (expected ~120-400 bytes for 20ms @ 64kbps)"
-                )
-                # Check if this looks like valid Opus data
-                if len(data_bytes) > 0:
-                    toc_byte = data_bytes[0]
-                    logger.info(
-                        f"Opus TOC byte: 0x{toc_byte:02x} (config={toc_byte >> 3}, s={toc_byte >> 2 & 1}, c={toc_byte & 3})"
-                    )
-
-                    # Decode TOC byte according to RFC 6716
-                    config = (toc_byte >> 3) & 0x1F
-                    s = (toc_byte >> 2) & 0x01
-                    c = toc_byte & 0x03
-
-                    # Configuration mode
-                    if config < 12:
-                        mode = "SILK-only"
-                        bandwidth = ["NB", "MB", "WB", "SWB"][config // 3]
-                        frame_size_ms = [10, 20, 40, 60][config % 3]
-                    elif config < 16:
-                        mode = "Hybrid"
-                        bandwidth = ["SWB", "FB"][config - 12] if config < 14 else "FB"
-                        frame_size_ms = [10, 20][config % 2]
-                    else:
-                        mode = "CELT-only"
-                        bandwidth = ["NB", "WB", "SWB", "FB"][config - 16] if config < 20 else "FB"
-                        frame_size_ms = [2.5, 5, 10, 20][config - 16] if config < 20 else 20
-
-                    logger.info(
-                        f"Opus packet: mode={mode}, bandwidth={bandwidth}, "
-                        f"frame_size={frame_size_ms}ms, stereo={s}, frames_per_packet={c + 1}"
-                    )
-
-            # Check track state
-            track_open = self.audio_track and self.audio_track.is_open()
-            if self._audio_callback_count <= 5:
-                logger.info(
-                    f"Audio track state in callback: exists={self.audio_track is not None}, "
-                    f"is_open={track_open}"
-                )
-
-            if track_open:
-                try:
-                    data = encoded_audio.data.tobytes()
-
-                    # Calculate duration since last packet
-                    if self.last_audio_timestamp_us > 0:
-                        duration_us = timestamp_us - self.last_audio_timestamp_us
-                    else:
-                        # First packet, assume 20ms duration
-                        duration_us = 20000  # 20ms in microseconds
-
-                    self.last_audio_timestamp_us = timestamp_us
-
-                    # Convert duration to seconds
-                    elapsed_seconds = duration_us / 1000000.0
-
-                    # Use the built-in method to convert seconds to timestamp increment
-                    elapsed_timestamp = audio_config.seconds_to_timestamp(elapsed_seconds)
-
-                    # Update RTP timestamp
-                    audio_config.timestamp = audio_config.timestamp + elapsed_timestamp
-
-                    if self._audio_callback_count <= 10:
-                        logger.info(
-                            f"Duration: {duration_us}us, elapsed_timestamp: {elapsed_timestamp}, "
-                            f"new RTP timestamp: {audio_config.timestamp}, "
-                            f"sequence_number: {audio_config.sequence_number}"
-                        )
-
-                    # Check if we need to send RTCP SR (similar to reference implementation)
-                    if self.audio_sr_reporter:
-                        # Get elapsed time in clock rate from last RTCP sender report
-                        report_elapsed_timestamp = (
-                            audio_config.timestamp
-                            - self.audio_sr_reporter.last_reported_timestamp()
-                        )
-
-                        # Check if last report was at least 1 second ago
-                        if audio_config.timestamp_to_seconds(report_elapsed_timestamp) > 1:
-                            self.audio_sr_reporter.set_needs_to_report()
-                            if self._audio_callback_count <= 10:
-                                logger.info(
-                                    f"Setting RTCP SR needs to report flag (elapsed: {audio_config.timestamp_to_seconds(report_elapsed_timestamp):.2f}s)"
-                                )
-
-                    result = self.audio_track.send(data)
-                    if self._audio_callback_count <= 10:
-                        logger.info(f"track.send() returned: {result} (sent {len(data)} bytes)")
-                    else:
-                        logger.log(
-                            log_level,
-                            f"Sent audio data to track: {len(data)} bytes, result={result}",
-                        )
+                    data = np.zeros(chunk.byte_length, dtype=np.uint8)
+                    chunk.copy_to(data)
+                    self.audio_track.send(bytes(data))
+                    self.encoded_audio_count += 1
+                    if self.encoded_audio_count % 100 == 0:
+                        logger.debug(f"Sent encoded audio frame #{self.encoded_audio_count}")
                 except Exception as e:
                     handle_error("sending encoded audio", e)
-            else:
-                logger.warning("Audio track not open, cannot send data")
 
-        self.audio_encoder.set_on_encode(on_encoded)
-        logger.info("Audio encoder callback set")
+        def on_error(error: str) -> None:
+            logger.error(f"Audio encoder error: {error}")
 
-    def _capture_camera(self):
-        """Capture video from camera"""
-        logger.info("Starting camera capture...")
+        self.audio_encoder = AudioEncoder(on_output, on_error)
 
-        # Open camera (0 for default camera)
+        encoder_config: AudioEncoderConfig = {
+            "codec": "opus",
+            "sample_rate": self.audio_sample_rate,
+            "number_of_channels": self.audio_channels,
+            "bitrate": 128000,
+        }
+        self.audio_encoder.configure(encoder_config)
+        logger.info("Audio encoder configured: Opus")
+
+        # RTP パケッタイザーをセットアップ
+        self.audio_config = RtpPacketizationConfig(
+            ssrc=random.randint(1, 0xFFFFFFFF),
+            cname="audio-stream",
+            payload_type=111,
+            clock_rate=48000,
+        )
+        self.audio_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
+        self.audio_config.timestamp = self.audio_config.start_timestamp
+        self.audio_config.sequence_number = random.randint(0, 0xFFFF)
+
+        self.audio_packetizer = OpusRtpPacketizer(self.audio_config)
+
+        self.audio_sr_reporter = RtcpSrReporter(self.audio_config)
+        self.audio_packetizer.add_to_chain(self.audio_sr_reporter)
+
+        if self.audio_track:
+            self.audio_track.set_media_handler(self.audio_packetizer)
+
+    def _start_camera_capture(self) -> None:
+        """カメラキャプチャを開始"""
         self.camera = cv2.VideoCapture(0)
         if not self.camera.isOpened():
             logger.error("Failed to open camera")
             return
 
-        # Set camera properties
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.video_width)
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.video_height)
         self.camera.set(cv2.CAP_PROP_FPS, self.video_fps)
 
-        # Get actual camera properties
         actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-        logger.info(f"Camera opened: {actual_width}x{actual_height} @ {actual_fps} fps")
+        logger.info(f"Camera opened: {actual_width}x{actual_height} @ {actual_fps}fps")
 
-        while self.capture_active:
-            ret, frame = self.camera.read()
-            if ret:
-                try:
-                    self.video_queue.put_nowait(frame)
-                except queue.Full:
-                    # Drop frame if queue is full
-                    pass
-            else:
-                logger.error("Failed to read frame from camera")
-                time.sleep(0.1)
+        # 実際の解像度に合わせる
+        if actual_width != self.video_width or actual_height != self.video_height:
+            self.video_width = actual_width
+            self.video_height = actual_height
+            logger.info(f"Adjusted video size to camera: {self.video_width}x{self.video_height}")
 
-        self.camera.release()
-        logger.info("Camera capture stopped")
+        self.capture_active = True
 
-    def _capture_audio(self):
-        """Capture audio from microphone"""
-        logger.info("Starting audio capture...")
+        def capture_thread():
+            while self.capture_active:
+                ret, frame = self.camera.read()
+                if ret:
+                    try:
+                        self.video_queue.put_nowait(frame)
+                    except queue.Full:
+                        pass  # Drop frame
+                time.sleep(0.001)
 
-        # Audio callback
+        self.camera_thread = threading.Thread(target=capture_thread, daemon=True)
+        self.camera_thread.start()
+
+    def _start_audio_capture(self) -> None:
+        """マイクキャプチャを開始"""
+
         def audio_callback(indata, frames, time_info, status):
-            _ = time_info  # Unused
             if status:
-                logger.warning(f"Audio callback status: {status}")
+                logger.warning(f"Audio capture status: {status}")
+            try:
+                self.audio_queue.put_nowait(indata.copy())
+            except queue.Full:
+                pass
 
-            # Make a copy of the input data to avoid memory issues
-            indata_copy = indata.copy()
+        self.audio_stream = sd.InputStream(
+            samplerate=self.audio_sample_rate,
+            channels=self.audio_channels,
+            dtype=np.float32,
+            blocksize=self.audio_frame_size,
+            callback=audio_callback,
+        )
+        self.audio_stream.start()
+        logger.info(f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch")
 
-            # Debug: log raw input data
-            if not hasattr(self, "_mic_callback_count"):
-                self._mic_callback_count = 0
-            self._mic_callback_count += 1
+    def _generate_test_pattern(self) -> np.ndarray:
+        """テストパターンを生成（BGRA）"""
+        # カラフルなグラデーションパターン
+        frame = np.zeros((self.video_height, self.video_width, 4), dtype=np.uint8)
 
-            # Check if all zeros
-            is_silence = np.allclose(indata_copy, 0.0)
+        # 時間に応じて変化するパターン
+        t = self.video_frame_number / self.video_fps
 
-            if self._mic_callback_count <= 10 or (self._mic_callback_count % 50 == 0):
-                logger.info(
-                    f"[MIC] Callback #{self._mic_callback_count}: indata shape={indata_copy.shape}, "
-                    f"dtype={indata_copy.dtype}, frames={frames}"
-                )
-                logger.info(
-                    f"[MIC] Raw input range: min={indata_copy.min():.6f}, max={indata_copy.max():.6f}, "
-                    f"RMS={np.sqrt(np.mean(indata_copy**2)):.6f}, all_zeros={is_silence}"
-                )
-                # Log some actual samples
-                if indata_copy.shape[0] > 0:
-                    logger.info(f"[MIC] First 10 samples: {indata_copy[:10, 0]}")
-                # Check if input is silence
-                if is_silence:
-                    logger.warning(
-                        "[MIC] Input is all zeros! Check microphone permissions or device selection."
-                    )
+        # 背景グラデーション
+        for y in range(self.video_height):
+            for x in range(self.video_width):
+                r = int(127 + 127 * np.sin(2 * np.pi * (x / self.video_width + t * 0.1)))
+                g = int(127 + 127 * np.sin(2 * np.pi * (y / self.video_height + t * 0.15)))
+                b = int(127 + 127 * np.sin(2 * np.pi * ((x + y) / (self.video_width + self.video_height) + t * 0.2)))
+                frame[y, x] = [b, g, r, 255]
 
-            # Keep original stereo data if available
-            if indata_copy.shape[1] >= 2:
-                # Use first two channels if more than 2 channels
-                stereo_data = indata_copy[:, :2]
-            elif indata_copy.shape[1] == 1:
-                # Convert mono to stereo by duplicating the channel
-                stereo_data = np.column_stack((indata_copy[:, 0], indata_copy[:, 0]))
-            else:
-                logger.error(f"Unexpected audio shape: {indata_copy.shape}")
-                return
+        # 動く円を描画
+        cx = int(self.video_width / 2 + self.video_width / 4 * np.sin(t * 2))
+        cy = int(self.video_height / 2 + self.video_height / 4 * np.cos(t * 2))
+        cv2.circle(frame, (cx, cy), 50, (255, 255, 255, 255), -1)
 
-            # Ensure the data is float32 and contiguous
-            stereo_data = np.ascontiguousarray(stereo_data, dtype=np.float32)
+        return frame
 
-            # Accumulate 10ms blocks to form 20ms frames
-            self.audio_accumulator.append(stereo_data)
+    def _generate_test_audio(self) -> np.ndarray:
+        """テストオーディオを生成（サイン波）"""
+        t = np.linspace(
+            self.audio_frame_number * self.audio_frame_size / self.audio_sample_rate,
+            (self.audio_frame_number + 1) * self.audio_frame_size / self.audio_sample_rate,
+            self.audio_frame_size,
+            dtype=np.float32,
+        )
+        # 440Hz サイン波（左右同じ）
+        mono = np.sin(2 * np.pi * 440 * t) * 0.3
+        stereo = np.column_stack([mono, mono])
+        return stereo
 
-            # Check if we have accumulated 20ms worth of data (2 x 10ms blocks)
-            if len(self.audio_accumulator) >= 2:
-                # Combine the blocks
-                combined_data = np.concatenate(self.audio_accumulator[:2], axis=0)
-                # Remove used blocks
-                self.audio_accumulator = self.audio_accumulator[2:]
-
-                try:
-                    # Try to keep only the latest audio
-                    if self.audio_queue.qsize() >= 2:
-                        # Drop oldest frame if queue is getting full
-                        try:
-                            self.audio_queue.get_nowait()
-                        except queue.Empty:
-                            pass
-
-                    self.audio_queue.put_nowait(combined_data)
-
-                    # Debug: log first few frames
-                    if hasattr(self, "_audio_callback_count"):
-                        self._audio_callback_count += 1
-                    else:
-                        self._audio_callback_count = 1
-
-                    if self._audio_callback_count <= 5:
-                        logger.info(
-                            f"Audio capture callback #{self._audio_callback_count}: "
-                            f"combined_data shape={combined_data.shape}, "
-                            f"min={combined_data.min():.6f}, max={combined_data.max():.6f}"
-                        )
-                except queue.Full:
-                    # Drop audio if queue is full
-                    if self._audio_callback_count % 50 == 0:
-                        logger.warning("Audio queue full, dropping frame")
-
-        # Start audio stream
-        try:
-            # Log available audio devices
-            logger.info("Available audio devices:")
-            devices = sd.query_devices()
-            logger.info(devices)
-
-            # Find default input device
-            default_input = sd.default.device[0]
-            logger.info(f"Default input device index: {default_input}")
-            if default_input is not None and default_input < len(devices):
-                default_device = devices[default_input]
-                logger.info(
-                    f"Default input device: {default_device['name']}, channels: {default_device['max_input_channels']}"
-                )
-                # Log latency information
-                logger.info(
-                    f"Device default latency: low={default_device.get('default_low_input_latency', 'N/A')}s, high={default_device.get('default_high_input_latency', 'N/A')}s"
-                )
-
-            # Check for macOS permission hint
-            import platform
-
-            if platform.system() == "Darwin":
-                logger.info(
-                    "Running on macOS - ensure Terminal/Python has microphone access in System Preferences > Security & Privacy > Privacy > Microphone"
-                )
-
-            # Try with different channel configurations
-            input_channels = 1  # Try mono first
-            if default_input is not None and default_input < len(devices):
-                max_channels = devices[default_input]["max_input_channels"]
-                if max_channels >= 2:
-                    input_channels = 2  # Use stereo if available
-                logger.info(
-                    f"Using {input_channels} input channel(s) (device supports max {max_channels})"
-                )
-
-            with sd.InputStream(
-                samplerate=self.audio_sample_rate,
-                channels=input_channels,  # Use detected channel count
-                callback=audio_callback,
-                blocksize=int(self.audio_sample_rate * 0.01),  # 10ms blocks for lower latency
-                dtype="float32",
-                device=default_input,  # Explicitly use default input device
-                latency="low",  # Request low latency
-            ):
-                logger.info(
-                    f"Audio capture started at {self.audio_sample_rate} Hz with device {default_input}"
-                )
-                while self.capture_active:
-                    time.sleep(0.1)
-        except Exception as e:
-            handle_error("audio capture", e)
-
-        logger.info("Audio capture stopped")
-
-    def send_frames(
-        self, duration: Optional[int] = None, use_camera: bool = False, use_mic: bool = False
-    ):
-        """Send video and audio frames from camera/mic or fake data"""
+    def send_frames(self, duration: Optional[int] = None) -> None:
+        """フレームを送信"""
         if not self.pc:
-            raise RuntimeError("PeerConnection not initialized. Call connect() first.")
+            raise RuntimeError("PeerConnection not initialized")
 
-        # Wait for connection
+        # 接続を待機
         timeout = 10.0
         start_time = time.time()
         while self.pc.state() != PeerConnection.State.Connected:
             if time.time() - start_time > timeout:
-                raise Exception("Connection timeout")
+                raise RuntimeError("Connection timeout")
             time.sleep(0.1)
 
         logger.info("Connection established")
 
-        # Log track states after connection
-        logger.info("Track states after connection:")
+        # キャプチャを開始
+        if self.use_camera:
+            self._start_camera_capture()
+        if self.use_microphone:
+            self._start_audio_capture()
+
         logger.info(
-            f"  Video track: exists={self.video_track is not None}, "
-            f"is_open={self.video_track.is_open() if self.video_track else 'N/A'}"
-        )
-        logger.info(
-            f"  Audio track: exists={self.audio_track is not None}, "
-            f"is_open={self.audio_track.is_open() if self.audio_track else 'N/A'}"
+            f"Sending frames: {self.video_width}x{self.video_height} @ {self.video_fps}fps"
         )
 
-        # Start capture threads if needed
-        if use_camera or use_mic:
-            self.capture_active = True
-
-            if use_camera:
-                self.camera_thread = threading.Thread(target=self._capture_camera)
-                self.camera_thread.start()
-                logger.info("Started camera capture thread")
-
-            if use_mic:
-                self.audio_thread = threading.Thread(target=self._capture_audio)
-                self.audio_thread.start()
-                logger.info("Started audio capture thread")
-
-            # Give capture threads time to start
-            time.sleep(1.0)
-
-        # Frame intervals
-        video_interval = 1.0 / self.video_fps
-        audio_interval = 0.02  # 20ms
-
+        # フレーム送信ループ
+        frame_interval = 1.0 / self.video_fps
+        audio_interval = self.audio_frame_size / self.audio_sample_rate
         start_time = time.time()
         next_video_time = start_time
         next_audio_time = start_time
@@ -837,415 +490,139 @@ class WHIPClient:
             while True:
                 current_time = time.time()
 
-                # Check duration
                 if duration and current_time - start_time >= duration:
                     break
 
-                # Send video frame
+                # ビデオフレーム
                 if current_time >= next_video_time:
-                    if use_camera:
-                        self._send_video_frame()
-                    else:
-                        self._send_fake_video_frame()
-                    next_video_time += video_interval
+                    self._send_video_frame()
+                    next_video_time += frame_interval
 
-                # Send audio frame
+                # オーディオフレーム
                 if current_time >= next_audio_time:
-                    # Debug: log timing
-                    if hasattr(self, "_audio_send_count"):
-                        self._audio_send_count += 1
-                    else:
-                        self._audio_send_count = 1
-
-                    # Log around key frame timing
-                    if self.key_frame_count > 0 and self._audio_send_count % 50 == 0:
-                        time_to_next_keyframe = self.key_frame_interval_seconds - (
-                            current_time - self.last_key_frame_time
-                        )
-                        logger.info(
-                            f"Audio frame #{self._audio_send_count}, time to next keyframe: {time_to_next_keyframe:.2f}s"
-                        )
-
-                    if use_mic:
-                        self._send_audio_frame()
-                    else:
-                        self._send_fake_audio_frame()
+                    self._send_audio_frame()
                     next_audio_time += audio_interval
 
-                # Sleep until next frame
-                next_time = min(next_video_time, next_audio_time)
-                sleep_time = max(0, next_time - time.time())
-                # Limit sleep time to avoid missing audio frames
+                # CPU 使用率を抑える
+                sleep_time = min(next_video_time, next_audio_time) - time.time()
                 if sleep_time > 0:
-                    time.sleep(min(sleep_time, 0.010))  # Max 10ms sleep
-        finally:
-            if use_camera or use_mic:
-                # Stop capture threads
-                self.capture_active = False
-                if use_camera and self.camera_thread:
-                    self.camera_thread.join(timeout=2.0)
-                if use_mic and self.audio_thread:
-                    self.audio_thread.join(timeout=2.0)
-                logger.info("Stopped capture threads")
+                    time.sleep(min(sleep_time, 0.001))
 
-    def _send_video_frame(self):
-        """Send a video frame from camera"""
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user")
+
+    def _send_video_frame(self) -> None:
+        """ビデオフレームを送信"""
         if not self.video_encoder:
             return
 
-        try:
-            # Get frame from queue (non-blocking)
-            bgr_frame = self.video_queue.get_nowait()
-        except queue.Empty:
-            # No frame available, skip this iteration
-            return
-
-        # OpenCV's BGR format matches libyuv's RGB24 memory layout (B,G,R)
-        # So we can pass BGR directly to rgb24_to_i420
-        frame = bgr_frame
-
-        # Ensure frame is the expected size
-        if frame.shape[:2] != (self.video_height, self.video_width):
-            frame = cv2.resize(frame, (self.video_width, self.video_height))
-
-        # Ensure the frame is contiguous in memory
-        frame = np.ascontiguousarray(frame)
-
-        # Create I420 buffer
-        buffer = VideoFrameBufferI420.create(self.video_width, self.video_height)
-
-        # Convert BGR to I420 using libyuv
-        # Note: libyuv's RGB24 = B,G,R in memory = OpenCV's BGR
-        rgb24_to_i420(
-            frame,
-            self.video_width * 3,  # RGB stride
-            buffer.y,
-            buffer.u,
-            buffer.v,
-            buffer.stride_y(),
-            buffer.stride_u(),
-            buffer.stride_v(),
-            self.video_width,
-            self.video_height,
-        )
-
-        # Create video frame
-        frame = VideoFrame()
-        frame.format = ImageFormat.I420
-        frame.i420_buffer = buffer
-        frame.timestamp = self.video_frame_number / self.video_fps
-        frame.frame_number = self.video_frame_number
-
-        # Encode frame
-        try:
-            self.video_encoder.encode(frame)
-        except Exception as e:
-            handle_error("encoding frame", e)
-
-        self.video_frame_number += 1
-        self._check_and_request_keyframe()
-
-        # Debug log every 30 frames (1 second)
-        if self.video_frame_number % 30 == 0:
-            logger.info(f"Frame {self.video_frame_number}: total frames sent")
-
-    def _send_audio_frame(self):
-        """Send an audio frame from microphone"""
-        if not self.audio_encoder:
-            logger.warning("No audio encoder available")
-            return
-
-        # Track time between calls
-        current_time = time.time()
-        if self._last_audio_send_time is not None:
-            time_diff = (current_time - self._last_audio_send_time) * 1000  # ms
-            if time_diff > 25 or time_diff < 15:  # Should be ~20ms
-                logger.warning(
-                    f"Audio frame timing issue: {time_diff:.1f}ms between frames (expected 20ms)"
-                )
-        self._last_audio_send_time = current_time
-
-        # Monitor queue depth
-        queue_size = self.audio_queue.qsize()
-        if queue_size > 2:  # More than 40ms of audio buffered
-            logger.warning(f"Audio queue backlog: {queue_size} frames ({queue_size * 20}ms)")
-            # Drop old frames to reduce latency - keep only the most recent
-            while queue_size > 1:
-                try:
-                    self.audio_queue.get_nowait()
-                    queue_size -= 1
-                except queue.Empty:
-                    break
-            logger.info(
-                f"Dropped frames to reduce latency, new queue size: {self.audio_queue.qsize()}"
-            )
-
-        try:
-            # Get audio data from queue (non-blocking)
-            audio_data = self.audio_queue.get_nowait()
-            queue_was_empty = False
-        except queue.Empty:
-            # No audio available, send silence
-            queue_was_empty = True
-            samples = int(self.audio_sample_rate * 0.02)  # 960 samples
-            audio_data = np.zeros((samples, self.audio_channels), dtype=np.float32)
-            if self.audio_timestamp_ms % 1000 <= 20:
-                logger.warning(f"Audio queue empty at {self.audio_timestamp_ms}ms, sending silence")
-
-        # Ensure audio data has the correct shape and type
-        # The shape must be (samples, channels)
-        if audio_data.ndim == 1:
-            # If mono, reshape to (samples, 1)
-            audio_data = audio_data.reshape(-1, 1)
-
-        # Verify shape
-        if audio_data.ndim != 2:
-            logger.error(f"Invalid audio data shape: {audio_data.shape}, expected 2D array")
-            return
-
-        # Ensure correct dtype
-        if audio_data.dtype != np.float32:
-            audio_data = audio_data.astype(np.float32)
-
-        # Ensure audio data is contiguous in memory
-        audio_data = np.ascontiguousarray(audio_data)
-
-        # For mic audio, amplify if it's too quiet
-        max_val = np.abs(audio_data).max()
-        rms_val = np.sqrt(np.mean(audio_data**2))
-
-        # Log audio levels before processing
-        if self.audio_timestamp_ms % 1000 <= 20:  # Log every second
-            logger.info(f"[Audio Level] Before processing: max={max_val:.6f}, RMS={rms_val:.6f}")
-
-        # Only amplify if RMS is very low (not just peak)
-        if rms_val > 0 and rms_val < 0.01:  # Very quiet based on RMS
-            # Gentle amplification based on RMS, not peak
-            target_rms = 0.05  # Target RMS level
-            gain = min(target_rms / rms_val, 5.0)  # Limit gain to 5x
-            audio_data = audio_data * gain
-            if self.audio_timestamp_ms <= 100 or self.audio_timestamp_ms % 1000 <= 20:
-                logger.info(f"Amplifying quiet audio: RMS was {rms_val:.6f}, gain={gain:.2f}x")
-        elif max_val > 0.8:  # Check for potential clipping
-            logger.warning(f"Audio may be clipping: max_val={max_val:.6f}")
-
-        # Ensure audio data is within valid range
-        audio_data = np.clip(audio_data, -1.0, 1.0)
-
-        # Debug: Log detailed info for first few frames
-        if self.audio_timestamp_ms <= 100:
-            logger.info(f"[Audio Debug] Frame at {self.audio_timestamp_ms}ms:")
-            logger.info(f"  - Shape: {audio_data.shape}")
-            logger.info(f"  - dtype: {audio_data.dtype}")
-            logger.info(f"  - is C-contiguous: {audio_data.flags['C_CONTIGUOUS']}")
-            logger.info(f"  - min/max: {audio_data.min():.6f} / {audio_data.max():.6f}")
-            logger.info(f"  - First 10 samples (L): {audio_data[:10, 0]}")
-            logger.info(f"  - First 10 samples (R): {audio_data[:10, 1]}")
-
-        # Create audio frame
-        frame = AudioFrame()
-        frame.sample_rate = self.audio_sample_rate
-        frame.pcm = audio_data
-        frame.timestamp = self.audio_timestamp_ms / 1000.0  # seconds as float
-
-        # Log frame details before encoding
-        if (
-            self.audio_timestamp_ms <= 100 or self.audio_timestamp_ms % 1000 <= 20
-        ):  # Log first few frames and periodically
-            timestamp_sec = (
-                frame.timestamp.total_seconds()
-                if hasattr(frame.timestamp, "total_seconds")
-                else frame.timestamp
-            )
-            logger.info("[AudioFrame Debug] Created frame:")
-            logger.info(f"  - sample_rate: {frame.sample_rate}")
-            logger.info(f"  - timestamp: {timestamp_sec:.3f}s (ms: {self.audio_timestamp_ms})")
-            logger.info(f"  - samples(): {frame.samples()}")
-            logger.info(f"  - channels(): {frame.channels()}")
-            logger.info(
-                f"  - Expected RTP timestamp increment: {int(frame.samples())} (for {frame.sample_rate}Hz)"
-            )
-
-            # Check if PCM data is accessible from frame
-            if hasattr(frame, "pcm"):
-                logger.info(f"  - frame.pcm shape: {frame.pcm.shape}")
-                logger.info(f"  - frame.pcm dtype: {frame.pcm.dtype}")
-
-        # Debug log every second
-        if self.audio_timestamp_ms % 1000 == 0:
-            timestamp_sec = (
-                frame.timestamp.total_seconds()
-                if hasattr(frame.timestamp, "total_seconds")
-                else frame.timestamp
-            )
-            logger.info(
-                f"Audio progress: timestamp={timestamp_sec:.3f}s, "
-                f"shape={audio_data.shape}, "
-                f"min={audio_data.min():.6f}, max={audio_data.max():.6f}, "
-                f"mean={audio_data.mean():.6f}, "
-                f"queue_empty={queue_was_empty}, queue_size={self.audio_queue.qsize()}"
-            )
-            # Log latency estimate
-            logger.info(f"Estimated audio latency: {self.audio_queue.qsize() * 20}ms in queue")
-
-            # Check RMS (Root Mean Square) for better volume indication
-            rms = np.sqrt(np.mean(audio_data**2))
-            source = "silence" if queue_was_empty else "mic"
-            logger.info(f"Audio RMS: {rms:.6f} ({source} audio)")
-
-            # Also log track state periodically
-            if self.audio_track:
-                logger.info(f"Audio track state: is_open={self.audio_track.is_open()}")
-
-        # Encode frame
-        log_level = logging.INFO if self.audio_timestamp_ms <= 200 else logging.DEBUG
-        logger.log(
-            log_level,
-            f"[Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms / 1000.0:.3f}s",
-        )
-
-        # Debug: Check if encoder callback gets called
-        if self.audio_timestamp_ms <= 200:
-            logger.info(
-                f"[Pre-encode] Audio data summary: shape={audio_data.shape}, "
-                f"dtype={audio_data.dtype}, min={audio_data.min():.6f}, "
-                f"max={audio_data.max():.6f}, RMS={np.sqrt(np.mean(audio_data**2)):.6f}"
-            )
-            # Log actual PCM data samples to verify it's not silence
-            logger.info(
-                f"[Pre-encode] PCM samples (first 5): L={audio_data[:5, 0]}, R={audio_data[:5, 1]}"
-            )
-
-        try:
-            self.audio_encoder.encode(frame)
-            logger.log(log_level, "[Encode] audio_encoder.encode() completed successfully")
-        except Exception as e:
-            handle_error("in audio_encoder.encode()", e)
-        self.audio_timestamp_ms += 20
-
-    def _send_fake_video_frame(self):
-        """Send a fake video frame with patterns"""
-        if not self.video_encoder:
-            return
-
-        # Create I420 frame with pattern buffer
-        frame = VideoFrame()
-        frame.format = ImageFormat.I420
-        frame.i420_buffer = self._create_pattern_i420_buffer()
-        frame.timestamp = self.video_frame_number / self.video_fps
-        frame.frame_number = self.video_frame_number
-
-        # Encode frame
-        try:
-            self.video_encoder.encode(frame)
-        except Exception as e:
-            handle_error("encoding frame", e)
-
-        self.video_frame_number += 1
-        self._check_and_request_keyframe()
-
-    def _send_fake_audio_frame(self):
-        """Send a silent fake audio frame"""
-        if not self.audio_encoder:
-            logger.warning("No audio encoder available for fake frame")
-            return
-
-        # Create audio frame
-        frame = AudioFrame()
-        frame.sample_rate = self.audio_sample_rate
-
-        # Generate 20ms of audio (sine wave)
-        samples = int(self.audio_sample_rate * 0.02)  # 960 samples
-
-        # Create a gentle 440Hz sine wave (A4 note, musical and not harsh)
-        t = np.arange(samples) / self.audio_sample_rate + (self.audio_timestamp_ms / 1000.0)
-        frequency = 440.0  # A4 note
-        audio_signal = np.sin(2 * np.pi * frequency * t) * 0.1  # 10% volume (gentle)
-
-        # Create mono or stereo based on settings
-        if self.audio_channels == 1:
-            audio_data = audio_signal.reshape(-1, 1).astype(np.float32)
+        # フレームを取得
+        if self.use_camera and not self.video_queue.empty():
+            try:
+                bgr_frame = self.video_queue.get_nowait()
+                # BGR → BGRA
+                bgra_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2BGRA)
+            except queue.Empty:
+                return
         else:
-            audio_data = np.column_stack((audio_signal, audio_signal)).astype(np.float32)
+            # テストパターン
+            bgra_frame = self._generate_test_pattern()
 
-        # Ensure audio data is contiguous in memory
-        audio_data = np.ascontiguousarray(audio_data)
+        # VideoFrame を作成
+        timestamp_us = int(self.video_frame_number * 1_000_000 / self.video_fps)
 
-        # Ensure audio data is within valid range
-        audio_data = np.clip(audio_data, -1.0, 1.0)
+        bgra_init: VideoFrameBufferInit = {
+            "format": VideoPixelFormat.BGRA,
+            "coded_width": self.video_width,
+            "coded_height": self.video_height,
+            "timestamp": timestamp_us,
+        }
+        bgra_video_frame = VideoFrame(bgra_frame, bgra_init)
 
-        # Debug: Log detailed info for first few frames
-        if self.audio_timestamp_ms <= 100:
-            logger.info(f"[Fake Audio Debug] Frame at {self.audio_timestamp_ms}ms:")
-            logger.info(f"  - Shape: {audio_data.shape}")
-            logger.info(f"  - dtype: {audio_data.dtype}")
-            logger.info(f"  - is C-contiguous: {audio_data.flags['C_CONTIGUOUS']}")
-            logger.info(f"  - min/max: {audio_data.min():.6f} / {audio_data.max():.6f}")
-            logger.info(f"  - First 10 samples (L): {audio_data[:10, 0]}")
-            logger.info(f"  - First 10 samples (R): {audio_data[:10, 1]}")
+        # BGRA → I420 変換
+        i420_size = self.video_width * self.video_height * 3 // 2
+        i420_buffer = np.zeros(i420_size, dtype=np.uint8)
+        bgra_video_frame.copy_to(i420_buffer, {"format": VideoPixelFormat.I420})
+        bgra_video_frame.close()
 
-        frame.pcm = audio_data
-        frame.timestamp = self.audio_timestamp_ms / 1000.0
+        # I420 VideoFrame を作成
+        i420_init: VideoFrameBufferInit = {
+            "format": VideoPixelFormat.I420,
+            "coded_width": self.video_width,
+            "coded_height": self.video_height,
+            "timestamp": timestamp_us,
+        }
+        frame = VideoFrame(i420_buffer, i420_init)
 
-        # Log frame details before encoding
-        if self.audio_timestamp_ms <= 100:  # Only log first few frames
-            timestamp_sec = (
-                frame.timestamp.total_seconds()
-                if hasattr(frame.timestamp, "total_seconds")
-                else frame.timestamp
-            )
-            logger.info("[Fake AudioFrame Debug] Created frame:")
-            logger.info(f"  - sample_rate: {frame.sample_rate}")
-            logger.info(f"  - timestamp: {timestamp_sec:.3f}s")
-            logger.info(f"  - samples(): {frame.samples()}")
-            logger.info(f"  - channels(): {frame.channels()}")
-
-            # Check if PCM data is accessible from frame
-            if hasattr(frame, "pcm"):
-                logger.info(f"  - frame.pcm shape: {frame.pcm.shape}")
-                logger.info(f"  - frame.pcm dtype: {frame.pcm.dtype}")
-
-        # Debug log every second
-        if self.audio_timestamp_ms % 1000 == 0:
-            timestamp_sec = (
-                frame.timestamp.total_seconds()
-                if hasattr(frame.timestamp, "total_seconds")
-                else frame.timestamp
-            )
-            logger.info(
-                f"Fake audio progress: timestamp={timestamp_sec:.3f}s, "
-                f"shape={audio_data.shape}, "
-                f"min={audio_data.min():.6f}, max={audio_data.max():.6f}, "
-                f"mean={audio_data.mean():.6f}"
-            )
-
-            # Check RMS (Root Mean Square) for better volume indication
-            rms = np.sqrt(np.mean(audio_data**2))
-            logger.info(f"Fake audio RMS: {rms:.6f} (expected ~0.212 for 30% sine wave)")
-
-            # Also log track state periodically
-            if self.audio_track:
-                logger.info(f"Audio track state (fake): is_open={self.audio_track.is_open()}")
-
-        # Encode frame
-        log_level = logging.INFO if self.audio_timestamp_ms <= 200 else logging.DEBUG
-        logger.log(
-            log_level,
-            f"[Fake Encode] Calling audio_encoder.encode() with timestamp: {self.audio_timestamp_ms / 1000.0:.3f}s",
-        )
+        # エンコード
+        is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0
         try:
-            self.audio_encoder.encode(frame)
-            logger.log(log_level, "[Fake Encode] audio_encoder.encode() completed successfully")
+            if is_keyframe:
+                self.video_encoder.encode(frame, {"keyFrame": True})
+            else:
+                self.video_encoder.encode(frame)
         except Exception as e:
-            logger.error(f"Audio data shape: {audio_data.shape}, dtype: {audio_data.dtype}")
-            handle_error("encoding fake audio frame", e)
-        self.audio_timestamp_ms += 20
+            handle_error("encoding video frame", e)
 
-    def disconnect(self):
-        """Disconnect from WHIP server with graceful shutdown"""
+        frame.close()
+        self.video_frame_number += 1
+
+        if self.video_frame_number % self.video_fps == 0:
+            elapsed = self.video_frame_number / self.video_fps
+            logger.info(f"Video progress: {elapsed:.1f}s ({self.video_frame_number} frames)")
+
+    def _send_audio_frame(self) -> None:
+        """オーディオフレームを送信"""
+        if not self.audio_encoder:
+            return
+
+        # オーディオを取得
+        if self.use_microphone and not self.audio_queue.empty():
+            try:
+                audio_samples = self.audio_queue.get_nowait()
+            except queue.Empty:
+                return
+        else:
+            # テストトーン
+            audio_samples = self._generate_test_audio()
+
+        # AudioData を作成
+        timestamp_us = int(self.audio_frame_number * self.audio_frame_size * 1_000_000 / self.audio_sample_rate)
+
+        init: AudioDataInit = {
+            "format": AudioSampleFormat.F32,
+            "sample_rate": self.audio_sample_rate,
+            "number_of_frames": len(audio_samples),
+            "number_of_channels": self.audio_channels,
+            "timestamp": timestamp_us,
+            "data": audio_samples.astype(np.float32),
+        }
+        audio_data = AudioData(init)
+
+        # エンコード
+        try:
+            self.audio_encoder.encode(audio_data)
+        except Exception as e:
+            handle_error("encoding audio frame", e)
+
+        audio_data.close()
+        self.audio_frame_number += 1
+
+    def disconnect(self) -> None:
+        """切断処理"""
         logger.info("Starting graceful shutdown...")
 
-        # First, send DELETE request to WHIP server
+        # キャプチャを停止
+        self.capture_active = False
+        if self.camera_thread:
+            self.camera_thread.join(timeout=1.0)
+        if self.camera:
+            self.camera.release()
+        if self.audio_stream:
+            self.audio_stream.stop()
+            self.audio_stream.close()
+
+        # WHIP セッションを終了
         if self.session_url:
             logger.info("Sending DELETE request to WHIP server...")
             try:
@@ -1259,41 +636,29 @@ class WHIPClient:
                         logger.info("WHIP session terminated successfully")
                     else:
                         logger.warning(f"DELETE request returned status {response.status_code}")
-            except httpx.TimeoutException:
-                logger.error("DELETE request timed out")
-            except httpx.RequestError as e:
-                logger.error(f"DELETE request failed: {e}")
             except Exception as e:
-                logger.error(f"Unexpected error during DELETE: {e}")
+                handle_error("terminating WHIP session", e)
 
-        # Wait a bit for graceful shutdown
-        logger.info("Waiting for graceful shutdown...")
+        # エンコーダーをフラッシュ
+        if self.video_encoder:
+            try:
+                self.video_encoder.flush()
+            except Exception:
+                pass
+        if self.audio_encoder:
+            try:
+                self.audio_encoder.flush()
+            except Exception:
+                pass
+
         time.sleep(0.5)
 
-        # Stop capture if active
-        self.capture_active = False
-
-        # Release camera if open
-        if self.camera and self.camera.isOpened():
-            self.camera.release()
-            logger.info("Camera released")
-
-        # Clean up resources in proper order
-        logger.info("Cleaning up resources...")
-
-        # Clear RTP components first
+        # リソースをクリーンアップ
         self.video_packetizer = None
         self.audio_packetizer = None
-        self.video_sr_reporter = None
-        self.audio_sr_reporter = None
-        self.pli_handler = None
-        self.nack_responder = None
-
-        # Close tracks before closing PeerConnection
         self.video_track = None
         self.audio_track = None
 
-        # Close PeerConnection
         if self.pc:
             try:
                 self.pc.close()
@@ -1302,20 +667,19 @@ class WHIPClient:
             finally:
                 self.pc = None
 
-        # Finally release encoders
         if self.video_encoder:
             try:
-                self.video_encoder.release()
-            except Exception as e:
-                handle_error("releasing video encoder", e)
+                self.video_encoder.close()
+            except Exception:
+                pass
             finally:
                 self.video_encoder = None
 
         if self.audio_encoder:
             try:
-                self.audio_encoder.release()
-            except Exception as e:
-                handle_error("releasing audio encoder", e)
+                self.audio_encoder.close()
+            except Exception:
+                pass
             finally:
                 self.audio_encoder = None
 
@@ -1323,37 +687,41 @@ class WHIPClient:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="WHIP client with camera/microphone support")
-    parser.add_argument("--url", required=True, help="WHIP endpoint URL")
-    parser.add_argument("--token", help="Bearer token for authentication")
-    parser.add_argument("--duration", type=int, help="Duration in seconds")
-    parser.add_argument("--camera", action="store_true", help="Use camera for video capture")
-    parser.add_argument("--mic", action="store_true", help="Use microphone for audio capture")
+    parser = argparse.ArgumentParser(description="WHIP クライアント（webcodecs-py ベース）")
+    parser.add_argument("--url", required=True, help="WHIP エンドポイント URL")
+    parser.add_argument("--token", help="Bearer トークン（認証用）")
+    parser.add_argument("--duration", type=int, help="配信時間（秒）")
+    parser.add_argument(
+        "--codec",
+        choices=["h264", "h265", "av1"],
+        default="h264",
+        help="映像コーデック (デフォルト: h264)",
+    )
+    parser.add_argument("--camera", action="store_true", help="カメラを使用")
+    parser.add_argument("--microphone", action="store_true", help="マイクを使用")
 
     args = parser.parse_args()
 
-    # Log what sources are being used
-    video_source = "camera" if args.camera else "fake (pattern video)"
-    audio_source = "microphone" if args.mic else "fake (440Hz tone)"
-    logger.info(f"Video source: {video_source}")
-    logger.info(f"Audio source: {audio_source}")
+    logger.info(f"Video codec: {args.codec}")
+    logger.info(f"WHIP endpoint: {args.url}")
+    logger.info(f"Camera: {args.camera}, Microphone: {args.microphone}")
 
-    if args.camera:
-        logger.info("Make sure you have a camera connected")
-    if args.mic:
-        logger.info("Make sure you have microphone permissions enabled")
-
-    client = WHIPClient(args.url, args.token)
+    client = WHIPClient(
+        args.url,
+        args.token,
+        args.codec,
+        args.camera,
+        args.microphone,
+    )
 
     try:
         client.connect()
-        client.send_frames(args.duration, use_camera=args.camera, use_mic=args.mic)
+        client.send_frames(args.duration)
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
     except Exception as e:
-        client._handle_error("", e)
+        handle_error("running WHIP client", e)
     finally:
-        # Always disconnect gracefully
         try:
             client.disconnect()
         except Exception as e:
