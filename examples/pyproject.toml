@@ -5,6 +5,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "libdatachannel-py",
+    "blend2d-py>=2025.2.0",
+    "webcodecs-py>=2025.1.0.dev1",
     "httpx",
     "numpy",
     "opencv-python",
