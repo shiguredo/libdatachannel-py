@@ -17,20 +17,17 @@
 
 ## ビルド
 
-uv run python3 run.py でアーキテクチャを指定する。
-
 ```bash
-uv run python3 run.py macos_arm64
+make wheel
 ```
 
 ## テスト実行
 
-uv run pytest を利用する。
-
 ```bash
-uv run pytest test/test_rtp_depacketizer.py
+uv sync
+make test
 ```
 
 ## libdatachannel ソース
 
-`_source` ディレクトリに libdatachannel のソースコードが含まれている。
+- `_deps/libdatachannel/<version>/source` ディレクトリに libdatachannel にソースコードがある
