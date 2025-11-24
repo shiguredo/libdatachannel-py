@@ -415,9 +415,10 @@ class WHIPBlend2DClient:
         """WHIP サーバーに接続"""
         logger.info(f"Connecting to WHIP endpoint: {self.whip_url}")
 
-        # PeerConnection を作成
+        # PeerConnection を作成（OBS と同様に自動 gathering を無効化）
         config = Configuration()
         config.ice_servers = []
+        config.disable_auto_gathering = True
         self.pc = PeerConnection(config)
 
         # オーディオトラックを追加（Sora は Opus 必須）
@@ -481,14 +482,19 @@ class WHIPBlend2DClient:
                     logger.info(f"Found {len(ice_servers)} ICE server(s) in Link header")
 
             # リモート SDP を設定
+            logger.debug(f"SDP Answer:\n{response.text}")
             answer = Description(response.text, Description.Type.Answer)
             self.pc.set_remote_description(answer)
+
+            # ICE サーバーがある場合、gathering を実行
+            if link_header and ice_servers:
+                self.pc.gather_local_candidates(ice_servers)
+                logger.info("Gathering local candidates with ICE servers")
 
         logger.info("Connected to WHIP server")
 
     def _setup_video_encoder(self) -> None:
         """webcodecs-py ビデオエンコーダーをセットアップ"""
-        encoded_chunks: list[EncodedVideoChunk] = []
 
         def on_output(chunk: EncodedVideoChunk) -> None:
             """エンコード完了時のコールバック"""
@@ -520,7 +526,7 @@ class WHIPBlend2DClient:
         elif self.codec == "h265":
             codec_string = "hev1.1.6.L120.B0"  # H.265 Main Profile Level 4.0
         else:
-            codec_string = "avc1.64001F"  # H.264 High Profile Level 3.1
+            codec_string = "avc1.64002A"  # H.264 High Profile Level 4.2
 
         encoder_config: VideoEncoderConfig = {
             "codec": codec_string,
@@ -624,6 +630,9 @@ class WHIPBlend2DClient:
         start_time = time.time()
         while self.pc.state() != PeerConnection.State.Connected:
             if time.time() - start_time > timeout:
+                logger.error(
+                    f"Connection timeout: state={self.pc.state()}, ice_state={self.pc.ice_state()}"
+                )
                 raise RuntimeError("Connection timeout")
             time.sleep(0.1)
 
