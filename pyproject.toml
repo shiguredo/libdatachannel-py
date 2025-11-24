@@ -70,9 +70,6 @@ package = false
 managed = true
 python-preference = "only-managed"
 
-[tool.uv.workspace]
-members = ["examples"]
-
 [tool.ruff]
 target-version = "py313"
 line-length = 100
