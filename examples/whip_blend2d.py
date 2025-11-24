@@ -429,6 +429,12 @@ class WHIPBlend2DClient:
         video_desc = Description.Video("video", Description.Direction.SendOnly)
         if self.codec == "av1":
             video_desc.add_av1_codec(35)
+            # AV1 RTP には Dependency Descriptor ヘッダー拡張が必要
+            dd_ext = Description.Entry.ExtMap(
+                1,
+                "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
+            )
+            video_desc.add_ext_map(dd_ext)
         elif self.codec == "h265":
             video_desc.add_h265_codec(97)
         else:
@@ -491,6 +497,11 @@ class WHIPBlend2DClient:
                     # EncodedVideoChunk からデータを取得
                     data = np.zeros(chunk.byte_length, dtype=np.uint8)
                     chunk.copy_to(data)
+
+                    # AV1 デバッグ: 最初の数フレームの OBU 構造を確認
+                    if self.codec == "av1" and self.encoded_frame_count < 5:
+                        self._debug_av1_obus(data, self.encoded_frame_count)
+
                     self.video_track.send(bytes(data))
                     self.encoded_frame_count += 1
                     if self.encoded_frame_count % 30 == 0:
@@ -569,7 +580,7 @@ class WHIPBlend2DClient:
 
         if self.codec == "av1":
             self.video_packetizer = AV1RtpPacketizer(
-                AV1RtpPacketizer.Packetization.TemporalUnit, self.video_config
+                AV1RtpPacketizer.Packetization.TemporalUnit, self.video_config, 1200
             )
         elif self.codec == "h265":
             self.video_packetizer = H265RtpPacketizer(
@@ -704,6 +715,64 @@ class WHIPBlend2DClient:
         if self.video_frame_number % self.video_fps == 0:
             elapsed = self.video_frame_number / self.video_fps
             logger.info(f"Video progress: {elapsed:.1f}s ({self.video_frame_number} frames)")
+
+    def _debug_av1_obus(self, data: np.ndarray, frame_num: int) -> None:
+        """AV1 OBU 構造をデバッグ出力"""
+        OBU_TYPES = {
+            0: "RESERVED", 1: "SEQUENCE_HEADER", 2: "TEMPORAL_DELIMITER",
+            3: "FRAME_HEADER", 4: "TILE_GROUP", 5: "METADATA",
+            6: "FRAME", 7: "REDUNDANT_FRAME_HEADER", 8: "TILE_LIST", 15: "PADDING",
+        }
+
+        logger.info(f"=== AV1 Frame #{frame_num} ({len(data)} bytes) ===")
+        logger.info(f"  First 16 bytes: {' '.join(f'{b:02x}' for b in data[:16])}")
+
+        idx = 0
+        # Temporal Unit Delimiter チェック
+        if len(data) >= 2 and data[0] == 0x12 and data[1] == 0x00:
+            logger.info("  [TU] Temporal Unit Delimiter: FOUND (0x12 0x00)")
+            idx = 2
+        else:
+            logger.info(f"  [TU] Temporal Unit Delimiter: NOT FOUND (first: 0x{data[0]:02x} 0x{data[1]:02x})")
+
+        obu_num = 0
+        while idx < len(data) and obu_num < 10:
+            obu_header = data[idx]
+            obu_type = (obu_header >> 3) & 0x0F
+            has_extension = (obu_header >> 2) & 0x01
+            has_size = (obu_header >> 1) & 0x01
+            type_name = OBU_TYPES.get(obu_type, f"UNKNOWN({obu_type})")
+
+            ext_size = 1 if has_extension else 0
+
+            if not has_size:
+                remaining = len(data) - idx - 1 - ext_size
+                logger.info(
+                    f"  [OBU {obu_num}] type={type_name}, has_size=0 (implicit), "
+                    f"header=0x{obu_header:02x}, remaining={remaining} bytes"
+                )
+                break
+
+            # LEB128 サイズを読む
+            size_idx = idx + 1 + ext_size
+            obu_size = 0
+            leb128_bytes = 0
+            while size_idx + leb128_bytes < len(data) and leb128_bytes < 8:
+                b = int(data[size_idx + leb128_bytes])
+                obu_size |= (b & 0x7F) << (leb128_bytes * 7)
+                leb128_bytes += 1
+                if not (b & 0x80):
+                    break
+
+            header_size = 1 + ext_size + leb128_bytes
+            total_size = header_size + obu_size
+            logger.info(
+                f"  [OBU {obu_num}] type={type_name}, has_size=1, header=0x{obu_header:02x}, "
+                f"payload={obu_size}, total={total_size}"
+            )
+
+            idx += total_size
+            obu_num += 1
 
     def disconnect(self) -> None:
         """切断処理"""

@@ -279,7 +279,7 @@ class WHIPClient:
 
         if self.codec == "av1":
             self.video_packetizer = AV1RtpPacketizer(
-                AV1RtpPacketizer.Packetization.TemporalUnit, self.video_config
+                AV1RtpPacketizer.Packetization.TemporalUnit, self.video_config, 1200
             )
         elif self.codec == "h265":
             self.video_packetizer = H265RtpPacketizer(
@@ -419,20 +419,21 @@ class WHIPClient:
         logger.info(f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch")
 
     def _generate_test_pattern(self) -> np.ndarray:
-        """テストパターンを生成（BGRA）"""
-        # カラフルなグラデーションパターン
-        frame = np.zeros((self.video_height, self.video_width, 4), dtype=np.uint8)
-
-        # 時間に応じて変化するパターン
+        """テストパターンを生成（BGRA）- NumPy ベクトル化版"""
         t = self.video_frame_number / self.video_fps
 
-        # 背景グラデーション
-        for y in range(self.video_height):
-            for x in range(self.video_width):
-                r = int(127 + 127 * np.sin(2 * np.pi * (x / self.video_width + t * 0.1)))
-                g = int(127 + 127 * np.sin(2 * np.pi * (y / self.video_height + t * 0.15)))
-                b = int(127 + 127 * np.sin(2 * np.pi * ((x + y) / (self.video_width + self.video_height) + t * 0.2)))
-                frame[y, x] = [b, g, r, 255]
+        # meshgrid で座標配列を作成（初回のみ計算してキャッシュ可能だが、シンプルさ優先）
+        x = np.arange(self.video_width, dtype=np.float32)
+        y = np.arange(self.video_height, dtype=np.float32)
+        xx, yy = np.meshgrid(x, y)
+
+        # 背景グラデーション（ベクトル化）
+        r = (127 + 127 * np.sin(2 * np.pi * (xx / self.video_width + t * 0.1))).astype(np.uint8)
+        g = (127 + 127 * np.sin(2 * np.pi * (yy / self.video_height + t * 0.15))).astype(np.uint8)
+        b = (127 + 127 * np.sin(2 * np.pi * ((xx + yy) / (self.video_width + self.video_height) + t * 0.2))).astype(np.uint8)
+
+        # BGRA フレームを構築
+        frame = np.stack([b, g, r, np.full_like(r, 255)], axis=-1)
 
         # 動く円を描画
         cx = int(self.video_width / 2 + self.video_width / 4 * np.sin(t * 2))
