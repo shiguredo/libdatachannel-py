@@ -4,7 +4,7 @@
     "repository": "https://github.com/Mbed-TLS/mbedtls.git"
   },
   "libdatachannel": {
-    "version": "0.22.6",
+    "version": "0.24.0",
     "repository": "https://github.com/paullouisageneau/libdatachannel.git"
   }
 }
