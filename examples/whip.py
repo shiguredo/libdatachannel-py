@@ -113,13 +113,13 @@ class WHIPClient:
         self.encoded_audio_count = 0
 
         # Video settings
-        self.video_width = 1920
-        self.video_height = 1080
-        self.video_fps = 60
+        self.video_width = 1280
+        self.video_height = 720
+        self.video_fps = 30
 
         # Audio settings
         self.audio_sample_rate = 48000
-        self.audio_channels = 2
+        self.audio_channels = 1  # モノラル（多くのマイクは1ch）
         self.audio_frame_size = 960  # 20ms @ 48kHz
 
         # Key frame interval
@@ -449,10 +449,12 @@ class WHIPClient:
             self.audio_frame_size,
             dtype=np.float32,
         )
-        # 440Hz サイン波（左右同じ）
+        # 440Hz サイン波
         mono = np.sin(2 * np.pi * 440 * t) * 0.3
-        stereo = np.column_stack([mono, mono])
-        return stereo
+        if self.audio_channels == 1:
+            return mono.reshape(-1, 1)
+        else:
+            return np.column_stack([mono] * self.audio_channels)
 
     def send_frames(self, duration: Optional[int] = None) -> None:
         """フレームを送信"""
