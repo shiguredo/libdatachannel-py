@@ -226,20 +226,24 @@ name = "examples"
 version = "0.0.0"
 source = { virtual = "examples" }
 dependencies = [
+    { name = "blend2d-py" },
     { name = "httpx" },
     { name = "libdatachannel-py" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "sounddevice" },
+    { name = "webcodecs-py" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "blend2d-py", specifier = ">=2025.2.0" },
     { name = "httpx" },
     { name = "libdatachannel-py", virtual = "." },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "sounddevice" },
+    { name = "webcodecs-py", specifier = ">=2025.1.0.dev1" },
 ]
 
 [[package]]
@@ -399,6 +403,8 @@ dev = [
 ]
 example = [
     { name = "blend2d-py" },
+    { name = "httpx" },
+    { name = "sounddevice" },
     { name = "webcodecs-py" },
 ]
 lint = [
@@ -432,8 +438,10 @@ dev = [
     { name = "ty" },
 ]
 example = [
-    { name = "blend2d-py", specifier = ">=2025.2.0" },
-    { name = "webcodecs-py", specifier = ">=2025.1.0.dev1" },
+    { name = "blend2d-py" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "sounddevice", specifier = ">=0.5.3" },
+    { name = "webcodecs-py" },
 ]
 lint = [
     { name = "ruff" },

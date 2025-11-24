@@ -1,6 +1,9 @@
-.PHONY: develop test format wheel
+.PHONY: wheel develop test format
 
-develop:
+wheel:
+	uv build --wheel
+
+develop: wheel
 	uv pip install -e . --force-reinstall
 	@echo "Copying .pyi stub file..."
 	@cp _build/__init__.pyi src/libdatachannel/ 2>/dev/null || true
@@ -11,6 +14,3 @@ test: develop
 format:
 	clang-format -i src/*.cpp src/*.h
 	uv run ruff format tests/ examples/
-
-wheel:
-	uv build --wheel

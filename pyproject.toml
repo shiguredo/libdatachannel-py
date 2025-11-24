@@ -27,13 +27,22 @@ Discord = "https://discord.gg/shiguredo"
 
 [dependency-groups]
 dev = [{ include-group = "test" }, { include-group = "lint" }]
-test = ["pytest", "pytest-aiohttp", "pytest-timeout", "numpy", "hypothesis", "aiohttp"]
-lint = ["ruff", "ty"]
-pypi = ["auditwheel", "patchelf"]
-example = [
-    "blend2d-py>=2025.2.0",
-    "webcodecs-py>=2025.1.0.dev1",
+test = [
+    "pytest",
+    "pytest-aiohttp",
+    "pytest-timeout",
+    "numpy",
+    "hypothesis",
+    "aiohttp",
 ]
+lint = ["ruff", "ty"]
+example = [
+    "blend2d-py",
+    "httpx>=0.28.1",
+    "sounddevice>=0.5.3",
+    "webcodecs-py",
+]
+pypi = ["auditwheel", "patchelf"]
 
 [tool.scikit-build]
 minimum-version = "0.11"
