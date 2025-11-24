@@ -89,14 +89,14 @@ jobs:
           python-version: ${{ matrix.python_version }}
 
       # 依存ライブラリのビルドキャッシュ
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: _deps
-          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-deps-${{ matrix.platform.name }}-
-            ${{ runner.os }}-deps-
+      # - name: Cache dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: _deps
+      #     key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-deps-${{ matrix.platform.name }}-
+      #       ${{ runner.os }}-deps-
 
       - name: Build wheel
         run: uv build --wheel --out-dir wheelhouse
