@@ -4,14 +4,14 @@ WHIP (WebRTC-HTTP Ingestion Protocol) クライアント
 webcodecs-py でエンコードして libdatachannel-py で WHIP 配信します。
 
 使い方:
-    # テストパターンで配信
-    uv run python examples/whip.py --url https://example.com/whip/channel
+    # テストパターンで配信（blend2d + テスト音声）
+    uv run python examples/whip.py --url https://example.com/whip/channel --fake-capture-device
 
-    # カメラとマイクを使用
-    uv run python examples/whip.py --url https://example.com/whip/channel --camera --microphone
+    # カメラとマイクを使用（デバイス番号 0）
+    uv run python examples/whip.py --url https://example.com/whip/channel --video-input-device 0 --audio-input-device 0
 
     # H.265 で配信
-    uv run python examples/whip.py --url https://example.com/whip/channel --codec h265
+    uv run python examples/whip.py --url https://example.com/whip/channel --video-codec-type h265 --fake-capture-device
 """
 
 import argparse
@@ -20,6 +20,7 @@ import queue
 import random
 import threading
 import time
+from math import pi
 from typing import Optional
 from urllib.parse import urljoin
 
@@ -28,6 +29,9 @@ import httpx
 import numpy as np
 import sounddevice as sd
 from wish import handle_error, parse_link_header
+
+# blend2d-py
+from blend2d import CompOp, Context, Image, Path
 
 # webcodecs-py
 from webcodecs import (
@@ -70,6 +74,268 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# Blend2D レンダラー（--fake-capture-device 用）
+# ============================================================================
+
+
+class MovingShape:
+    """アニメーションする図形の基底クラス"""
+
+    def __init__(self, x: float, y: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int):
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.r = r
+        self.g = g
+        self.b = b
+        self.alpha = alpha
+        self.vx_noise = random.uniform(-0.2, 0.2)
+        self.vy_noise = random.uniform(-0.2, 0.2)
+
+    def update(self, screen_width: int, screen_height: int, frame: int) -> None:
+        noise_factor = 0.1 * np.sin(frame * 0.05)
+        self.vx += self.vx_noise * noise_factor
+        self.vy += self.vy_noise * noise_factor
+        max_speed = 10.0
+        self.vx = max(-max_speed, min(max_speed, self.vx))
+        self.vy = max(-max_speed, min(max_speed, self.vy))
+        self.x += self.vx
+        self.y += self.vy
+
+    def check_bounds(self, screen_width: int, screen_height: int) -> None:
+        pass
+
+    def draw(self, ctx: Context) -> None:
+        pass
+
+
+class MovingRect(MovingShape):
+    """アニメーションする四角形"""
+
+    def __init__(self, x: float, y: float, width: float, height: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int):
+        super().__init__(x, y, vx, vy, r, g, b, alpha)
+        self.width = width
+        self.height = height
+
+    def check_bounds(self, screen_width: int, screen_height: int) -> None:
+        if self.x <= 0 or self.x + self.width >= screen_width:
+            self.vx = -self.vx
+            self.x = max(0.0, min(self.x, screen_width - self.width))
+        if self.y <= 0 or self.y + self.height >= screen_height:
+            self.vy = -self.vy
+            self.y = max(0.0, min(self.y, screen_height - self.height))
+
+    def draw(self, ctx: Context) -> None:
+        ctx.set_fill_style_rgba(self.r, self.g, self.b, self.alpha)
+        ctx.fill_rect(self.x, self.y, self.width, self.height)
+
+
+class MovingCircle(MovingShape):
+    """アニメーションする円"""
+
+    def __init__(self, x: float, y: float, radius: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int):
+        super().__init__(x, y, vx, vy, r, g, b, alpha)
+        self.radius = radius
+
+    def check_bounds(self, screen_width: int, screen_height: int) -> None:
+        if self.x - self.radius <= 0 or self.x + self.radius >= screen_width:
+            self.vx = -self.vx
+            self.x = max(self.radius, min(self.x, screen_width - self.radius))
+        if self.y - self.radius <= 0 or self.y + self.radius >= screen_height:
+            self.vy = -self.vy
+            self.y = max(self.radius, min(self.y, screen_height - self.radius))
+
+    def draw(self, ctx: Context) -> None:
+        ctx.set_fill_style_rgba(self.r, self.g, self.b, self.alpha)
+        ctx.fill_circle(self.x, self.y, self.radius)
+
+
+def draw_7segment(ctx: Context, digit: int, x: float, y: float, w: float, h: float) -> None:
+    """7セグメント風の数字を描画"""
+    if digit < 0 or digit > 9:
+        return
+
+    thickness = w * 0.15
+    gap = thickness * 0.2
+
+    segments = [
+        [True, True, True, True, True, True, False],    # 0
+        [False, True, True, False, False, False, False],  # 1
+        [True, True, False, True, True, False, True],   # 2
+        [True, True, True, True, False, False, True],   # 3
+        [False, True, True, False, False, True, True],  # 4
+        [True, False, True, True, False, True, True],   # 5
+        [True, False, True, True, True, True, True],    # 6
+        [True, True, True, False, False, False, False], # 7
+        [True, True, True, True, True, True, True],     # 8
+        [True, True, True, True, False, True, True],    # 9
+    ]
+
+    def draw_h(sx: float, sy: float) -> None:
+        p = Path()
+        p.move_to(sx + gap, sy)
+        p.line_to(sx + w - gap, sy)
+        p.line_to(sx + w - gap - thickness * 0.5, sy + thickness * 0.5)
+        p.line_to(sx + w - gap, sy + thickness)
+        p.line_to(sx + gap, sy + thickness)
+        p.line_to(sx + gap + thickness * 0.5, sy + thickness * 0.5)
+        p.close()
+        ctx.fill_path(p)
+
+    def draw_v(sx: float, sy: float, sh: float) -> None:
+        p = Path()
+        p.move_to(sx, sy + gap)
+        p.line_to(sx + thickness * 0.5, sy + gap + thickness * 0.5)
+        p.line_to(sx + thickness, sy + gap)
+        p.line_to(sx + thickness, sy + sh - gap)
+        p.line_to(sx + thickness * 0.5, sy + sh - gap - thickness * 0.5)
+        p.line_to(sx, sy + sh - gap)
+        p.close()
+        ctx.fill_path(p)
+
+    on = segments[digit]
+    if on[0]: draw_h(x, y)
+    if on[1]: draw_v(x + w - thickness, y, h * 0.5)
+    if on[2]: draw_v(x + w - thickness, y + h * 0.5, h * 0.5)
+    if on[3]: draw_h(x, y + h - thickness)
+    if on[4]: draw_v(x, y + h * 0.5, h * 0.5)
+    if on[5]: draw_v(x, y, h * 0.5)
+    if on[6]: draw_h(x, y + h * 0.5 - thickness * 0.5)
+
+
+def draw_colon(ctx: Context, x: float, y: float, h: float) -> None:
+    dot = h * 0.1
+    ctx.fill_circle(x + dot, y + h * 0.3, dot)
+    ctx.fill_circle(x + dot, y + h * 0.7, dot)
+
+
+def draw_digital_clock(ctx: Context, elapsed_ms: int, width: int, height: int) -> None:
+    """デジタル時計を描画"""
+    hours = (elapsed_ms // (60 * 60 * 1000)) % 10000
+    minutes = (elapsed_ms // (60 * 1000)) % 60
+    seconds = (elapsed_ms // 1000) % 60
+    milliseconds = elapsed_ms % 1000
+
+    clock_x = width * 0.02
+    clock_y = height * 0.02
+    digit_w = width * 0.025
+    digit_h = height * 0.06
+    spacing = digit_w * 0.3
+    colon_w = digit_w * 0.3
+
+    x = clock_x
+    ctx.set_fill_style_rgba(0, 255, 255, 255)
+
+    # HHHH
+    for i in range(4):
+        draw_7segment(ctx, (hours // (10 ** (3 - i))) % 10, x, clock_y, digit_w, digit_h)
+        x += digit_w + spacing
+    draw_colon(ctx, x, clock_y, digit_h)
+    x += colon_w + spacing
+
+    # MM
+    draw_7segment(ctx, (minutes // 10) % 10, x, clock_y, digit_w, digit_h)
+    x += digit_w + spacing
+    draw_7segment(ctx, minutes % 10, x, clock_y, digit_w, digit_h)
+    x += digit_w + spacing
+    draw_colon(ctx, x, clock_y, digit_h)
+    x += colon_w + spacing
+
+    # SS
+    draw_7segment(ctx, (seconds // 10) % 10, x, clock_y, digit_w, digit_h)
+    x += digit_w + spacing
+    draw_7segment(ctx, seconds % 10, x, clock_y, digit_w, digit_h)
+    x += digit_w + spacing
+
+    # .
+    ctx.fill_circle(x + colon_w * 0.3, clock_y + digit_h * 0.8, digit_h * 0.05)
+    x += colon_w + spacing
+
+    # mmm (smaller)
+    ms_w = digit_w * 0.7
+    ms_h = digit_h * 0.7
+    ctx.set_fill_style_rgba(200, 200, 200, 255)
+    y_off = (digit_h - ms_h) / 2
+    draw_7segment(ctx, (milliseconds // 100) % 10, x, clock_y + y_off, ms_w, ms_h)
+    x += ms_w + spacing * 0.8
+    draw_7segment(ctx, (milliseconds // 10) % 10, x, clock_y + y_off, ms_w, ms_h)
+    x += ms_w + spacing * 0.8
+    draw_7segment(ctx, milliseconds % 10, x, clock_y + y_off, ms_w, ms_h)
+
+
+class Blend2DRenderer:
+    """Blend2D を使用した映像生成"""
+
+    def __init__(self, width: int, height: int, num_shapes: int = 15):
+        self.width = width
+        self.height = height
+        self.img = Image(width, height)
+        self.ctx = Context(self.img)
+        self.frame_num = 0
+        self.start_time = time.perf_counter()
+
+        colors = [
+            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255),
+            (0, 255, 255), (255, 128, 0), (128, 0, 255), (64, 255, 64), (255, 192, 203),
+        ]
+
+        self.shapes: list[MovingShape] = []
+        for _ in range(num_shapes):
+            x = random.randint(50, width - 150)
+            y = random.randint(50, height - 150)
+            vx = random.uniform(-6.0, 6.0)
+            vy = random.uniform(-6.0, 6.0)
+            color = random.choice(colors)
+            alpha = random.randint(150, 220)
+
+            if random.random() < 0.5:
+                w = random.randint(40, 100)
+                h = random.randint(40, 100)
+                self.shapes.append(MovingRect(x, y, w, h, vx, vy, *color, alpha))
+            else:
+                r = random.randint(20, 50)
+                self.shapes.append(MovingCircle(x, y, r, vx, vy, *color, alpha))
+
+    def render_frame(self) -> np.ndarray:
+        """フレームを描画して BGRA 配列を返す"""
+        self.ctx.set_comp_op(CompOp.SRC_COPY)
+        self.ctx.set_fill_style_rgba(30, 30, 30, 255)
+        self.ctx.fill_all()
+
+        self.ctx.set_comp_op(CompOp.SRC_OVER)
+        elapsed_ms = int((time.perf_counter() - self.start_time) * 1000)
+
+        self.ctx.save()
+        draw_digital_clock(self.ctx, elapsed_ms, self.width, self.height)
+        self.ctx.restore()
+
+        # 回転する円弧
+        self.ctx.save()
+        self.ctx.translate(self.width * 0.5, self.height * 0.5)
+        self.ctx.rotate(-pi / 2)
+        self.ctx.set_fill_style_rgba(255, 255, 255, 255)
+        self.ctx.fill_pie(0, 0, min(self.width, self.height) * 0.15, 0, 2 * pi)
+        self.ctx.set_fill_style_rgba(100, 200, 255, 255)
+        sweep = (self.frame_num % 60) / 60.0 * 2 * pi
+        self.ctx.fill_pie(0, 0, min(self.width, self.height) * 0.15, 0, sweep)
+        self.ctx.restore()
+
+        for shape in self.shapes:
+            shape.update(self.width, self.height, self.frame_num)
+            shape.check_bounds(self.width, self.height)
+            shape.draw(self.ctx)
+
+        self.frame_num += 1
+        return self.img.asarray()
+
+
+# ============================================================================
+# WHIP クライアント
+# ============================================================================
+
+
 class WHIPClient:
     """WHIP クライアント（webcodecs-py ベース）"""
 
@@ -78,14 +344,16 @@ class WHIPClient:
         whip_url: str,
         bearer_token: Optional[str] = None,
         codec: str = "h264",
-        use_camera: bool = False,
-        use_microphone: bool = False,
+        use_fake_capture: bool = False,
+        video_input_device: Optional[int] = None,
+        audio_input_device: Optional[int] = None,
     ):
         self.whip_url = whip_url
         self.bearer_token = bearer_token
         self.codec = codec.lower()
-        self.use_camera = use_camera
-        self.use_microphone = use_microphone
+        self.use_fake_capture = use_fake_capture
+        self.video_input_device = video_input_device
+        self.audio_input_device = audio_input_device
 
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
@@ -120,6 +388,9 @@ class WHIPClient:
         # Audio settings
         self.audio_sample_rate = 48000
         self.audio_channels = 1  # モノラル（多くのマイクは1ch）
+
+        # Blend2D renderer (for fake capture)
+        self.renderer: Optional[Blend2DRenderer] = None
         self.audio_frame_size = 960  # 20ms @ 48kHz
 
         # Key frame interval
@@ -142,9 +413,10 @@ class WHIPClient:
         """WHIP サーバーに接続"""
         logger.info(f"Connecting to WHIP endpoint: {self.whip_url}")
 
-        # PeerConnection を作成
+        # PeerConnection を作成（自動 gathering を無効化）
         config = Configuration()
         config.ice_servers = []
+        config.disable_auto_gathering = True
         self.pc = PeerConnection(config)
 
         # オーディオトラックを追加
@@ -196,6 +468,7 @@ class WHIPClient:
 
             # Link ヘッダーから ICE サーバーを取得
             link_header = response.headers.get("Link")
+            ice_servers = []
             if link_header:
                 ice_servers = parse_link_header(link_header)
                 if ice_servers:
@@ -204,6 +477,11 @@ class WHIPClient:
             # リモート SDP を設定
             answer = Description(response.text, Description.Type.Answer)
             self.pc.set_remote_description(answer)
+
+            # ICE サーバーがある場合、gathering を実行
+            if ice_servers:
+                self.pc.gather_local_candidates(ice_servers)
+                logger.info("Gathering local candidates with ICE servers")
 
         logger.info("Connected to WHIP server")
 
@@ -233,7 +511,7 @@ class WHIPClient:
         elif self.codec == "h265":
             codec_string = "hev1.1.6.L120.B0"
         else:
-            codec_string = "avc1.64001F"
+            codec_string = "avc1.64002A"  # H.264 High Profile Level 4.2
 
         encoder_config: VideoEncoderConfig = {
             "codec": codec_string,
@@ -362,7 +640,7 @@ class WHIPClient:
 
     def _start_camera_capture(self) -> None:
         """カメラキャプチャを開始"""
-        self.camera = cv2.VideoCapture(0)
+        self.camera = cv2.VideoCapture(self.video_input_device)
         if not self.camera.isOpened():
             logger.error("Failed to open camera")
             return
@@ -399,6 +677,14 @@ class WHIPClient:
 
     def _start_audio_capture(self) -> None:
         """マイクキャプチャを開始"""
+        # デバイス情報を取得してチャンネル数を決定
+        device_info = sd.query_devices(self.audio_input_device, "input")
+        max_channels = device_info["max_input_channels"]
+        if max_channels < 1:
+            logger.error(f"Audio device {self.audio_input_device} has no input channels")
+            return
+        # デバイスの最大チャンネル数を使用（モノラルかステレオ）
+        self.audio_channels = min(max_channels, 2)
 
         def audio_callback(indata, frames, time_info, status):
             if status:
@@ -409,6 +695,7 @@ class WHIPClient:
                 pass
 
         self.audio_stream = sd.InputStream(
+            device=self.audio_input_device,
             samplerate=self.audio_sample_rate,
             channels=self.audio_channels,
             dtype=np.float32,
@@ -416,7 +703,7 @@ class WHIPClient:
             callback=audio_callback,
         )
         self.audio_stream.start()
-        logger.info(f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch")
+        logger.info(f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch (device: {device_info['name']})")
 
     def _generate_test_pattern(self) -> np.ndarray:
         """テストパターンを生成（BGRA）- NumPy ベクトル化版"""
@@ -473,9 +760,15 @@ class WHIPClient:
         logger.info("Connection established")
 
         # キャプチャを開始
-        if self.use_camera:
+        if self.use_fake_capture:
+            # Blend2D レンダラーを初期化
+            self.renderer = Blend2DRenderer(self.video_width, self.video_height)
+            logger.info(
+                f"Blend2D renderer initialized: {self.video_width}x{self.video_height} @ {self.video_fps}fps"
+            )
+        elif self.video_input_device is not None:
             self._start_camera_capture()
-        if self.use_microphone:
+        if self.audio_input_device is not None:
             self._start_audio_capture()
 
         logger.info(
@@ -520,7 +813,13 @@ class WHIPClient:
             return
 
         # フレームを取得
-        if self.use_camera and not self.video_queue.empty():
+        if self.use_fake_capture and self.renderer:
+            # Blend2D でフレームを描画
+            bgra_frame = self.renderer.render_frame()
+        elif self.video_input_device is not None:
+            # カメラからフレームを取得
+            if self.video_queue.empty():
+                return
             try:
                 bgr_frame = self.video_queue.get_nowait()
                 # BGR → BGRA
@@ -580,7 +879,7 @@ class WHIPClient:
             return
 
         # オーディオを取得
-        if self.use_microphone and not self.audio_queue.empty():
+        if self.audio_input_device is not None and not self.audio_queue.empty():
             try:
                 audio_samples = self.audio_queue.get_nowait()
             except queue.Empty:
@@ -695,26 +994,43 @@ def main():
     parser.add_argument("--token", help="Bearer トークン（認証用）")
     parser.add_argument("--duration", type=int, help="配信時間（秒）")
     parser.add_argument(
-        "--codec",
+        "--video-codec-type",
         choices=["h264", "h265", "av1"],
         default="h264",
         help="映像コーデック (デフォルト: h264)",
     )
-    parser.add_argument("--camera", action="store_true", help="カメラを使用")
-    parser.add_argument("--microphone", action="store_true", help="マイクを使用")
+    parser.add_argument(
+        "--fake-capture-device",
+        action="store_true",
+        help="テストパターン（blend2d）とテスト音声を使用",
+    )
+    parser.add_argument(
+        "--video-input-device",
+        type=int,
+        help="ビデオ入力デバイス番号（未指定時はテストパターン）",
+    )
+    parser.add_argument(
+        "--audio-input-device",
+        type=int,
+        help="オーディオ入力デバイス番号（未指定時はテスト音声）",
+    )
 
     args = parser.parse_args()
 
-    logger.info(f"Video codec: {args.codec}")
+    logger.info(f"Video codec: {args.video_codec_type}")
     logger.info(f"WHIP endpoint: {args.url}")
-    logger.info(f"Camera: {args.camera}, Microphone: {args.microphone}")
+    if args.fake_capture_device:
+        logger.info("Using fake capture device (blend2d video + test audio)")
+    elif args.video_input_device is not None or args.audio_input_device is not None:
+        logger.info(f"Video device: {args.video_input_device}, Audio device: {args.audio_input_device}")
 
     client = WHIPClient(
         args.url,
         args.token,
-        args.codec,
-        args.camera,
-        args.microphone,
+        args.video_codec_type,
+        args.fake_capture_device,
+        args.video_input_device,
+        args.audio_input_device,
     )
 
     try:

@@ -26,7 +26,11 @@ Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
 
 [dependency-groups]
-dev = [{ include-group = "test" }, { include-group = "lint" }]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "example" },
+]
 test = [
     "pytest",
     "pytest-aiohttp",
@@ -37,9 +41,10 @@ test = [
 ]
 lint = ["ruff", "ty"]
 example = [
+    "opencv-python",
     "blend2d-py",
-    "httpx>=0.28.1",
-    "sounddevice>=0.5.3",
+    "httpx",
+    "sounddevice",
     "webcodecs-py",
 ]
 pypi = ["auditwheel", "patchelf"]

@@ -30,4 +30,4 @@ make test
 
 ## libdatachannel ソース
 
-`_source` ディレクトリに libdatachannel のソースコードが含まれている。
+- `_deps/libdatachannel/<version>/source` ディレクトリに libdatachannel にソースコードがある

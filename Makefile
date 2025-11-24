@@ -11,6 +11,9 @@ develop: wheel
 test: develop
 	uv run pytest tests/
 
+example:
+	uv sync --group example
+
 format:
 	clang-format -i src/*.cpp src/*.h
 	uv run ruff format tests/ examples/
