@@ -1228,20 +1228,7 @@ void bind_track(nb::module_& m) {
       .def("is_open", &Track::isOpen)
       .def("is_closed", &Track::isClosed)
       .def("max_message_size", &Track::maxMessageSize)
-      .def("close",
-           [](Track& self) {
-             // close 前に MediaHandler チェーンをクリア
-             // これにより nanobind の shared_ptr 参照が解放される
-             if (auto handler = self.getMediaHandler()) {
-               auto current = handler;
-               while (current) {
-                 auto next = current->next();
-                 current->setNext(nullptr);
-                 current = next;
-               }
-             }
-             self.close();
-           })
+      .def("close", &Track::close)
       .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a)
       .def(
           "send",

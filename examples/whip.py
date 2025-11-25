@@ -1108,18 +1108,6 @@ class WHIPClient:
 
         time.sleep(0.5)
 
-        # Track を close（MediaHandler チェーンも自動的にクリアされる）
-        if self.video_track:
-            try:
-                self.video_track.close()
-            except Exception as e:
-                handle_error("closing video track", e)
-        if self.audio_track:
-            try:
-                self.audio_track.close()
-            except Exception as e:
-                handle_error("closing audio track", e)
-
         # リソースをクリーンアップ
         self.video_packetizer = None
         self.audio_packetizer = None
