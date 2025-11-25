@@ -1,0 +1,209 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - "**.md"
+      - ".github/workflows/claude.yml"
+    branches-ignore:
+      - "feature/e2e-test*"
+    tags:
+      - "*"
+  schedule:
+    # UTC の 01:00 は JST だと 10:00 。
+    # 1-5 で 月曜日から金曜日
+    - cron: "0 1 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  build_ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: ubuntu-24.04_x86_64
+            runs_on: ubuntu-24.04
+          - name: ubuntu-24.04_armv8
+            runs_on: ubuntu-24.04-arm
+        python_version:
+          - "3.13"
+          - "3.14"
+    runs-on: ${{ matrix.platform.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: ${{ matrix.python_version }}
+
+      # 依存ライブラリのビルドキャッシュ
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: _deps
+          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-${{ matrix.platform.name }}-
+            ${{ runner.os }}-deps-
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Repair wheel with auditwheel
+        shell: bash
+        run: |
+          uv sync --group pypi
+          uv run auditwheel repair dist/*.whl --strip --only-plat
+
+      # - run: uv run pytest tests/ -v
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
+          path: wheelhouse/*.whl
+
+  build_macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macos-26_arm64
+            runs_on: macos-26
+          - name: macos-15_arm64
+            runs_on: macos-15
+        python_version:
+          - "3.13"
+          - "3.14"
+    runs-on: ${{ matrix.platform.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: ${{ matrix.python_version }}
+
+      # 依存ライブラリのビルドキャッシュ
+      # - name: Cache dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: _deps
+      #     key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-deps-${{ matrix.platform.name }}-
+      #       ${{ runner.os }}-deps-
+
+      - name: Build wheel
+        run: uv build --wheel --out-dir wheelhouse
+
+      # - run: uv run pytest tests/ -v
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
+          path: wheelhouse/*.whl
+
+  slack_notify_failed:
+    needs: [build_ubuntu, build_macos]
+    runs-on: ubuntu-24.04
+    if: failure()
+    steps:
+      - name: Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_CHANNEL: sora-python-sdk
+          SLACK_COLOR: danger
+          SLACK_TITLE: "FAILED"
+          SLACK_ICON_EMOJI: ":japanese_ogre:"
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  publish_wheel:
+    if: contains(github.ref, 'tags/202')
+    needs:
+      - build_ubuntu
+      - build_macos
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: ubuntu-24.04_x86_64
+          - name: ubuntu-24.04_armv8
+          - name: macos-26_arm64
+          - name: macos-15_arm64
+        python_version:
+          - "3.13"
+          - "3.14"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
+          path: wheelhouse/
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheelhouse
+
+  create-release:
+    if: contains(github.ref, 'tags/202')
+    needs:
+      - build_ubuntu
+      - build_macos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download all artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts/
+
+      - name: Create release files list
+        run: |
+          find artifacts -name "*.whl" -type f > release_files.txt
+
+      - name: Release (Prerelease)
+        if: contains(github.ref, 'dev')
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --prerelease \
+            $(cat release_files.txt | xargs)
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Release
+        if: ${{ !contains(github.ref, 'dev') }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            $(cat release_files.txt | xargs)
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Verify Release Creation
+        run: |
+          gh release view ${{ github.ref_name }} --json url
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Slack Notification
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_CHANNEL: sora-python-sdk
+          SLACK_COLOR: danger
+          SLACK_ICON_EMOJI: ":japanese_ogre:"
+          SLACK_TITLE: Release failed
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

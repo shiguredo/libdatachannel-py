@@ -1,0 +1,190 @@
+name: build-debug
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # まず pyi を生成する
+  # クロスコンパイル環境だと pyi が生成できないので、
+  # １箇所で pyi を生成してアーティファクトにアップロードして、
+  # それを各ビルドで利用する形にする。
+  build_pyi:
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version:
+          - "3.13"
+          - "3.14"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
+      - run: |
+          sudo apt-get -y install libx11-dev nasm
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: ${{ matrix.python_version }}
+      - run: |
+          uv sync
+      - name: Generate pyi
+        run: |
+          uv run python run.py build ubuntu-24.04_x86_64
+          mkdir libdatachannel/
+          cp src/libdatachannel/py.typed libdatachannel/
+          cp src/libdatachannel/libdatachannel_ext.pyi libdatachannel/
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libdatachannel_python-${{ matrix.python_version }}
+          path: libdatachannel/
+
+  build_debug_ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: ubuntu-24.04_x86_64
+            target: ubuntu-24.04_x86_64
+            runs_on: ubuntu-24.04
+          - name: ubuntu-24.04_armv8
+            target: ubuntu-24.04_armv8
+            runs_on: ubuntu-24.04-arm
+        python_version:
+          - "3.13"
+          - "3.14"
+    needs: [build_pyi]
+    runs-on: ${{ matrix.platform.runs_on }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
+      - uses: actions/download-artifact@v5
+        with:
+          name: libdatachannel_python-${{ matrix.python_version }}
+          path: libdatachannel/
+      - run: |
+          cp libdatachannel/py.typed src/libdatachannel/py.typed
+          cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
+      # libx11-dev は Ubuntu 24.04 の時に必要になる
+      - run: |
+          sudo apt-get update
+          sudo apt-get -y install libx11-dev nasm
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: ${{ matrix.python_version }}
+      - run: |
+          uv sync
+
+      - run: |
+          uv run python run.py build ${{ matrix.platform.target }} --debug
+          uv build --out-dir dist_debug
+        env:
+          BUILD_PROFILE: debug
+
+      - name: Download OpenH264
+        uses: shiguredo/github-actions/.github/actions/download-openh264@main
+        id: openh264
+        with:
+          openh264_version: ${{ env.OPENH264_VERSION }}
+
+      - run: uv run pytest tests/ -v
+        env:
+          OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}_debug
+          path: "dist_debug/"
+
+  build_debug_macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macos-15_arm64
+            target: macos_arm64
+            runs_on: macos-15
+            os: macos
+            python_host_platform: "macosx-15.0-arm64"
+            archflags: "-arch arm64"
+        python_version:
+          - "3.13"
+          - "3.14"
+    needs: [build_pyi]
+    runs-on: ${{ matrix.platform.runs_on }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Export OPENH264_VERSION from DEPS
+        run: |
+          ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
+          ver=${ver#v}
+          echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
+      - uses: actions/download-artifact@v5
+        with:
+          name: libdatachannel_python-${{ matrix.python_version }}
+          path: libdatachannel/
+      - run: |
+          cp libdatachannel/py.typed src/libdatachannel/py.typed
+          cp libdatachannel/libdatachannel_ext.pyi src/libdatachannel/libdatachannel_ext.pyi
+      - run: |
+          brew install nasm
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+          python-version: ${{ matrix.python_version }}
+      - run: |
+          uv sync
+      - run: |
+          uv run python run.py build ${{ matrix.platform.target }} --debug
+          uv build --out-dir dist_debug
+        env:
+          BUILD_PROFILE: debug
+          _PYTHON_HOST_PLATFORM: ${{ matrix.platform.python_host_platform }}
+          ARCHFLAGS: ${{ matrix.platform.archflags }}
+
+      - name: Download OpenH264
+        uses: shiguredo/github-actions/.github/actions/download-openh264@main
+        id: openh264
+        with:
+          openh264_version: ${{ env.OPENH264_VERSION }}
+
+      - run: uv run pytest tests/ -v
+        env:
+          OPENH264_PATH: ${{ steps.openh264.outputs.openh264_path }}
+          ENABLE_VIDEOTOOLBOX: 1
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}_debug
+          path: "dist_debug/"
+
+  slack_notify_failed:
+    needs: [build_debug_ubuntu, build_debug_macos]
+    runs-on: ubuntu-24.04
+    if: failure()
+    steps:
+      - name: Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_CHANNEL: sora-python-sdk
+          SLACK_COLOR: danger
+          SLACK_TITLE: "FAILED"
+          SLACK_ICON_EMOJI: ":japanese_ogre:"
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
