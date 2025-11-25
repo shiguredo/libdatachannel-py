@@ -444,6 +444,7 @@ class WHIPClient:
 
         # タイムスタンプ用（前フレームからの duration でインクリメント）
         self.last_video_dts_usec: int = 0
+        self.last_audio_dts_usec: int = 0
 
         # Key frame interval
         self.key_frame_interval_frames = self.video_fps * 90  # 90秒ごと
@@ -1039,15 +1040,22 @@ class WHIPClient:
         try:
             timestamp_us, data = self.encoded_audio_queue.get_nowait()
 
-            # RTP タイムスタンプを更新（timestamp_us は microseconds）
-            # RTP clock rate は 48000 なので、us を 48kHz に変換
-            rtp_timestamp = self.audio_config.start_timestamp + int(
-                timestamp_us * 48000 / 1_000_000
-            )
-            self.audio_config.timestamp = rtp_timestamp
+            # duration を計算（前フレームとの差分）
+            duration = timestamp_us - self.last_audio_dts_usec
+
+            # duration を秒に変換
+            elapsed_seconds = float(duration) / 1_000_000.0
+
+            # クロックレートに変換してタイムスタンプをインクリメント
+            elapsed_timestamp = int(elapsed_seconds * 48000)
+            self.audio_config.timestamp = self.audio_config.timestamp + elapsed_timestamp
 
             self.audio_track.send(data)
+
+            # 状態を更新
+            self.last_audio_dts_usec = timestamp_us
             self.encoded_audio_count += 1
+
             if self.encoded_audio_count % 100 == 0:
                 logger.debug(f"Sent encoded audio frame #{self.encoded_audio_count}")
         except queue.Empty:
@@ -1099,6 +1107,18 @@ class WHIPClient:
                 pass
 
         time.sleep(0.5)
+
+        # Track を close（MediaHandler チェーンも自動的にクリアされる）
+        if self.video_track:
+            try:
+                self.video_track.close()
+            except Exception as e:
+                handle_error("closing video track", e)
+        if self.audio_track:
+            try:
+                self.audio_track.close()
+            except Exception as e:
+                handle_error("closing audio track", e)
 
         # リソースをクリーンアップ
         self.video_packetizer = None
