@@ -11,26 +11,8 @@
 
 ## develop
 
-- [CHANGE] 音声/映像関連の機能を削除
-  - webcodecs-py を利用するように変更
-  - @voluntas
-- [CHANGE] ビルド方法を scikit-build-core に切り替える
-  - @voluntas
-- [UPDATE] build_pyi ジョブを matrix 化し Python バージョンごとに pyi を生成
-  - Python 3.13 と 3.14 の両方で pyi を生成するように変更
-  - 各ビルドジョブで対応する Python バージョンの pyi をダウンロード
-  - @voluntas
+## 2025.1.0
 
-### misc
+**リリース日**:: 2025-11-25
 
-- [CHANGE] リリースを GH コマンドに変更
-  - `gh release create` を使用してリリースを作成するように変更する
-  - @voluntas
-- [CHANGE] run.py に build と format サブコマンドを追加
-  - .github/workflows/build.yml も修正
-  - @voluntas
-- [UPDATE] actions/checkout と actions/download-artifact を v5 に上げる
-  - @miosakuma
-- [ADD] デバッグビルドの追加
-  - ローカルバージョンラベル +debug を指定している
-  - @voluntas
+**祝いリリース**

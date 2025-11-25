@@ -24,9 +24,9 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 - [nanobind](https://github.com/wjakob/nanobind) を利用しています
 - [scikit-build-core](https://github.com/scikit-build/scikit-build-core) を利用してビルドしています
 
-## コーデックの利用
+## 音声や映像コーデックの利用
 
-webcodecs-py を利用してください。
+[webcodecs-py](https://github.com/shiguredo/webcodecs-py) を利用してください。
 
 ## 優先実装
 
