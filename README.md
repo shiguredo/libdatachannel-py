@@ -36,19 +36,12 @@ webcodecs-py を利用してください。
 
 ### 優先実装が可能な機能一覧
 
-- Ubuntu 22.04 対応
-  - x86_64
-  - arm64
-- macOS 14 対応
-  - arm64
 - Windows 11 対応
   - x86_64
-  - arm64
 - Windows Server 2025 対応
   - x86_64
   - arm64
 - Python 3.12 対応
-- Python 3.11 対応
 
 ## サポートについて
 
