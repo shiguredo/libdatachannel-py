@@ -4,14 +4,17 @@ WHIP (WebRTC-HTTP Ingestion Protocol) クライアント
 webcodecs-py でエンコードして libdatachannel-py で WHIP 配信します。
 
 使い方:
+    # カメラとマイクを使用（デバイス番号 0 がデフォルト）
+    uv run python examples/whip.py --url https://example.com/whip/channel
+
+    # デバイス番号を指定
+    uv run python examples/whip.py --url https://example.com/whip/channel --video-input-device 1 --audio-input-device 1
+
     # テストパターンで配信（blend2d + テスト音声）
     uv run python examples/whip.py --url https://example.com/whip/channel --fake-capture-device
 
-    # カメラとマイクを使用（デバイス番号 0）
-    uv run python examples/whip.py --url https://example.com/whip/channel --video-input-device 0 --audio-input-device 0
-
-    # H.265 で配信
-    uv run python examples/whip.py --url https://example.com/whip/channel --video-codec-type h265 --fake-capture-device
+    # H.265 で 60fps 配信
+    uv run python examples/whip.py --url https://example.com/whip/channel --video-codec-type h265 --framerate 60
 """
 
 import argparse
@@ -28,7 +31,6 @@ import cv2
 import httpx
 import numpy as np
 import sounddevice as sd
-from wish import handle_error, parse_link_header
 
 # blend2d-py
 from blend2d import CompOp, Context, Image, Path
@@ -50,6 +52,7 @@ from webcodecs import (
     VideoFrameBufferInit,
     VideoPixelFormat,
 )
+from wish import handle_error, parse_link_header
 
 # libdatachannel-py
 from libdatachannel import (
@@ -68,9 +71,6 @@ from libdatachannel import (
     Track,
 )
 
-logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +82,9 @@ logger = logging.getLogger(__name__)
 class MovingShape:
     """アニメーションする図形の基底クラス"""
 
-    def __init__(self, x: float, y: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int):
+    def __init__(
+        self, x: float, y: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int
+    ):
         self.x = x
         self.y = y
         self.vx = vx
@@ -114,7 +116,19 @@ class MovingShape:
 class MovingRect(MovingShape):
     """アニメーションする四角形"""
 
-    def __init__(self, x: float, y: float, width: float, height: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int):
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        vx: float,
+        vy: float,
+        r: int,
+        g: int,
+        b: int,
+        alpha: int,
+    ):
         super().__init__(x, y, vx, vy, r, g, b, alpha)
         self.width = width
         self.height = height
@@ -135,7 +149,18 @@ class MovingRect(MovingShape):
 class MovingCircle(MovingShape):
     """アニメーションする円"""
 
-    def __init__(self, x: float, y: float, radius: float, vx: float, vy: float, r: int, g: int, b: int, alpha: int):
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        radius: float,
+        vx: float,
+        vy: float,
+        r: int,
+        g: int,
+        b: int,
+        alpha: int,
+    ):
         super().__init__(x, y, vx, vy, r, g, b, alpha)
         self.radius = radius
 
@@ -161,16 +186,16 @@ def draw_7segment(ctx: Context, digit: int, x: float, y: float, w: float, h: flo
     gap = thickness * 0.2
 
     segments = [
-        [True, True, True, True, True, True, False],    # 0
+        [True, True, True, True, True, True, False],  # 0
         [False, True, True, False, False, False, False],  # 1
-        [True, True, False, True, True, False, True],   # 2
-        [True, True, True, True, False, False, True],   # 3
+        [True, True, False, True, True, False, True],  # 2
+        [True, True, True, True, False, False, True],  # 3
         [False, True, True, False, False, True, True],  # 4
-        [True, False, True, True, False, True, True],   # 5
-        [True, False, True, True, True, True, True],    # 6
-        [True, True, True, False, False, False, False], # 7
-        [True, True, True, True, True, True, True],     # 8
-        [True, True, True, True, False, True, True],    # 9
+        [True, False, True, True, False, True, True],  # 5
+        [True, False, True, True, True, True, True],  # 6
+        [True, True, True, False, False, False, False],  # 7
+        [True, True, True, True, True, True, True],  # 8
+        [True, True, True, True, False, True, True],  # 9
     ]
 
     def draw_h(sx: float, sy: float) -> None:
@@ -196,13 +221,20 @@ def draw_7segment(ctx: Context, digit: int, x: float, y: float, w: float, h: flo
         ctx.fill_path(p)
 
     on = segments[digit]
-    if on[0]: draw_h(x, y)
-    if on[1]: draw_v(x + w - thickness, y, h * 0.5)
-    if on[2]: draw_v(x + w - thickness, y + h * 0.5, h * 0.5)
-    if on[3]: draw_h(x, y + h - thickness)
-    if on[4]: draw_v(x, y + h * 0.5, h * 0.5)
-    if on[5]: draw_v(x, y, h * 0.5)
-    if on[6]: draw_h(x, y + h * 0.5 - thickness * 0.5)
+    if on[0]:
+        draw_h(x, y)
+    if on[1]:
+        draw_v(x + w - thickness, y, h * 0.5)
+    if on[2]:
+        draw_v(x + w - thickness, y + h * 0.5, h * 0.5)
+    if on[3]:
+        draw_h(x, y + h - thickness)
+    if on[4]:
+        draw_v(x, y + h * 0.5, h * 0.5)
+    if on[5]:
+        draw_v(x, y, h * 0.5)
+    if on[6]:
+        draw_h(x, y + h * 0.5 - thickness * 0.5)
 
 
 def draw_colon(ctx: Context, x: float, y: float, h: float) -> None:
@@ -277,8 +309,16 @@ class Blend2DRenderer:
         self.start_time = time.perf_counter()
 
         colors = [
-            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255),
-            (0, 255, 255), (255, 128, 0), (128, 0, 255), (64, 255, 64), (255, 192, 203),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (255, 255, 0),
+            (255, 0, 255),
+            (0, 255, 255),
+            (255, 128, 0),
+            (128, 0, 255),
+            (64, 255, 64),
+            (255, 192, 203),
         ]
 
         self.shapes: list[MovingShape] = []
@@ -300,6 +340,7 @@ class Blend2DRenderer:
 
     def render_frame(self) -> np.ndarray:
         """フレームを描画して BGRA 配列を返す"""
+        t0 = time.perf_counter()
         self.ctx.set_comp_op(CompOp.SRC_COPY)
         self.ctx.set_fill_style_rgba(30, 30, 30, 255)
         self.ctx.fill_all()
@@ -347,6 +388,9 @@ class WHIPClient:
         use_fake_capture: bool = False,
         video_input_device: Optional[int] = None,
         audio_input_device: Optional[int] = None,
+        framerate: int = 30,
+        bitrate: int = 5_000_000,
+        disable_audio_processing: bool = False,
     ):
         self.whip_url = whip_url
         self.bearer_token = bearer_token
@@ -354,6 +398,8 @@ class WHIPClient:
         self.use_fake_capture = use_fake_capture
         self.video_input_device = video_input_device
         self.audio_input_device = audio_input_device
+        self.video_bitrate = bitrate
+        self.disable_audio_processing = disable_audio_processing
 
         self.pc: Optional[PeerConnection] = None
         self.video_track: Optional[Track] = None
@@ -380,10 +426,13 @@ class WHIPClient:
         self.encoded_video_count = 0
         self.encoded_audio_count = 0
 
+        # Encoded frame queue for audio pacing
+        self.encoded_audio_queue: queue.Queue = queue.Queue()
+
         # Video settings
         self.video_width = 1280
         self.video_height = 720
-        self.video_fps = 30
+        self.video_fps = framerate
 
         # Audio settings
         self.audio_sample_rate = 48000
@@ -393,14 +442,18 @@ class WHIPClient:
         self.renderer: Optional[Blend2DRenderer] = None
         self.audio_frame_size = 960  # 20ms @ 48kHz
 
+        # タイムスタンプ用（前フレームからの duration でインクリメント）
+        self.last_video_dts_usec: int = 0
+
         # Key frame interval
-        self.key_frame_interval_frames = self.video_fps * 2  # 2秒ごと
+        self.key_frame_interval_frames = self.video_fps * 90  # 90秒ごと
 
         # Camera capture
         self.camera = None
         self.camera_thread = None
         self.video_queue: queue.Queue = queue.Queue(maxsize=30)
         self.capture_active = False
+        self.last_camera_frame: Optional[np.ndarray] = None
 
         # Audio capture
         self.audio_stream = None
@@ -489,16 +542,39 @@ class WHIPClient:
         """webcodecs-py ビデオエンコーダーをセットアップ"""
 
         def on_output(chunk: EncodedVideoChunk) -> None:
-            if self.video_track and self.video_track.is_open():
-                try:
-                    data = np.zeros(chunk.byte_length, dtype=np.uint8)
-                    chunk.copy_to(data)
-                    self.video_track.send(bytes(data))
-                    self.encoded_video_count += 1
-                    if self.encoded_video_count % 60 == 0:
-                        logger.debug(f"Sent encoded video frame #{self.encoded_video_count}")
-                except Exception as e:
-                    handle_error("sending encoded video", e)
+            # エンコード完了時に直接送信
+            if not self.video_track or not self.video_track.is_open():
+                return
+
+            try:
+                data = np.zeros(chunk.byte_length, dtype=np.uint8)
+                chunk.copy_to(data)
+
+                # duration を計算（前フレームとの差分）
+                dts_usec = chunk.timestamp
+                duration = dts_usec - self.last_video_dts_usec
+
+                # duration を秒に変換
+                elapsed_seconds = float(duration) / 1_000_000.0
+
+                # クロックレートに変換してタイムスタンプをインクリメント
+                elapsed_timestamp = int(elapsed_seconds * 90000)
+                self.video_config.timestamp = self.video_config.timestamp + elapsed_timestamp
+
+                # 送信
+                self.video_track.send(bytes(data))
+
+                # 状態を更新
+                self.last_video_dts_usec = dts_usec
+                self.encoded_video_count += 1
+
+                if self.encoded_video_count % 30 == 0:
+                    logger.debug(
+                        f"Sent #{self.encoded_video_count} dts={dts_usec/1000:.0f}ms "
+                        f"duration={duration/1000:.1f}ms rtp_ts={self.video_config.timestamp}"
+                    )
+            except Exception as e:
+                handle_error("sending encoded video", e)
 
         def on_error(error: str) -> None:
             logger.error(f"Video encoder error: {error}")
@@ -517,8 +593,7 @@ class WHIPClient:
             "codec": codec_string,
             "width": self.video_width,
             "height": self.video_height,
-            "bitrate": 10_000_000,
-            "framerate": float(self.video_fps),
+            "bitrate": self.video_bitrate,
             "latency_mode": LatencyMode.REALTIME,
         }
 
@@ -594,16 +669,13 @@ class WHIPClient:
         """webcodecs-py オーディオエンコーダーをセットアップ"""
 
         def on_output(chunk: EncodedAudioChunk) -> None:
-            if self.audio_track and self.audio_track.is_open():
-                try:
-                    data = np.zeros(chunk.byte_length, dtype=np.uint8)
-                    chunk.copy_to(data)
-                    self.audio_track.send(bytes(data))
-                    self.encoded_audio_count += 1
-                    if self.encoded_audio_count % 100 == 0:
-                        logger.debug(f"Sent encoded audio frame #{self.encoded_audio_count}")
-                except Exception as e:
-                    handle_error("sending encoded audio", e)
+            # エンコード結果をキューに入れる（送信は別スレッドで一定間隔で行う）
+            try:
+                data = np.zeros(chunk.byte_length, dtype=np.uint8)
+                chunk.copy_to(data)
+                self.encoded_audio_queue.put((chunk.timestamp, bytes(data)))
+            except Exception as e:
+                handle_error("queueing encoded audio", e)
 
         def on_error(error: str) -> None:
             logger.error(f"Audio encoder error: {error}")
@@ -652,7 +724,10 @@ class WHIPClient:
         actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-        logger.info(f"Camera opened: {actual_width}x{actual_height} @ {actual_fps}fps")
+        backend = self.camera.getBackendName()
+        logger.info(
+            f"Camera opened: {actual_width}x{actual_height} @ {actual_fps}fps (backend: {backend})"
+        )
 
         # 実際の解像度に合わせる
         if actual_width != self.video_width or actual_height != self.video_height:
@@ -663,14 +738,21 @@ class WHIPClient:
         self.capture_active = True
 
         def capture_thread():
+            logger.info("Camera capture thread started")
+            frame_count = 0
+            start_time = time.perf_counter()
             while self.capture_active:
                 ret, frame = self.camera.read()
                 if ret:
-                    try:
-                        self.video_queue.put_nowait(frame)
-                    except queue.Full:
-                        pass  # Drop frame
-                time.sleep(0.001)
+                    frame_count += 1
+                    self.video_queue.put(frame)
+                    # 1秒ごとに実際のキャプチャレートを表示
+                    if frame_count % 30 == 0:
+                        elapsed = time.perf_counter() - start_time
+                        actual_fps = frame_count / elapsed
+                        logger.debug(f"Camera capture: {actual_fps:.1f} fps")
+                else:
+                    logger.warning("Camera read failed")
 
         self.camera_thread = threading.Thread(target=capture_thread, daemon=True)
         self.camera_thread.start()
@@ -678,10 +760,14 @@ class WHIPClient:
     def _start_audio_capture(self) -> None:
         """マイクキャプチャを開始"""
         # デバイス情報を取得してチャンネル数を決定
-        device_info = sd.query_devices(self.audio_input_device, "input")
+        # audio_input_device が None の場合はシステムデフォルトを使用
+        device = self.audio_input_device
+        if device is None:
+            device = sd.default.device[0]  # デフォルト入力デバイス
+        device_info = sd.query_devices(device, "input")
         max_channels = device_info["max_input_channels"]
         if max_channels < 1:
-            logger.error(f"Audio device {self.audio_input_device} has no input channels")
+            logger.error(f"Audio device {device} has no input channels")
             return
         # デバイスの最大チャンネル数を使用（モノラルかステレオ）
         self.audio_channels = min(max_channels, 2)
@@ -695,7 +781,7 @@ class WHIPClient:
                 pass
 
         self.audio_stream = sd.InputStream(
-            device=self.audio_input_device,
+            device=device,
             samplerate=self.audio_sample_rate,
             channels=self.audio_channels,
             dtype=np.float32,
@@ -703,31 +789,9 @@ class WHIPClient:
             callback=audio_callback,
         )
         self.audio_stream.start()
-        logger.info(f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch (device: {device_info['name']})")
-
-    def _generate_test_pattern(self) -> np.ndarray:
-        """テストパターンを生成（BGRA）- NumPy ベクトル化版"""
-        t = self.video_frame_number / self.video_fps
-
-        # meshgrid で座標配列を作成（初回のみ計算してキャッシュ可能だが、シンプルさ優先）
-        x = np.arange(self.video_width, dtype=np.float32)
-        y = np.arange(self.video_height, dtype=np.float32)
-        xx, yy = np.meshgrid(x, y)
-
-        # 背景グラデーション（ベクトル化）
-        r = (127 + 127 * np.sin(2 * np.pi * (xx / self.video_width + t * 0.1))).astype(np.uint8)
-        g = (127 + 127 * np.sin(2 * np.pi * (yy / self.video_height + t * 0.15))).astype(np.uint8)
-        b = (127 + 127 * np.sin(2 * np.pi * ((xx + yy) / (self.video_width + self.video_height) + t * 0.2))).astype(np.uint8)
-
-        # BGRA フレームを構築
-        frame = np.stack([b, g, r, np.full_like(r, 255)], axis=-1)
-
-        # 動く円を描画
-        cx = int(self.video_width / 2 + self.video_width / 4 * np.sin(t * 2))
-        cy = int(self.video_height / 2 + self.video_height / 4 * np.cos(t * 2))
-        cv2.circle(frame, (cx, cy), 50, (255, 255, 255, 255), -1)
-
-        return frame
+        logger.info(
+            f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch (device: {device_info['name']})"
+        )
 
     def _generate_test_audio(self) -> np.ndarray:
         """テストオーディオを生成（サイン波）"""
@@ -737,8 +801,8 @@ class WHIPClient:
             self.audio_frame_size,
             dtype=np.float32,
         )
-        # 440Hz サイン波
-        mono = np.sin(2 * np.pi * 440 * t) * 0.3
+        # 無音
+        mono = np.zeros_like(t)
         if self.audio_channels == 1:
             return mono.reshape(-1, 1)
         else:
@@ -766,71 +830,115 @@ class WHIPClient:
             logger.info(
                 f"Blend2D renderer initialized: {self.video_width}x{self.video_height} @ {self.video_fps}fps"
             )
-        elif self.video_input_device is not None:
+        else:
             self._start_camera_capture()
-        if self.audio_input_device is not None:
+
+        if not self.use_fake_capture:
             self._start_audio_capture()
 
-        logger.info(
-            f"Sending frames: {self.video_width}x{self.video_height} @ {self.video_fps}fps"
-        )
+        logger.info(f"Sending frames: {self.video_width}x{self.video_height} @ {self.video_fps}fps")
 
-        # フレーム送信ループ
+        # フレーム送信（エンコード完了時に on_output で直接送信）
         frame_interval = 1.0 / self.video_fps
         audio_interval = self.audio_frame_size / self.audio_sample_rate
-        start_time = time.time()
-        next_video_time = start_time
-        next_audio_time = start_time
+        self._running = True
+
+        def video_encode_loop():
+            """ビデオエンコードループ（送信は on_output コールバックで行う）"""
+            if self.renderer:
+                # Blend2D モード: 固定間隔でエンコード
+                next_time = time.perf_counter()
+                while self._running:
+                    now = time.perf_counter()
+                    if now >= next_time:
+                        self._encode_video_frame()
+                        next_time += frame_interval
+                    time.sleep(0.001)
+            else:
+                # カメラモード: フレーム到着を待つ
+                while self._running:
+                    try:
+                        bgr_frame = self.video_queue.get(timeout=0.1)
+                        self._encode_camera_frame(bgr_frame)
+                    except queue.Empty:
+                        pass
+
+        def audio_encode_loop():
+            """オーディオエンコードループ"""
+            next_audio_time = time.perf_counter()
+            while self._running:
+                now = time.perf_counter()
+                if now >= next_audio_time:
+                    self._encode_audio_frame()
+                    next_audio_time += audio_interval
+                time.sleep(0.001)
+
+        def audio_send_loop():
+            """オーディオ送信ループ（一定間隔）"""
+            next_time = time.perf_counter() + audio_interval
+            while self._running:
+                now = time.perf_counter()
+                if now >= next_time:
+                    self._send_encoded_audio()
+                    next_time += audio_interval
+                time.sleep(0.001)
+
+        video_encode_thread = threading.Thread(target=video_encode_loop, daemon=True)
+        audio_encode_thread = None
+        audio_send_thread = None
+        if not self.disable_audio_processing:
+            audio_encode_thread = threading.Thread(target=audio_encode_loop, daemon=True)
+            audio_send_thread = threading.Thread(target=audio_send_loop, daemon=True)
+
+        video_encode_thread.start()
+        if audio_encode_thread:
+            audio_encode_thread.start()
+        if audio_send_thread:
+            audio_send_thread.start()
 
         try:
+            start_time = time.time()
             while True:
-                current_time = time.time()
-
-                if duration and current_time - start_time >= duration:
+                if duration and time.time() - start_time >= duration:
                     break
-
-                # ビデオフレーム
-                if current_time >= next_video_time:
-                    self._send_video_frame()
-                    next_video_time += frame_interval
-
-                # オーディオフレーム
-                if current_time >= next_audio_time:
-                    self._send_audio_frame()
-                    next_audio_time += audio_interval
-
-                # CPU 使用率を抑える
-                sleep_time = min(next_video_time, next_audio_time) - time.time()
-                if sleep_time > 0:
-                    time.sleep(min(sleep_time, 0.001))
-
+                time.sleep(0.1)
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
+        finally:
+            self._running = False
+            video_encode_thread.join(timeout=1.0)
+            if audio_encode_thread:
+                audio_encode_thread.join(timeout=1.0)
+            if audio_send_thread:
+                audio_send_thread.join(timeout=1.0)
 
-    def _send_video_frame(self) -> None:
-        """ビデオフレームを送信"""
+    def _encode_camera_frame(self, bgr_frame: np.ndarray) -> None:
+        """カメラフレームをエンコード"""
         if not self.video_encoder:
             return
 
-        # フレームを取得
-        if self.use_fake_capture and self.renderer:
-            # Blend2D でフレームを描画
-            bgra_frame = self.renderer.render_frame()
-        elif self.video_input_device is not None:
-            # カメラからフレームを取得
-            if self.video_queue.empty():
-                return
-            try:
-                bgr_frame = self.video_queue.get_nowait()
-                # BGR → BGRA
-                bgra_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2BGRA)
-            except queue.Empty:
-                return
-        else:
-            # テストパターン
-            bgra_frame = self._generate_test_pattern()
+        t0 = time.perf_counter()
+        bgra_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2BGRA)
+        t1 = time.perf_counter()
 
-        # VideoFrame を作成
+        self._encode_bgra_frame(bgra_frame, t0, t1)
+
+    def _encode_video_frame(self) -> None:
+        """ビデオフレームをエンコード（Blend2D モード用）"""
+        if not self.video_encoder or not self.renderer:
+            return
+
+        t0 = time.perf_counter()
+        bgra_frame = self.renderer.render_frame()
+        t1 = time.perf_counter()
+
+        self._encode_bgra_frame(bgra_frame, t0, t1)
+
+    def _encode_bgra_frame(self, bgra_frame: np.ndarray, t0: float, t1: float) -> None:
+        """BGRA フレームをエンコード"""
+
+        # タイムスタンプはフレーム番号から計算（マイクロ秒単位）
+        # これは webcodecs の timestamp として使用され、on_output で RTP timestamp に変換される
         timestamp_us = int(self.video_frame_number * 1_000_000 / self.video_fps)
 
         bgra_init: VideoFrameBufferInit = {
@@ -869,27 +977,38 @@ class WHIPClient:
         frame.close()
         self.video_frame_number += 1
 
-        if self.video_frame_number % self.video_fps == 0:
-            elapsed = self.video_frame_number / self.video_fps
-            logger.info(f"Video progress: {elapsed:.1f}s ({self.video_frame_number} frames)")
+        t2 = time.perf_counter()
 
-    def _send_audio_frame(self) -> None:
-        """オーディオフレームを送信"""
+        # パフォーマンス計測（1秒ごとに出力）
+        if self.video_frame_number % self.video_fps == 0:
+            render_ms = (t1 - t0) * 1000
+            encode_ms = (t2 - t1) * 1000
+            logger.debug(
+                f"Frame #{self.video_frame_number}: render={render_ms:.1f}ms, encode={encode_ms:.1f}ms"
+            )
+
+    def _encode_audio_frame(self) -> None:
+        """オーディオフレームをエンコード"""
         if not self.audio_encoder:
             return
 
         # オーディオを取得
-        if self.audio_input_device is not None and not self.audio_queue.empty():
+        if self.use_fake_capture:
+            # テスト音声（無音）
+            audio_samples = self._generate_test_audio()
+        else:
+            # マイクからオーディオを取得
+            if self.audio_queue.empty():
+                return
             try:
                 audio_samples = self.audio_queue.get_nowait()
             except queue.Empty:
                 return
-        else:
-            # テストトーン
-            audio_samples = self._generate_test_audio()
 
         # AudioData を作成
-        timestamp_us = int(self.audio_frame_number * self.audio_frame_size * 1_000_000 / self.audio_sample_rate)
+        timestamp_us = int(
+            self.audio_frame_number * self.audio_frame_size * 1_000_000 / self.audio_sample_rate
+        )
 
         init: AudioDataInit = {
             "format": AudioSampleFormat.F32,
@@ -909,6 +1028,32 @@ class WHIPClient:
 
         audio_data.close()
         self.audio_frame_number += 1
+
+    def _send_encoded_audio(self) -> None:
+        """エンコード済みオーディオを送信"""
+        if self.encoded_audio_queue.empty():
+            return
+        if not self.audio_track or not self.audio_track.is_open():
+            return
+
+        try:
+            timestamp_us, data = self.encoded_audio_queue.get_nowait()
+
+            # RTP タイムスタンプを更新（timestamp_us は microseconds）
+            # RTP clock rate は 48000 なので、us を 48kHz に変換
+            rtp_timestamp = self.audio_config.start_timestamp + int(
+                timestamp_us * 48000 / 1_000_000
+            )
+            self.audio_config.timestamp = rtp_timestamp
+
+            self.audio_track.send(data)
+            self.encoded_audio_count += 1
+            if self.encoded_audio_count % 100 == 0:
+                logger.debug(f"Sent encoded audio frame #{self.encoded_audio_count}")
+        except queue.Empty:
+            pass
+        except Exception as e:
+            handle_error("sending encoded audio", e)
 
     def disconnect(self) -> None:
         """切断処理"""
@@ -991,6 +1136,11 @@ class WHIPClient:
 def main():
     parser = argparse.ArgumentParser(description="WHIP クライアント（webcodecs-py ベース）")
     parser.add_argument("--url", required=True, help="WHIP エンドポイント URL")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="デバッグログを出力",
+    )
     parser.add_argument("--token", help="Bearer トークン（認証用）")
     parser.add_argument("--duration", type=int, help="配信時間（秒）")
     parser.add_argument(
@@ -1007,22 +1157,50 @@ def main():
     parser.add_argument(
         "--video-input-device",
         type=int,
-        help="ビデオ入力デバイス番号（未指定時はテストパターン）",
+        default=0,
+        help="ビデオ入力デバイス番号 (デフォルト: 0)",
     )
     parser.add_argument(
         "--audio-input-device",
         type=int,
-        help="オーディオ入力デバイス番号（未指定時はテスト音声）",
+        help="オーディオ入力デバイス番号 (未指定時はシステムデフォルト)",
+    )
+    parser.add_argument(
+        "--framerate",
+        type=int,
+        default=30,
+        help="フレームレート (デフォルト: 30)",
+    )
+    parser.add_argument(
+        "--bitrate",
+        type=int,
+        default=5_000_000,
+        help="ビットレート (デフォルト: 5000000)",
+    )
+    parser.add_argument(
+        "--disable-audio-processing",
+        action="store_true",
+        help="オーディオのエンコード・送信を無効にする（デバッグ用）",
     )
 
     args = parser.parse_args()
 
-    logger.info(f"Video codec: {args.video_codec_type}")
+    # ログレベル設定
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    logger.info(f"Video codec: {args.video_codec_type}, Framerate: {args.framerate}, Bitrate: {args.bitrate}")
     logger.info(f"WHIP endpoint: {args.url}")
     if args.fake_capture_device:
         logger.info("Using fake capture device (blend2d video + test audio)")
-    elif args.video_input_device is not None or args.audio_input_device is not None:
-        logger.info(f"Video device: {args.video_input_device}, Audio device: {args.audio_input_device}")
+    else:
+        audio_dev_str = (
+            str(args.audio_input_device) if args.audio_input_device is not None else "default"
+        )
+        logger.info(f"Video device: {args.video_input_device}, Audio device: {audio_dev_str}")
 
     client = WHIPClient(
         args.url,
@@ -1031,6 +1209,9 @@ def main():
         args.fake_capture_device,
         args.video_input_device,
         args.audio_input_device,
+        args.framerate,
+        args.bitrate,
+        args.disable_audio_processing,
     )
 
     try:
