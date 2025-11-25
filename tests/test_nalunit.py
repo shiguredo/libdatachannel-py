@@ -3,7 +3,6 @@ from libdatachannel import (
     NalUnitFragmentA,
     NalUnitFragmentHeader,
     NalUnitHeader,
-    NalUnits,
     NalUnitStartSequenceMatch,
 )
 
@@ -62,25 +61,6 @@ def test_nal_fragment_creation_and_fields():
     assert frag.unit_type() == 5
     assert frag.type() == NalUnitFragmentA.FragmentType.End
     assert frag.payload() == b"\xaa\xbb"
-
-
-def test_fragmentation_static_method():
-    # フラグメント分割用の大きめデータを作成
-    payload = b"\x90" * 50
-    nalu = NalUnit()
-    nalu.set_payload(payload)
-
-    frags = NalUnitFragmentA.fragments_from(nalu, max_fragment_size=20)
-    assert isinstance(frags, list)
-    assert all(isinstance(f, NalUnitFragmentA) for f in frags)
-    assert len(frags) >= 3  # Start, Middle..., End
-
-
-def test_nal_units_generate_fragments():
-    nu = NalUnits()
-    fragments = nu.generate_fragments(max_fragment_size=100)
-    assert isinstance(fragments, list)
-    assert all(isinstance(f, bytes) for f in fragments)
 
 
 def test_start_sequence_match_succ():

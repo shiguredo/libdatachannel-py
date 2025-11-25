@@ -21,7 +21,8 @@ def test_create_message_and_access():
 def test_make_message_with_metadata():
     r = Reliability()
     r.max_retransmits = 5
-    f = FrameInfo(96, 12345)
+    f = FrameInfo(12345)
+    f.payload_type = 96
 
     m = make_message(10, type=Message.Type.String, stream=2, reliability=r)
     assert m.type == Message.Type.String
@@ -63,7 +64,6 @@ def test_make_message_from_data_bytes():
         type=Message.Type.Binary,
         stream=5,
         reliability=None,
-        frame_info=None,
     )
 
     assert isinstance(msg, Message)

@@ -343,9 +343,11 @@ void bind_description(nb::module_& m) {
            "payload_type"_a, "profile"_a = DEFAULT_OPUS_AUDIO_PROFILE)
       .def("add_pcmu_codec", &Description::Audio::addPCMUCodec,
            "payload_type"_a, "profile"_a = std::nullopt)
-      .def("add_pcmA_codec", &Description::Audio::addPCMACodec,
+      .def("add_pcma_codec", &Description::Audio::addPCMACodec,
            "payload_type"_a, "profile"_a = std::nullopt)
       .def("add_aac_codec", &Description::Audio::addAACCodec, "payload_type"_a,
+           "profile"_a = std::nullopt)
+      .def("add_g722_codec", &Description::Audio::addG722Codec, "payload_type"_a,
            "profile"_a = std::nullopt);
 
   // Media 継承: Video
@@ -379,9 +381,10 @@ void bind_description(nb::module_& m) {
       .def("ice_pwd", &Description::icePwd)
       .def("fingerprint", &Description::fingerprint)
       .def("hint_type", &Description::hintType)
-      .def("set_fingerprint", &Description::setFingerprint)
       .def("add_ice_option", &Description::addIceOption)
       .def("remove_ice_option", &Description::removeIceOption)
+      .def("set_ice_attribute", &Description::setIceAttribute, "ufrag"_a, "pwd"_a)
+      .def("set_fingerprint", &Description::setFingerprint)
       .def("__str__",
            [](const Description& d) { return static_cast<std::string>(d); })
       .def("has_application", &Description::hasApplication)
@@ -483,9 +486,11 @@ void bind_reliability(nb::module_& m) {
 
 void bind_frameinfo(nb::module_& m) {
   nb::class_<FrameInfo>(m, "FrameInfo")
-      .def(nb::init<uint8_t, uint32_t>(), "payload_type"_a, "timestamp"_a)
+      .def(nb::init<uint32_t>(), "timestamp"_a)
+      .def(nb::init<std::chrono::duration<double>>(), "timestamp_seconds"_a)
+      .def_rw("timestamp", &FrameInfo::timestamp)
       .def_rw("payload_type", &FrameInfo::payloadType)
-      .def_rw("timestamp", &FrameInfo::timestamp);
+      .def_rw("timestamp_seconds", &FrameInfo::timestampSeconds);
 }
 
 // ---- message.hpp ----
@@ -547,13 +552,18 @@ void bind_message(nb::module_& m) {
   m.def(
       "make_message_from_data",
       [](std::vector<byte> data, Message::Type type, unsigned int stream,
-         std::shared_ptr<Reliability> reliability,
-         std::shared_ptr<FrameInfo> frameInfo) {
-        return make_message(std::move(data), type, stream, reliability,
-                            frameInfo);
+         std::shared_ptr<Reliability> reliability) {
+        return make_message(std::move(data), type, stream, reliability);
       },
       "data"_a, "type"_a = Message::Binary, "stream"_a = 0,
-      "reliability"_a = nullptr, "frame_info"_a = nullptr);
+      "reliability"_a = nullptr);
+
+  m.def(
+      "make_message_with_frame_info",
+      [](std::vector<byte> data, std::shared_ptr<FrameInfo> frameInfo) {
+        return make_message(std::move(data), frameInfo);
+      },
+      "data"_a, "frame_info"_a);
 
   m.def("make_message_from_variant",
         static_cast<message_ptr (*)(message_variant)>(&make_message), "data"_a);
@@ -663,32 +673,8 @@ void bind_nalunit(nb::module_& m) {
       .def("type", &NalUnitFragmentA::type)
       .def("set_unit_type", &NalUnitFragmentA::setUnitType)
       .def("set_payload", &NalUnitFragmentA::setPayload)
-      .def("set_fragment_type", &NalUnitFragmentA::setFragmentType)
-      .def_static("fragments_from", &NalUnitFragmentA::fragmentsFrom, "nalu"_a,
-                  "max_fragment_size"_a);
-
-  // --- NalUnits helper class ---
-  nb::class_<NalUnits>(m, "NalUnits")
-      .def(nb::init<>())
-      .def(
-          "generate_fragments",
-          [](NalUnits& v, uint16_t max_fragment_size) {
-            std::vector<std::shared_ptr<binary>> xs =
-                v.generateFragments(max_fragment_size);
-            std::vector<binary> result;
-            for (const auto& x : xs) {
-              result.push_back(*x);
-            }
-            return result;
-          },
-          "max_fragment_size"_a)
-      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
-        return NalUnits::defaultMaximumFragmentSize;
-      });
+      .def("set_fragment_type", &NalUnitFragmentA::setFragmentType);
 }
-
-const uint16_t NalUnits_defaultMaximumFragmentSize =
-    NalUnits::defaultMaximumFragmentSize;
 
 // ---- h265nalunit.hpp ----
 
@@ -751,32 +737,8 @@ void bind_h265nalunit(nb::module_& m) {
       .def("type", &H265NalUnitFragment::type)
       .def("set_unit_type", &H265NalUnitFragment::setUnitType)
       .def("set_payload", &H265NalUnitFragment::setPayload)
-      .def("set_fragment_type", &H265NalUnitFragment::setFragmentType)
-      .def_static("fragments_from", &H265NalUnitFragment::fragmentsFrom,
-                  "nalu"_a, "max_fragment_size"_a);
-
-  // --- H265NalUnits ---
-  nb::class_<H265NalUnits>(m, "H265NalUnits")
-      .def(nb::init<>())
-      .def(
-          "generate_fragments",
-          [](H265NalUnits& v, uint16_t max_fragment_size) {
-            std::vector<std::shared_ptr<binary>> xs =
-                v.generateFragments(max_fragment_size);
-            std::vector<binary> result;
-            for (const auto& x : xs) {
-              result.push_back(*x);
-            }
-            return result;
-          },
-          "max_fragment_size"_a)
-      .def_prop_ro_static("DEFAULT_MAXIMUM_FRAGMENT_SIZE", [](nb::handle) {
-        return H265NalUnits::defaultMaximumFragmentSize;
-      });
+      .def("set_fragment_type", &H265NalUnitFragment::setFragmentType);
 }
-
-const uint16_t H265NalUnits_defaultMaximumFragmentSize =
-    H265NalUnits::defaultMaximumFragmentSize;
 
 // ---- mediahandler.hpp ----
 
@@ -872,6 +834,75 @@ void bind_mediahandler(nb::module_& m) {
       .def(nb::init<>());
 }
 
+// ---- dependencydescriptor.hpp ----
+
+void bind_dependencydescriptor(nb::module_& m) {
+  // DecodeTargetIndication enum
+  nb::enum_<DecodeTargetIndication>(m, "DecodeTargetIndication")
+      .value("NotPresent", DecodeTargetIndication::NotPresent)
+      .value("Discardable", DecodeTargetIndication::Discardable)
+      .value("Switch", DecodeTargetIndication::Switch)
+      .value("Required", DecodeTargetIndication::Required);
+
+  // RenderResolution struct
+  nb::class_<RenderResolution>(m, "RenderResolution")
+      .def(nb::init<>())
+      .def_rw("width", &RenderResolution::width)
+      .def_rw("height", &RenderResolution::height);
+
+  // FrameDependencyTemplate struct
+  nb::class_<FrameDependencyTemplate>(m, "FrameDependencyTemplate")
+      .def(nb::init<>())
+      .def_rw("spatial_id", &FrameDependencyTemplate::spatialId)
+      .def_rw("temporal_id", &FrameDependencyTemplate::temporalId)
+      .def_rw("decode_target_indications",
+              &FrameDependencyTemplate::decodeTargetIndications)
+      .def_rw("frame_diffs", &FrameDependencyTemplate::frameDiffs)
+      .def_rw("chain_diffs", &FrameDependencyTemplate::chainDiffs);
+
+  // FrameDependencyStructure struct
+  nb::class_<FrameDependencyStructure>(m, "FrameDependencyStructure")
+      .def(nb::init<>())
+      .def_rw("template_id_offset", &FrameDependencyStructure::templateIdOffset)
+      .def_rw("decode_target_count", &FrameDependencyStructure::decodeTargetCount)
+      .def_rw("chain_count", &FrameDependencyStructure::chainCount)
+      .def_rw("decode_target_protected_by",
+              &FrameDependencyStructure::decodeTargetProtectedBy)
+      .def_rw("resolutions", &FrameDependencyStructure::resolutions)
+      .def_rw("templates", &FrameDependencyStructure::templates);
+
+  // DependencyDescriptor struct
+  nb::class_<DependencyDescriptor>(m, "DependencyDescriptor")
+      .def(nb::init<>())
+      .def_rw("start_of_frame", &DependencyDescriptor::startOfFrame)
+      .def_rw("end_of_frame", &DependencyDescriptor::endOfFrame)
+      .def_rw("frame_number", &DependencyDescriptor::frameNumber)
+      .def_rw("dependency_template", &DependencyDescriptor::dependencyTemplate)
+      .def_rw("resolution", &DependencyDescriptor::resolution)
+      .def_rw("active_decode_targets_bitmask",
+              &DependencyDescriptor::activeDecodeTargetsBitmask)
+      .def_rw("structure_attached", &DependencyDescriptor::structureAttached);
+
+  // DependencyDescriptorContext struct
+  nb::class_<DependencyDescriptorContext>(m, "DependencyDescriptorContext")
+      .def(nb::init<>())
+      .def_rw("descriptor", &DependencyDescriptorContext::descriptor)
+      .def_rw("structure", &DependencyDescriptorContext::structure);
+
+  // DependencyDescriptorWriter class
+  nb::class_<DependencyDescriptorWriter>(m, "DependencyDescriptorWriter")
+      .def(nb::init<const DependencyDescriptorContext&>(), "context"_a)
+      .def("get_size_bits", &DependencyDescriptorWriter::getSizeBits)
+      .def("get_size", &DependencyDescriptorWriter::getSize)
+      .def("write_to",
+           [](const DependencyDescriptorWriter& self) {
+             size_t size = self.getSize();
+             std::vector<std::byte> buf(size);
+             self.writeTo(buf.data(), size);
+             return buf;
+           });
+}
+
 // ---- rtppacketizationconfig.hpp ----
 
 void bind_rtppacketizationconfig(nb::module_& m) {
@@ -895,9 +926,25 @@ void bind_rtppacketizationconfig(nb::module_& m) {
       .def_rw("mid", &RtpPacketizationConfig::mid)
       .def_rw("rid_id", &RtpPacketizationConfig::ridId)
       .def_rw("rid", &RtpPacketizationConfig::rid)
+      // Dependency Descriptor Extension
+      .def_rw("dependency_descriptor_id",
+              &RtpPacketizationConfig::dependencyDescriptorId)
+      .def_rw("dependency_descriptor_context",
+              &RtpPacketizationConfig::dependencyDescriptorContext)
+      // Playout Delay Extension
       .def_rw("playout_delay_id", &RtpPacketizationConfig::playoutDelayId)
       .def_rw("playout_delay_min", &RtpPacketizationConfig::playoutDelayMin)
       .def_rw("playout_delay_max", &RtpPacketizationConfig::playoutDelayMax)
+      // Color Space Extension
+      .def_rw("color_space_id", &RtpPacketizationConfig::colorSpaceId)
+      .def_rw("color_chroma_siting_horz",
+              &RtpPacketizationConfig::colorChromaSitingHorz)
+      .def_rw("color_chroma_siting_vert",
+              &RtpPacketizationConfig::colorChromaSitingVert)
+      .def_rw("color_range", &RtpPacketizationConfig::colorRange)
+      .def_rw("color_primaries", &RtpPacketizationConfig::colorPrimaries)
+      .def_rw("color_transfer", &RtpPacketizationConfig::colorTransfer)
+      .def_rw("color_matrix", &RtpPacketizationConfig::colorMatrix)
 
       // Methods
       .def_static("get_seconds_from_timestamp",
@@ -923,17 +970,27 @@ void bind_rtppacketizer(nb::module_& m) {
       .def("media", &RtpPacketizer::media)
       .def("outgoing", &RtpPacketizer::outgoing)
       .def_prop_ro("rtp_config",
-                   [](const RtpPacketizer& self) { return self.rtpConfig; });
+                   [](const RtpPacketizer& self) { return self.rtpConfig; })
+      .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
+        return RtpPacketizer::DefaultMaxFragmentSize;
+      })
+      .def_prop_ro_static("VIDEO_CLOCK_RATE",
+                          [](nb::handle) { return RtpPacketizer::VideoClockRate; });
 
+  // OpusRtpPacketizer と AACRtpPacketizer は同じ型 (AudioRtpPacketizer<48000>)
   nb::class_<OpusRtpPacketizer, RtpPacketizer>(m, "OpusRtpPacketizer")
-      .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a);
+      .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
+      .def_prop_ro_static(
+          "DEFAULT_CLOCK_RATE",
+          [](nb::handle) { return OpusRtpPacketizer::DefaultClockRate; });
 
-  // OpusRtpPacketizer と AACRtpPacketizer は同じ型なので片方しか登録できないため
-  // AACRtpPacketizer は __init__.py で別名を作る。
-  static_assert(std::is_same_v<OpusRtpPacketizer, AACRtpPacketizer>,
-                "OpusRtpPacketizer and AACRtpPacketizer should be the same");
-  // nb::class_<AACRtpPacketizer, RtpPacketizer>(m, "AACRtpPacketizer")
-  //     .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a);
+  // PCMARtpPacketizer, PCMURtpPacketizer, G722RtpPacketizer は同じ型 (AudioRtpPacketizer<8000>)
+  // 一つだけ登録し、Python 側で別名を定義する
+  nb::class_<PCMARtpPacketizer, RtpPacketizer>(m, "PCMARtpPacketizer")
+      .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
+      .def_prop_ro_static(
+          "DEFAULT_CLOCK_RATE",
+          [](nb::handle) { return PCMARtpPacketizer::DefaultClockRate; });
 }
 
 // ---- av1rtppacketizer.hpp ----
@@ -948,12 +1005,14 @@ void bind_av1rtppacketizer(nb::module_& m) {
 
   av1pkt
       .def(nb::init<AV1RtpPacketizer::Packetization,
-                    std::shared_ptr<RtpPacketizationConfig>, uint16_t>(),
+                    std::shared_ptr<RtpPacketizationConfig>, size_t>(),
            "packetization"_a, "rtp_config"_a,
-           "max_fragment_size"_a = NalUnits_defaultMaximumFragmentSize)
+           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
       .def("outgoing", &AV1RtpPacketizer::outgoing)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
-        return AV1RtpPacketizer::defaultClockRate;
+      .def_prop_ro_static("CLOCK_RATE",
+                          [](nb::handle) { return AV1RtpPacketizer::ClockRate; })
+      .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
+        return RtpPacketizer::DefaultMaxFragmentSize;
       });
 }
 
@@ -962,12 +1021,14 @@ void bind_av1rtppacketizer(nb::module_& m) {
 void bind_h264rtppacketizer(nb::module_& m) {
   nb::class_<H264RtpPacketizer, RtpPacketizer>(m, "H264RtpPacketizer")
       .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
-                    uint16_t>(),
+                    size_t>(),
            "separator"_a, "rtp_config"_a,
-           "max_fragment_size"_a = NalUnits_defaultMaximumFragmentSize)
+           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
       .def("outgoing", &H264RtpPacketizer::outgoing)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
-        return H264RtpPacketizer::defaultClockRate;
+      .def_prop_ro_static("CLOCK_RATE",
+                          [](nb::handle) { return H264RtpPacketizer::ClockRate; })
+      .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
+        return RtpPacketizer::DefaultMaxFragmentSize;
       });
 }
 
@@ -976,12 +1037,14 @@ void bind_h264rtppacketizer(nb::module_& m) {
 void bind_h265rtppacketizer(nb::module_& m) {
   nb::class_<H265RtpPacketizer, RtpPacketizer>(m, "H265RtpPacketizer")
       .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
-                    uint16_t>(),
+                    size_t>(),
            "separator"_a, "rtp_config"_a,
-           "max_fragment_size"_a = H265NalUnits_defaultMaximumFragmentSize)
+           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
       .def("outgoing", &H265RtpPacketizer::outgoing)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
-        return H265RtpPacketizer::defaultClockRate;
+      .def_prop_ro_static("CLOCK_RATE",
+                          [](nb::handle) { return H265RtpPacketizer::ClockRate; })
+      .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
+        return RtpPacketizer::DefaultMaxFragmentSize;
       });
 }
 
@@ -990,16 +1053,37 @@ void bind_h265rtppacketizer(nb::module_& m) {
 void bind_rtpdepacketizer(nb::module_& m) {
   nb::class_<RtpDepacketizer, MediaHandler>(m, "RtpDepacketizer")
       .def(nb::init<>())
+      .def(nb::init<uint32_t>(), "clock_rate"_a)
       .def("incoming", &RtpDepacketizer::incoming);
+
+  // OpusRtpDepacketizer と AACRtpDepacketizer は同じ型 (AudioRtpDepacketizer<48000>)
+  nb::class_<OpusRtpDepacketizer, RtpDepacketizer>(m, "OpusRtpDepacketizer")
+      .def(nb::init<uint32_t>(), "clock_rate"_a = OpusRtpDepacketizer::DefaultClockRate)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE",
+                          [](nb::handle) { return OpusRtpDepacketizer::DefaultClockRate; });
+
+  // PCMARtpDepacketizer, PCMURtpDepacketizer, G722RtpDepacketizer は同じ型 (AudioRtpDepacketizer<8000>)
+  // 一つだけ登録し、Python 側で別名を定義する
+  nb::class_<PCMARtpDepacketizer, RtpDepacketizer>(m, "PCMARtpDepacketizer")
+      .def(nb::init<uint32_t>(), "clock_rate"_a = PCMARtpDepacketizer::DefaultClockRate)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE",
+                          [](nb::handle) { return PCMARtpDepacketizer::DefaultClockRate; });
 }
 
-// ---- h264depacketizer.hpp ----
+// ---- h264rtpdepacketizer.hpp ----
 
 void bind_h264depacketizer(nb::module_& m) {
-  nb::class_<H264RtpDepacketizer, MediaHandler>(m, "H264RtpDepacketizer")
+  nb::class_<H264RtpDepacketizer, RtpDepacketizer>(m, "H264RtpDepacketizer")
       .def(nb::init<NalUnit::Separator>(),
-           "separator"_a = NalUnit::Separator::LongStartSequence)
-      .def("incoming", &H264RtpDepacketizer::incoming);
+           "separator"_a = NalUnit::Separator::StartSequence);
+}
+
+// ---- h265rtpdepacketizer.hpp ----
+
+void bind_h265depacketizer(nb::module_& m) {
+  nb::class_<H265RtpDepacketizer, RtpDepacketizer>(m, "H265RtpDepacketizer")
+      .def(nb::init<NalUnit::Separator>(),
+           "separator"_a = NalUnit::Separator::StartSequence);
 }
 
 // ---- pacinghandler.hpp ----
@@ -1045,6 +1129,11 @@ void bind_rtcpnackresponder(nb::module_& m) {
 // ---- rtcpreceivingsession.hpp ----
 
 void bind_rtcpreceivingsession(nb::module_& m) {
+  // SyncTimestamps struct
+  nb::class_<RtcpReceivingSession::SyncTimestamps>(m, "SyncTimestamps")
+      .def_ro("rtp_timestamp", &RtcpReceivingSession::SyncTimestamps::rtpTimestamp)
+      .def_ro("ntp_timestamp", &RtcpReceivingSession::SyncTimestamps::ntpTimestamp);
+
   nb::class_<RtcpReceivingSession, MediaHandler>(m, "RtcpReceivingSession")
       .def(nb::init<>())
       .def("incoming", &RtcpReceivingSession::incoming)
@@ -1052,7 +1141,8 @@ void bind_rtcpreceivingsession(nb::module_& m) {
                                    &RtcpReceivingSession::requestKeyframe))
       .def("request_bitrate",
            nb::overload_cast<unsigned int, const message_callback&>(
-               &RtcpReceivingSession::requestBitrate));
+               &RtcpReceivingSession::requestBitrate))
+      .def("get_sync_timestamps", &RtcpReceivingSession::getSyncTimestamps);
 }
 
 // ---- rtcpsrreporter.hpp ----
@@ -1061,7 +1151,6 @@ void bind_rtcpsrreporter(nb::module_& m) {
   nb::class_<RtcpSrReporter, MediaHandler>(m, "RtcpSrReporter")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
       .def("last_reported_timestamp", &RtcpSrReporter::lastReportedTimestamp)
-      .def("set_needs_to_report", &RtcpSrReporter::setNeedsToReport)
       .def("outgoing", &RtcpSrReporter::outgoing)
       .def_prop_ro("rtp_config",
                    [](const RtcpSrReporter& self) { return self.rtpConfig; });
@@ -1147,6 +1236,15 @@ void bind_track(nb::module_& m) {
             return self.send(data.data(), size);
           },
           "data"_a, "size"_a)
+      .def("send_frame",
+           nb::overload_cast<binary, FrameInfo>(&Track::sendFrame), "data"_a,
+           "info"_a)
+      .def(
+          "send_frame",
+          [](Track& self, std::vector<byte> data, size_t size, FrameInfo info) {
+            return self.sendFrame(data.data(), size, info);
+          },
+          "data"_a, "size"_a, "info"_a)
       .def("mid", &Track::mid)
       .def("direction", &Track::direction)
       .def("description", &Track::description)
@@ -1234,6 +1332,8 @@ void bind_peerconnection(nb::module_& m) {
       .def("add_remote_candidate", &PeerConnection::addRemoteCandidate)
       .def("gather_local_candidates", &PeerConnection::gatherLocalCandidates,
            "additional_ice_servers"_a = std::vector<IceServer>{})
+      .def("create_offer", &PeerConnection::createOffer)
+      .def("create_answer", &PeerConnection::createAnswer)
       .def("set_media_handler", &PeerConnection::setMediaHandler)
       .def("get_media_handler", &PeerConnection::getMediaHandler)
       .def("create_data_channel", &PeerConnection::createDataChannel, "label"_a,
@@ -1289,6 +1389,26 @@ void bind_websocket(nb::module_& m) {
       .def("path", &WebSocket::path);
 }
 
+// ---- iceudpmuxlistener.hpp ----
+
+void bind_iceudpmuxlistener(nb::module_& m) {
+  // IceUdpMuxRequest struct
+  nb::class_<IceUdpMuxRequest>(m, "IceUdpMuxRequest")
+      .def_ro("local_ufrag", &IceUdpMuxRequest::localUfrag)
+      .def_ro("remote_ufrag", &IceUdpMuxRequest::remoteUfrag)
+      .def_ro("remote_address", &IceUdpMuxRequest::remoteAddress)
+      .def_ro("remote_port", &IceUdpMuxRequest::remotePort);
+
+  // IceUdpMuxListener class
+  nb::class_<IceUdpMuxListener>(m, "IceUdpMuxListener")
+      .def(nb::init<uint16_t, optional<string>>(), "port"_a,
+           "bind_address"_a = std::nullopt)
+      .def("stop", &IceUdpMuxListener::stop)
+      .def("port", &IceUdpMuxListener::port)
+      .def("on_unhandled_stun_request", &IceUdpMuxListener::OnUnhandledStunRequest,
+           "callback"_a);
+}
+
 // ---- websocketserver.hpp ----
 
 void bind_websocketserver(nb::module_& m) {
@@ -1314,6 +1434,7 @@ void bind_libdatachannel(nb::module_& m) {
   bind_nalunit(m);
   bind_h265nalunit(m);
   bind_mediahandler(m);
+  bind_dependencydescriptor(m);
   bind_rtppacketizationconfig(m);
   bind_rtppacketizer(m);
   bind_av1rtppacketizer(m);
@@ -1321,6 +1442,7 @@ void bind_libdatachannel(nb::module_& m) {
   bind_h265rtppacketizer(m);
   bind_rtpdepacketizer(m);
   bind_h264depacketizer(m);
+  bind_h265depacketizer(m);
   bind_pacinghandler(m);
   bind_rembhandler(m);
   bind_plihandler(m);
@@ -1332,5 +1454,6 @@ void bind_libdatachannel(nb::module_& m) {
   bind_track(m);
   bind_peerconnection(m);
   bind_websocket(m);
+  bind_iceudpmuxlistener(m);
   bind_websocketserver(m);
 }
