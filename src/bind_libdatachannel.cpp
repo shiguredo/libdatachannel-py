@@ -1228,20 +1228,7 @@ void bind_track(nb::module_& m) {
       .def("is_open", &Track::isOpen)
       .def("is_closed", &Track::isClosed)
       .def("max_message_size", &Track::maxMessageSize)
-      .def("close",
-           [](Track& self) {
-             // close 前に MediaHandler チェーンをクリア
-             // これにより nanobind の shared_ptr 参照が解放される
-             if (auto handler = self.getMediaHandler()) {
-               auto current = handler;
-               while (current) {
-                 auto next = current->next();
-                 current->setNext(nullptr);
-                 current = next;
-               }
-             }
-             self.close();
-           })
+      .def("close", &Track::close)
       .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a)
       .def(
           "send",
@@ -1338,9 +1325,14 @@ void bind_peerconnection(nb::module_& m) {
       .def("max_data_channel_id", &PeerConnection::maxDataChannelId)
       .def("get_selected_candidate_pair",
            &PeerConnection::getSelectedCandidatePair)
-      .def("set_local_description", &PeerConnection::setLocalDescription,
-           "type"_a = Description::Type::Unspec,
-           "init"_a = LocalDescriptionInit{})
+      .def(
+          "set_local_description",
+          [](PeerConnection& self, Description::Type type,
+             std::optional<LocalDescriptionInit> init) {
+            self.setLocalDescription(type,
+                                     init.value_or(LocalDescriptionInit{}));
+          },
+          "type"_a = Description::Type::Unspec, "init"_a = nb::none())
       .def("set_remote_description", &PeerConnection::setRemoteDescription)
       .def("add_remote_candidate", &PeerConnection::addRemoteCandidate)
       .def("gather_local_candidates", &PeerConnection::gatherLocalCandidates,
@@ -1349,8 +1341,14 @@ void bind_peerconnection(nb::module_& m) {
       .def("create_answer", &PeerConnection::createAnswer)
       .def("set_media_handler", &PeerConnection::setMediaHandler)
       .def("get_media_handler", &PeerConnection::getMediaHandler)
-      .def("create_data_channel", &PeerConnection::createDataChannel, "label"_a,
-           "init"_a = DataChannelInit{})
+      .def(
+          "create_data_channel",
+          [](PeerConnection& self, const std::string& label,
+             std::optional<DataChannelInit> init) {
+            return self.createDataChannel(label,
+                                          init.value_or(DataChannelInit{}));
+          },
+          "label"_a, "init"_a = nb::none())
       .def("on_data_channel", &PeerConnection::onDataChannel)
       .def("add_track", &PeerConnection::addTrack)
       .def("on_track", &PeerConnection::onTrack)

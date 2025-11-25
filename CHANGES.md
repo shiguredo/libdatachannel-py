@@ -11,6 +11,19 @@
 
 ## develop
 
+## 2025.1.2
+
+**リリース日**:: 2025-11-25
+
+- [FIX] nanobind で DataChannelInit と LocalDescriptionInit がデフォルト引数としてモジュールに保持されリークする問題を修正する
+  - @voluntas
+- [FIX] MediaHandler チェーンのメモリーリークを修正は不要だったので revert する
+  - @voluntas
+
+## 2025.1.1
+
+**リリース日**:: 2025-11-25
+
 - [FIX] MediaHandler チェーンのメモリーリークを修正する
   - `track.close()` をオーバーライドして、 MediaHandler チェーンもクリアするようにする
   - @voluntas
