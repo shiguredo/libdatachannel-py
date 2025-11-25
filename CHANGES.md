@@ -11,6 +11,10 @@
 
 ## develop
 
+## 2025.1.1
+
+**リリース日**:: 2025-11-25
+
 - [FIX] MediaHandler チェーンのメモリーリークを修正する
   - `track.close()` をオーバーライドして、 MediaHandler チェーンもクリアするようにする
   - @voluntas
