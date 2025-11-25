@@ -1,6 +1,6 @@
 {
   "mbedtls": {
-    "version": "3.5.1",
+    "version": "3.6.4",
     "repository": "https://github.com/Mbed-TLS/mbedtls.git"
   },
   "libdatachannel": {
