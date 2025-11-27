@@ -22,7 +22,7 @@ from urllib.parse import urljoin
 import cv2
 import httpx
 import numpy as np
-from wish import get_nal_type_name, handle_error, parse_link_header
+from misc import get_nal_type_name, handle_error, parse_link_header
 
 # webcodecs-py
 from webcodecs import (

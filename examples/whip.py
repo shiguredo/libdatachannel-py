@@ -52,7 +52,7 @@ from webcodecs import (
     VideoFrameBufferInit,
     VideoPixelFormat,
 )
-from wish import handle_error, parse_link_header
+from misc import handle_error, parse_link_header
 
 # libdatachannel-py
 from libdatachannel import (
