@@ -41,7 +41,6 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 - Windows Server 2025 対応
   - x86_64
   - arm64
-- Python 3.12 対応
 
 ## サポートについて
 
