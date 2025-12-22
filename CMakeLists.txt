@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.1)
+cmake_minimum_required(VERSION 4.2)
 project(libdatachannel_py LANGUAGES CXX)
 
 # プラットフォームチェック
