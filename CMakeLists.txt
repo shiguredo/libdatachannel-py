@@ -27,14 +27,14 @@ include(ExternalProject)
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/deps.json DEPS_JSON)
 
 # MbedTLS の設定を解析
-string(JSON MBEDTLS_VERSION GET ${DEPS_JSON} mbedtls version)
-string(JSON MBEDTLS_GIT_REPOSITORY GET ${DEPS_JSON} mbedtls repository)
-set(MBEDTLS_GIT_TAG "v${MBEDTLS_VERSION}")
+string(JSON MBEDTLS_TAG GET ${DEPS_JSON} mbedtls tag)
+string(JSON MBEDTLS_GIT_URL GET ${DEPS_JSON} mbedtls url)
+set(MBEDTLS_GIT_TAG "v${MBEDTLS_TAG}")
 
 # libdatachannel の設定を解析
-string(JSON LIBDATACHANNEL_VERSION GET ${DEPS_JSON} libdatachannel version)
-string(JSON LIBDATACHANNEL_GIT_REPOSITORY GET ${DEPS_JSON} libdatachannel repository)
-set(LIBDATACHANNEL_GIT_TAG "v${LIBDATACHANNEL_VERSION}")
+string(JSON LIBDATACHANNEL_TAG GET ${DEPS_JSON} libdatachannel tag)
+string(JSON LIBDATACHANNEL_GIT_URL GET ${DEPS_JSON} libdatachannel url)
+set(LIBDATACHANNEL_GIT_TAG "v${LIBDATACHANNEL_TAG}")
 
 # ExternalProject ビルド用の並列ビルドジョブ数を決定
 if(DEFINED ENV{CMAKE_BUILD_PARALLEL_LEVEL})
@@ -50,9 +50,9 @@ endif()
 
 # ========== MbedTLS ==========
 message(STATUS "Setting up MbedTLS...")
-set(MBEDTLS_SOURCE_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_VERSION}/source")
-set(MBEDTLS_BUILD_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_VERSION}/build")
-set(MBEDTLS_INSTALL_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_VERSION}/install")
+set(MBEDTLS_SOURCE_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/source")
+set(MBEDTLS_BUILD_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/build")
+set(MBEDTLS_INSTALL_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/install")
 
 # Windows では .lib、それ以外では .a
 if(WIN32)
@@ -69,7 +69,7 @@ else()
   message(STATUS "Building MbedTLS...")
   ExternalProject_Add(
     mbedtls_build
-    GIT_REPOSITORY ${MBEDTLS_GIT_REPOSITORY}
+    GIT_REPOSITORY ${MBEDTLS_GIT_URL}
     GIT_TAG ${MBEDTLS_GIT_TAG}
     GIT_SHALLOW TRUE
     SOURCE_DIR ${MBEDTLS_SOURCE_DIR}
@@ -98,9 +98,9 @@ endif()
 
 # ========== libdatachannel ==========
 message(STATUS "Setting up libdatachannel...")
-set(LIBDATACHANNEL_SOURCE_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_VERSION}/source")
-set(LIBDATACHANNEL_BUILD_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_VERSION}/build")
-set(LIBDATACHANNEL_INSTALL_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_VERSION}/install")
+set(LIBDATACHANNEL_SOURCE_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/source")
+set(LIBDATACHANNEL_BUILD_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/build")
+set(LIBDATACHANNEL_INSTALL_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/install")
 
 # Windows では .lib、それ以外では .a
 if(WIN32)
@@ -117,7 +117,7 @@ else()
   message(STATUS "Building libdatachannel...")
   ExternalProject_Add(
     libdatachannel_build
-    GIT_REPOSITORY ${LIBDATACHANNEL_GIT_REPOSITORY}
+    GIT_REPOSITORY ${LIBDATACHANNEL_GIT_URL}
     GIT_TAG ${LIBDATACHANNEL_GIT_TAG}
     GIT_SHALLOW TRUE
     GIT_SUBMODULES_RECURSE TRUE
