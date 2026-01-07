@@ -180,6 +180,44 @@ def parse_link_header(link_header: str) -> List[IceServer]:
     return ice_servers
 
 
+def get_h265_nal_type_name(nal_type: int) -> str:
+    """H.265 NAL タイプ名を取得"""
+    names = {
+        0: "TRAIL_N",
+        1: "TRAIL_R",
+        19: "IDR_W_RADL",
+        20: "IDR_N_LP",
+        21: "CRA_NUT",
+        32: "VPS",
+        33: "SPS",
+        34: "PPS",
+        35: "AUD",
+        39: "SEI_PREFIX",
+        40: "SEI_SUFFIX",
+    }
+    return names.get(nal_type, f"Unknown({nal_type})")
+
+
+def find_nal_units(data: bytes) -> list[tuple[int, int, int]]:
+    """NAL ユニットのスタートコードを検索
+
+    Returns:
+        list of (start_code_offset, nal_start_offset, start_code_length)
+    """
+    units = []
+    offset = 0
+    while offset < len(data):
+        if offset + 4 <= len(data) and data[offset : offset + 4] == b"\x00\x00\x00\x01":
+            units.append((offset, offset + 4, 4))
+            offset += 4
+        elif offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01":
+            units.append((offset, offset + 3, 3))
+            offset += 3
+        else:
+            offset += 1
+    return units
+
+
 # ============================================================================
 # Blend2D レンダラー（--fake-capture-device 用）
 # ============================================================================
@@ -566,6 +604,9 @@ class WHIPClient:
 
         # Test pattern state
         self.pattern_seed = 0
+
+        # Running flag
+        self._running = False
 
     def connect(self) -> None:
         """WHIP サーバーに接続（OBS の libdatachannel 実装を模倣）"""

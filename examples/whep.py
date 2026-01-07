@@ -21,7 +21,13 @@ from urllib.parse import urljoin
 import httpx
 import numpy as np
 import structlog
-from whip import get_nal_type_name, handle_error, parse_link_header
+from whip import (
+    find_nal_units,
+    get_h265_nal_type_name,
+    get_nal_type_name,
+    handle_error,
+    parse_link_header,
+)
 
 # raw-player
 from raw_player import AudioPlayer, VideoPlayer
@@ -339,106 +345,50 @@ class WHEPClient:
             channels=self.audio_channels,
         )
 
-    def _get_h265_nal_type_name(self, nal_type: int) -> str:
-        """H.265 NAL タイプ名を取得"""
-        names = {
-            0: "TRAIL_N",
-            1: "TRAIL_R",
-            19: "IDR_W_RADL",
-            20: "IDR_N_LP",
-            21: "CRA_NUT",
-            32: "VPS",
-            33: "SPS",
-            34: "PPS",
-            35: "AUD",
-            39: "SEI_PREFIX",
-            40: "SEI_SUFFIX",
-        }
-        return names.get(nal_type, f"Unknown({nal_type})")
-
     def _configure_video_decoder(self, data: bytes) -> None:
         """デコーダーを設定（SPS/PPS または VPS/SPS/PPS から）"""
         if self.video_decoder_configured or not self.video_decoder:
             return
 
-        # H.264: SPS/PPS を探す
-        # H.265: VPS/SPS/PPS を探す
-        h264_sps = None
-        h264_pps = None
-        h265_vps = None
-        h265_sps = None
-        h265_pps = None
+        # NAL ユニットを検索
+        nal_positions = find_nal_units(data)
+        h264_has_sps = False
+        h264_has_pps = False
+        h265_has_vps = False
+        h265_has_sps = False
+        h265_has_pps = False
 
-        offset = 0
-        while offset < len(data):
-            # スタートコードを探す
-            if offset + 4 <= len(data) and data[offset : offset + 4] == b"\x00\x00\x00\x01":
-                start_code_len = 4
-            elif offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01":
-                start_code_len = 3
-            else:
-                offset += 1
+        for i, (_, nal_start, _) in enumerate(nal_positions):
+            if nal_start >= len(data):
                 continue
 
-            nal_start = offset + start_code_len
-            if nal_start >= len(data):
-                break
-
-            # 次のスタートコードまでを取得
-            next_offset = nal_start + 1
-            while next_offset < len(data):
-                if (
-                    next_offset + 4 <= len(data)
-                    and data[next_offset : next_offset + 4] == b"\x00\x00\x00\x01"
-                ) or (
-                    next_offset + 3 <= len(data)
-                    and data[next_offset : next_offset + 3] == b"\x00\x00\x01"
-                ):
-                    break
-                next_offset += 1
-
-            nal_data = data[nal_start:next_offset]
-
             if self.video_codec == "h265":
-                # H.265: NAL タイプは (header >> 1) & 0x3F
                 nal_type = (data[nal_start] >> 1) & 0x3F
-                if nal_type == 32:  # VPS
-                    h265_vps = nal_data
-                    logger.info("Found H.265 VPS", size=len(h265_vps))
-                elif nal_type == 33:  # SPS
-                    h265_sps = nal_data
-                    logger.info("Found H.265 SPS", size=len(h265_sps))
-                elif nal_type == 34:  # PPS
-                    h265_pps = nal_data
-                    logger.info("Found H.265 PPS", size=len(h265_pps))
+                if nal_type == 32:
+                    h265_has_vps = True
+                elif nal_type == 33:
+                    h265_has_sps = True
+                elif nal_type == 34:
+                    h265_has_pps = True
             else:
-                # H.264: NAL タイプは header & 0x1F
                 nal_type = data[nal_start] & 0x1F
-                if nal_type == 7:  # SPS
-                    h264_sps = nal_data
-                    logger.info("Found H.264 SPS", size=len(h264_sps))
-                elif nal_type == 8:  # PPS
-                    h264_pps = nal_data
-                    logger.info("Found H.264 PPS", size=len(h264_pps))
-
-            offset = next_offset
+                if nal_type == 7:
+                    h264_has_sps = True
+                elif nal_type == 8:
+                    h264_has_pps = True
 
         # デフォルト解像度
         width = 960
         height = 540
 
-        if self.video_codec == "h265" and h265_vps and h265_sps and h265_pps:
-            # video_width/height を更新
+        if self.video_codec == "h265" and h265_has_vps and h265_has_sps and h265_has_pps:
             self.video_width = width
             self.video_height = height
-
-            # H.265 コーデック文字列: hev1.1.6.L93.B0 (Main Profile, Level 3.1)
             config: VideoDecoderConfig = {
                 "codec": "hev1.1.6.L93.B0",
                 "coded_width": width,
                 "coded_height": height,
             }
-
             try:
                 self.video_decoder.configure(config)
                 self.video_decoder_configured = True
@@ -451,17 +401,14 @@ class WHEPClient:
             except Exception as e:
                 logger.error("Failed to configure H.265 video decoder", error=str(e))
 
-        elif self.video_codec == "h264" and h264_sps and h264_pps:
-            # video_width/height を更新
+        elif self.video_codec == "h264" and h264_has_sps and h264_has_pps:
             self.video_width = width
             self.video_height = height
-
             h264_config: VideoDecoderConfig = {
-                "codec": "avc1.64001F",  # H.264 High Profile
+                "codec": "avc1.64001F",
                 "coded_width": width,
                 "coded_height": height,
             }
-
             try:
                 self.video_decoder.configure(h264_config)
                 self.video_decoder_configured = True
@@ -479,34 +426,22 @@ class WHEPClient:
         self.video_frame_count += 1
 
         # NAL ユニットを解析
+        nal_positions = find_nal_units(data)
         nal_units = []
         has_keyframe = False
 
-        offset = 0
-        while offset < len(data):
-            if offset + 4 <= len(data) and data[offset : offset + 4] == b"\x00\x00\x00\x01":
-                start_code_len = 4
-            elif offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01":
-                start_code_len = 3
-            else:
-                offset += 1
+        for _, nal_start, _ in nal_positions:
+            if nal_start >= len(data):
                 continue
 
-            nal_start = offset + start_code_len
-            if nal_start >= len(data):
-                break
-
-            # NAL タイプを取得（H.264 と H.265 で異なる）
             nal_header = data[nal_start]
             if self.video_codec == "h265":
-                # H.265: (header >> 1) & 0x3F
                 nal_type = (nal_header >> 1) & 0x3F
                 # IDR_W_RADL=19, IDR_N_LP=20, CRA_NUT=21, VPS=32, SPS=33, PPS=34
                 if nal_type in [19, 20, 21, 32, 33, 34]:
                     has_keyframe = True
-                type_name = self._get_h265_nal_type_name(nal_type)
+                type_name = get_h265_nal_type_name(nal_type)
             else:
-                # H.264: header & 0x1F
                 nal_type = nal_header & 0x1F
                 if nal_type == 5:  # IDR
                     has_keyframe = True
@@ -514,26 +449,7 @@ class WHEPClient:
                     has_keyframe = True
                 type_name = get_nal_type_name(nal_type)
 
-            nal_units.append(
-                {
-                    "type": nal_type,
-                    "type_name": type_name,
-                }
-            )
-
-            # 次のスタートコードへ
-            next_offset = nal_start + 1
-            while next_offset < len(data):
-                if (
-                    next_offset + 4 <= len(data)
-                    and data[next_offset : next_offset + 4] == b"\x00\x00\x00\x01"
-                ) or (
-                    next_offset + 3 <= len(data)
-                    and data[next_offset : next_offset + 3] == b"\x00\x00\x01"
-                ):
-                    break
-                next_offset += 1
-            offset = next_offset
+            nal_units.append({"type": nal_type, "type_name": type_name})
 
         # デコーダーを設定
         if not self.video_decoder_configured:
