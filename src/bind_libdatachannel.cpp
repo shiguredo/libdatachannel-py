@@ -1252,7 +1252,7 @@ void bind_track(nb::module_& m) {
       .def("on_frame", &Track::onFrame, "callback"_a)
       .def("request_keyframe", &Track::requestKeyframe)
       .def("request_bitrate", &Track::requestBitrate, "bitrate"_a)
-      .def("set_media_handler", &Track::setMediaHandler, "handler"_a)
+      .def("set_media_handler", &Track::setMediaHandler, "handler"_a.none())
       .def("chain_media_handler", &Track::chainMediaHandler, "handler"_a)
       .def("get_media_handler", &Track::getMediaHandler);
 }
@@ -1339,7 +1339,7 @@ void bind_peerconnection(nb::module_& m) {
            "additional_ice_servers"_a = std::vector<IceServer>{})
       .def("create_offer", &PeerConnection::createOffer)
       .def("create_answer", &PeerConnection::createAnswer)
-      .def("set_media_handler", &PeerConnection::setMediaHandler)
+      .def("set_media_handler", &PeerConnection::setMediaHandler, "handler"_a.none())
       .def("get_media_handler", &PeerConnection::getMediaHandler)
       .def(
           "create_data_channel",

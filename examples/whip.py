@@ -452,8 +452,8 @@ class WHIPClient:
         self.last_video_dts_usec: int = 0
         self.last_audio_dts_usec: int = 0
 
-        # Key frame interval
-        self.key_frame_interval_frames = self.video_fps * 90  # 90秒ごと
+        # Key frame interval（90秒ごと、ただし最初のフレームと PLI 応答時はキーフレーム）
+        self.key_frame_interval_frames = self.video_fps * 90
 
         # PLI によるキーフレーム強制フラグ
         self.force_keyframe = False
@@ -1218,11 +1218,29 @@ class WHIPClient:
 
         time.sleep(0.5)
 
+        # MediaHandler チェーンを解除（循環参照を防ぐ）
+        if self.video_track:
+            self.video_track.set_media_handler(None)
+        if self.audio_track:
+            self.audio_track.set_media_handler(None)
+
         # リソースをクリーンアップ
+        self.nack_responder = None
+        self.pli_handler = None
+        self.video_sr_reporter = None
+        self.audio_sr_reporter = None
         self.video_packetizer = None
         self.audio_packetizer = None
+        self.video_config = None
+        self.audio_config = None
         self.video_track = None
         self.audio_track = None
+
+        # Blend2D レンダラーをクリーンアップ
+        if self.renderer:
+            self.renderer.ctx = None
+            self.renderer.img = None
+            self.renderer = None
 
         if self.pc:
             try:
