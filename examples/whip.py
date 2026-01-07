@@ -27,6 +27,8 @@ from math import pi
 from typing import Optional
 from urllib.parse import urljoin
 
+import structlog
+
 import httpx
 import numpy as np
 
@@ -75,7 +77,7 @@ from libdatachannel import (
     Track,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ============================================================================
@@ -453,6 +455,9 @@ class WHIPClient:
         # Key frame interval
         self.key_frame_interval_frames = self.video_fps * 90  # 90秒ごと
 
+        # PLI によるキーフレーム強制フラグ
+        self.force_keyframe = False
+
         # Camera capture (uvc-py)
         self.uvc_device: Optional[uvc.Device] = None
         self.capture_active = False
@@ -464,21 +469,42 @@ class WHIPClient:
         self.pattern_seed = 0
 
     def connect(self) -> None:
-        """WHIP サーバーに接続"""
-        logger.info(f"Connecting to WHIP endpoint: {self.whip_url}")
+        """WHIP サーバーに接続（OBS の libdatachannel 実装を模倣）"""
+        logger.info("Connecting to WHIP endpoint", url=self.whip_url)
 
         # PeerConnection を作成（自動 gathering を無効化）
         config = Configuration()
         config.ice_servers = []
         config.disable_auto_gathering = True
+        config.force_media_transport = True
         self.pc = PeerConnection(config)
 
-        # オーディオトラックを追加
+        # 状態変更コールバック（デバッグ用）
+        def on_state_change(state: PeerConnection.State) -> None:
+            logger.info("PeerConnection state changed", state=str(state))
+
+        def on_ice_state_change(state: PeerConnection.IceState) -> None:
+            logger.debug("ICE state changed", state=str(state))
+
+        def on_gathering_state_change(state: PeerConnection.GatheringState) -> None:
+            logger.debug("Gathering state changed", state=str(state))
+
+        self.pc.on_state_change(on_state_change)
+        self.pc.on_ice_state_change(on_ice_state_change)
+        self.pc.on_gathering_state_change(on_gathering_state_change)
+
+        # SSRC と cname を生成（OBS と同様）
+        self.base_ssrc = random.randint(1, 0xFFFFFFFF)
+        self.cname = "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", k=16))
+        media_stream_id = "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", k=16))
+
+        # オーディオトラックを追加（OBS と同様に SSRC を設定）
         audio_desc = Description.Audio("audio", Description.Direction.SendOnly)
         audio_desc.add_opus_codec(111)
+        audio_desc.add_ssrc(self.base_ssrc, self.cname, media_stream_id, f"{media_stream_id}-audio")
         self.audio_track = self.pc.add_track(audio_desc)
 
-        # ビデオトラックを追加
+        # ビデオトラックを追加（OBS と同様に SSRC を設定）
         video_desc = Description.Video("video", Description.Direction.SendOnly)
         if self.codec == "av1":
             video_desc.add_av1_codec(35)
@@ -486,6 +512,7 @@ class WHIPClient:
             video_desc.add_h265_codec(97)
         else:
             video_desc.add_h264_codec(96)
+        video_desc.add_ssrc(self.base_ssrc + 1, self.cname, media_stream_id, f"{media_stream_id}-video")
         self.video_track = self.pc.add_track(video_desc)
 
         # エンコーダーをセットアップ
@@ -498,13 +525,15 @@ class WHIPClient:
         if not local_sdp:
             raise RuntimeError("Failed to create offer")
 
+        logger.debug("Offer SDP:\n" + str(local_sdp))
+
         # WHIP サーバーにオファーを送信
         logger.info("Sending offer to WHIP server...")
-        with httpx.Client(timeout=10.0) as client:
-            headers = {"Content-Type": "application/sdp"}
-            if self.bearer_token:
-                headers["Authorization"] = f"Bearer {self.bearer_token}"
+        headers = {"Content-Type": "application/sdp"}
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
 
+        with httpx.Client(timeout=30.0) as client:
             response = client.post(
                 self.whip_url,
                 content=str(local_sdp),
@@ -515,10 +544,13 @@ class WHIPClient:
             if response.status_code != 201:
                 raise RuntimeError(f"WHIP server returned {response.status_code}: {response.text}")
 
+            logger.debug("Response headers", headers=dict(response.headers))
+
             # セッション URL を取得
             self.session_url = response.headers.get("Location")
             if self.session_url and not self.session_url.startswith("http"):
                 self.session_url = urljoin(self.whip_url, self.session_url)
+            logger.debug("Resource URL", url=self.session_url)
 
             # Link ヘッダーから ICE サーバーを取得
             link_header = response.headers.get("Link")
@@ -526,18 +558,19 @@ class WHIPClient:
             if link_header:
                 ice_servers = parse_link_header(link_header)
                 if ice_servers:
-                    logger.info(f"Found {len(ice_servers)} ICE server(s) in Link header")
+                    logger.info("Found ICE servers in Link header", count=len(ice_servers))
 
             # リモート SDP を設定
+            logger.debug("Answer SDP:\n" + response.text)
             answer = Description(response.text, Description.Type.Answer)
             self.pc.set_remote_description(answer)
 
-            # ICE サーバーがある場合、gathering を実行
+            # ICE サーバーがある場合、gathering を実行（OBS と同様に待たない）
             if ice_servers:
+                logger.info("Starting ICE gathering with TURN servers...")
                 self.pc.gather_local_candidates(ice_servers)
-                logger.info("Gathering local candidates with ICE servers")
 
-        logger.info("Connected to WHIP server")
+        logger.info("WHIP signaling completed")
 
     def _setup_video_encoder(self) -> None:
         """webcodecs-py ビデオエンコーダーをセットアップ"""
@@ -622,8 +655,8 @@ class WHIPClient:
             payload_type = 96
 
         self.video_config = RtpPacketizationConfig(
-            ssrc=random.randint(1, 0xFFFFFFFF),
-            cname="video-stream",
+            ssrc=self.base_ssrc + 1,  # Description と同じ SSRC
+            cname=self.cname,
             payload_type=payload_type,
             clock_rate=90000,
         )
@@ -654,7 +687,8 @@ class WHIPClient:
 
         # PLI handler
         def on_pli():
-            logger.info("PLI received - requesting keyframe")
+            logger.info("PLI received - forcing keyframe")
+            self.force_keyframe = True
 
         self.pli_handler = PliHandler(on_pli)
         self.video_packetizer.add_to_chain(self.pli_handler)
@@ -694,8 +728,8 @@ class WHIPClient:
 
         # RTP パケッタイザーをセットアップ
         self.audio_config = RtpPacketizationConfig(
-            ssrc=random.randint(1, 0xFFFFFFFF),
-            cname="audio-stream",
+            ssrc=self.base_ssrc,  # Description と同じ SSRC
+            cname=self.cname,
             payload_type=111,
             clock_rate=48000,
         )
@@ -987,11 +1021,18 @@ class WHIPClient:
         }
         frame = VideoFrame(i420_buffer, i420_init)
 
-        # エンコード
-        is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0
+        # エンコード（PLI による強制キーフレームも考慮）
+        force_by_pli = self.force_keyframe
+        is_keyframe = (
+            self.video_frame_number % self.key_frame_interval_frames == 0
+            or force_by_pli
+        )
+        if force_by_pli:
+            self.force_keyframe = False
+            logger.info(f"Sending keyframe in response to PLI (frame #{self.video_frame_number})")
         try:
             if is_keyframe:
-                self.video_encoder.encode(frame, {"keyFrame": True})
+                self.video_encoder.encode(frame, {"key_frame": True})
             else:
                 self.video_encoder.encode(frame)
         except Exception as e:
@@ -1027,8 +1068,15 @@ class WHIPClient:
         }
         frame = VideoFrame(y_plane, uv_plane, nv12_init)
 
-        # エンコード
-        is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0
+        # エンコード（PLI による強制キーフレームも考慮）
+        force_by_pli = self.force_keyframe
+        is_keyframe = (
+            self.video_frame_number % self.key_frame_interval_frames == 0
+            or force_by_pli
+        )
+        if force_by_pli:
+            self.force_keyframe = False
+            logger.info(f"Sending keyframe in response to PLI (frame #{self.video_frame_number})")
         try:
             if is_keyframe:
                 self.video_encoder.encode(frame, {"key_frame": True})
@@ -1255,11 +1303,15 @@ def main():
 
     args = parser.parse_args()
 
-    # ログレベル設定
+    # structlog 設定
     log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    structlog.configure(
+        processors=[
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.dev.ConsoleRenderer(pad_level=False),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(log_level),
     )
 
     logger.info(f"Video codec: {args.video_codec_type}, Framerate: {args.framerate}, Bitrate: {args.bitrate}")

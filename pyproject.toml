@@ -43,6 +43,7 @@ test = [
 ]
 example = [
     "httpx",
+    "structlog",
     "uvc-py",
     "blend2d-py",
     "portaudio-py",

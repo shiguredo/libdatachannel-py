@@ -364,6 +364,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "raw-player" },
     { name = "ruff" },
+    { name = "structlog" },
     { name = "ty" },
     { name = "uvc-py" },
     { name = "webcodecs-py" },
@@ -373,6 +374,7 @@ example = [
     { name = "httpx" },
     { name = "portaudio-py" },
     { name = "raw-player" },
+    { name = "structlog" },
     { name = "uvc-py" },
     { name = "webcodecs-py" },
 ]
@@ -404,6 +406,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "raw-player" },
     { name = "ruff" },
+    { name = "structlog" },
     { name = "ty" },
     { name = "uvc-py" },
     { name = "webcodecs-py" },
@@ -413,6 +416,7 @@ example = [
     { name = "httpx" },
     { name = "portaudio-py" },
     { name = "raw-player" },
+    { name = "structlog" },
     { name = "uvc-py" },
     { name = "webcodecs-py" },
 ]
@@ -609,29 +613,25 @@ wheels = [
 
 [[package]]
 name = "portaudio-py"
-version = "2025.1.0.dev0"
+version = "2026.1.0.dev0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/f0/b0f3f3ba3ea25363be200191d24c2203f1fe6d5d85fb50ff6061fc422271/portaudio_py-2025.1.0.dev0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:c8463e2cebcc408942e10d5cdf7fe4301968bff9dac2fd899a8e1a125c23ecd2", size = 114047, upload-time = "2025-12-23T09:23:28.159Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/37/7ba22bfd1229ca43628c3fdfc6fd7b9592e6c502b15500b35333a941e94c/portaudio_py-2025.1.0.dev0-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:92ff7c14127fe882c657a39f4e35ec2973057cd9285e792713c3b28ee180d5f0", size = 3275030, upload-time = "2025-12-23T09:23:28.547Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/b2/65f03769f8a7ca28bcd43f18c3a1ae2c5507ad5ec45caa5b43810858aff3/portaudio_py-2025.1.0.dev0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:8c7b13e89d80a6389dc90f450d08d778327a081375cf2b21ef2c000ce3a90cf5", size = 3453322, upload-time = "2025-12-23T09:23:31.325Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/7c/75ee7c4d3319070593cf8745cf21b368b687504878ed8de24cb722e7bf16/portaudio_py-2025.1.0.dev0-cp312-cp312-win_amd64.whl", hash = "sha256:e1d41f6a2559710338bb7cb743667d32f8ec2d15af3fc705d2a29167af30f316", size = 142608, upload-time = "2025-12-23T09:23:29.272Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/a7/188aa87a13f025d700b6913ce0439935dc8da65e3b6f41d4f8529fae6a67/portaudio_py-2025.1.0.dev0-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:fc59bbcca6e938565d37911ffa6dddc8812b5c9e270a5657f690702de288dc41", size = 113977, upload-time = "2025-12-23T09:23:28.256Z" },
-    { url = "https://files.pythonhosted.org/packages/94/0e/68d819641b2ce488868f504f5dcdfc15068b06b5de8dfaf58c8c80e98ef7/portaudio_py-2025.1.0.dev0-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:145a5711c3b634d8bd98f773ff35d9c4e01f4c13fd416fb1fc9601612a1fdf31", size = 3274992, upload-time = "2025-12-23T09:23:30.638Z" },
-    { url = "https://files.pythonhosted.org/packages/95/ca/03173747e297224171d5576adf4c037d6e450aaa7664ad149ccec76dd58f/portaudio_py-2025.1.0.dev0-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:09fe9cdf73e1083fa1d5c8a70b5322ec204fd34df40576c3753c663012e30810", size = 3453257, upload-time = "2025-12-23T09:23:28.605Z" },
-    { url = "https://files.pythonhosted.org/packages/be/2b/7584a4ce2e873b24e312cbd00d1021c5bbc8b6f98979f1173103f5bd7e30/portaudio_py-2025.1.0.dev0-cp313-cp313-win_amd64.whl", hash = "sha256:b1a00c8dbed906f0f90c8accd3f5a9fc52e3e98a61baffc35e40b5e7b625b167", size = 142516, upload-time = "2025-12-23T09:23:31.895Z" },
-    { url = "https://files.pythonhosted.org/packages/77/93/50f19c3930366b00e998bce650a230f311a0bd20bee61ca2dfdf3a649dd4/portaudio_py-2025.1.0.dev0-cp313-cp313t-macosx_15_0_arm64.whl", hash = "sha256:a820d387db7396bc9aef806184a04ec29492dfae62f094dfadc070f189094efb", size = 117542, upload-time = "2025-12-23T09:23:27.879Z" },
-    { url = "https://files.pythonhosted.org/packages/59/e2/86226d96956523b70fd952619d84edad6435ca3394feebe1cf480cb881bf/portaudio_py-2025.1.0.dev0-cp313-cp313t-manylinux_2_34_aarch64.whl", hash = "sha256:f0988ec8485542226146df3f36611d58e4af0af128756a46dd0cb02afa2a6b5e", size = 3279715, upload-time = "2025-12-23T09:23:29.952Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/08/835dad2d802438cb621679ec84bf16f81dad49216c7ec6a660c75509b34f/portaudio_py-2025.1.0.dev0-cp313-cp313t-manylinux_2_34_x86_64.whl", hash = "sha256:b95dc55efa13e8a7976d72fee97849c7b347b868193899b6d45bf608bec8b6fe", size = 3456474, upload-time = "2025-12-23T09:23:25.292Z" },
-    { url = "https://files.pythonhosted.org/packages/15/72/09408e49d487f479c1600c433e5c2a02348ee8331ef3f759226a4bd3db56/portaudio_py-2025.1.0.dev0-cp313-cp313t-win_amd64.whl", hash = "sha256:14ab2e68ddfbefb39e0a93ce07bc39b00df075def297a672f232e9a38febfa24", size = 152215, upload-time = "2025-12-23T09:23:28.162Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/ab/f385566bf2c822a3eedc0efb9482c780290da2785cc73ad634ba18ee2b11/portaudio_py-2025.1.0.dev0-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:3ae9c8ca3711e0bce1cecec8e1ffc863fa14b974c16fb4d3a858502c1c8dbc5f", size = 113920, upload-time = "2025-12-23T09:23:28.366Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/fb/7f430e34e43eb5d50d55b85ed55f87959c8657e37c2278a50b384c6437de/portaudio_py-2025.1.0.dev0-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:e8c76e18bc175756886a574b5abcdd8a928e84f0508a686028d5bd2b6a5b7aff", size = 3275478, upload-time = "2025-12-23T09:23:30.999Z" },
-    { url = "https://files.pythonhosted.org/packages/06/c2/6803f404dd0ecee62391ad06acb9ec0550a934f976c20922657276a9e894/portaudio_py-2025.1.0.dev0-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:46c2f6434b25a38414ba3b2d558b0ff47081455802d2b56c35e6113eadf03bfc", size = 3453262, upload-time = "2025-12-23T09:23:27.437Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/ae/41dc5176d8a2f874ef7cd6f5eebc4f9fabab9a43328be7fd65997c58c123/portaudio_py-2025.1.0.dev0-cp314-cp314-win_amd64.whl", hash = "sha256:c98df12e265442c974d99600deb29086c3b17a4467ec48b7b2da44eb7b292de5", size = 146269, upload-time = "2025-12-23T09:23:33.688Z" },
-    { url = "https://files.pythonhosted.org/packages/85/c2/c5ee5abc1ffd9062105504c776c76083f6b45dcea508c74abe44555b7a99/portaudio_py-2025.1.0.dev0-cp314-cp314t-macosx_15_0_arm64.whl", hash = "sha256:f10102c9185f3585f68e1f8a6f53dccf634089efad5dfaec014312b1e7ad75a6", size = 117521, upload-time = "2025-12-23T09:23:30.893Z" },
-    { url = "https://files.pythonhosted.org/packages/97/58/71a01fe3816de148d1c6e21763a171e53a1827bf18a0762cdfc41f62b816/portaudio_py-2025.1.0.dev0-cp314-cp314t-manylinux_2_34_aarch64.whl", hash = "sha256:9de24d0858437a7aa37acc1fa84610f9e5c8cdea34af7eab3a96b74057484787", size = 3279903, upload-time = "2025-12-23T09:23:30.375Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/d2/0f8a586841e28f930c3d2b565ec5329bbba4983a5612a048677564328554/portaudio_py-2025.1.0.dev0-cp314-cp314t-manylinux_2_34_x86_64.whl", hash = "sha256:28eb15420a6329355efe32ea12a46c304cba4ced82dbb36e8b86f09ba67baa7b", size = 3456485, upload-time = "2025-12-23T09:23:35.993Z" },
-    { url = "https://files.pythonhosted.org/packages/90/d7/59b2f6e91a6c58d6fe3841873ed357fb6ab8ca1181ec0c4c1590dcd9fc0a/portaudio_py-2025.1.0.dev0-cp314-cp314t-win_amd64.whl", hash = "sha256:ba62a9ce3a792d7761f9ca23c027bf94ef8ab48353a6cba2c4713f1ce2405728", size = 158106, upload-time = "2025-12-23T09:23:27.797Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/b5/11797ecab303f468113436dcc3744607eb62ae81eb37422f8b6980e83803/portaudio_py-2026.1.0.dev0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:11bb0c7b667daed65df56a0c0d2ecdb29c97023d73513ba1bfe28ead7bf8ff9f", size = 114047, upload-time = "2026-01-07T08:16:25.048Z" },
+    { url = "https://files.pythonhosted.org/packages/32/31/89fb365348abdbb30367b62ee7cd0160bca82f78d5b4ed8321a39c427a05/portaudio_py-2026.1.0.dev0-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:e70d57086b8a0293763ec3d4c33d15d48d52319abb6b2d05e35271f95c21eab0", size = 3275032, upload-time = "2026-01-07T08:16:37.585Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/68/a969df7553a4b2ac6920500e8e797a1feba209672c52f5956d1fb975eda6/portaudio_py-2026.1.0.dev0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:d2af91c9b8d85810659483f04d7969ff6a89d02e923f883592c18cedd0143ae0", size = 3453328, upload-time = "2026-01-07T08:16:27.346Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/bd/dc6cb82db89145f3b6b7990cb5e3392af29d8f624d26b813b5dae7f5714d/portaudio_py-2026.1.0.dev0-cp312-cp312-win_amd64.whl", hash = "sha256:d51c267cdd6c287c8175eeada0ed85f48ba2a7ea295274cb414326bc4aeec3e5", size = 142609, upload-time = "2026-01-07T08:16:38.573Z" },
+    { url = "https://files.pythonhosted.org/packages/27/ea/92874d321558019859e5d19f03ab0f4cf117659f9004cd612fb4bdf5d3d9/portaudio_py-2026.1.0.dev0-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:c6fb1639407650f4936e2dd8598c4d006322d8a14d0417715962f5d8f20cdbee", size = 113977, upload-time = "2026-01-07T08:16:36.653Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/95/9cd183fc83f79ea2abb0ec82c545cdb9a2e8733e011f4458bb4ffb7a6e12/portaudio_py-2026.1.0.dev0-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:55fcc076ac998b3d0ccf2669b70db648caddb61faf091e67f252d75ad1c216a8", size = 3274996, upload-time = "2026-01-07T08:16:26.937Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/a4/c4db0c311bc01a5f747f5b0fc57853f6430f6fdd86c4f5bb7711331d8300/portaudio_py-2026.1.0.dev0-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:7958383c53b49dc51352367deae723092e395bb1d4158f367c31d169cd126133", size = 3453254, upload-time = "2026-01-07T08:16:38.724Z" },
+    { url = "https://files.pythonhosted.org/packages/be/cf/e95a700a53a3e611989369e73dadada8bd07dd2e554d38dd050209947e35/portaudio_py-2026.1.0.dev0-cp313-cp313-win_amd64.whl", hash = "sha256:d1d5c298e4d96223e18ae5c234da300c84f781bd6123cdc366c8dd94169163e8", size = 142519, upload-time = "2026-01-07T08:16:35.127Z" },
+    { url = "https://files.pythonhosted.org/packages/70/24/96a27c8bbf4217cd655f4b7a7a7f395f694259426a642c6f809ca6df2955/portaudio_py-2026.1.0.dev0-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:26b3a482e70a32c4e734152e2009a8825628db231d13fa215998bb9846e05801", size = 113919, upload-time = "2026-01-07T08:16:27.046Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/87/6d8c957a62bfdea739ab044f29cc7e3f0c280be67bc3e164e4137450e626/portaudio_py-2026.1.0.dev0-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:d4e80c1000f789fdd865927c13e747248b22da1e1770d2eb277b01216da31dbd", size = 3275471, upload-time = "2026-01-07T08:16:29.065Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/6f/7944c36cda26703113de29ad74954e36221795c74a2bdbc893c2433d9b4c/portaudio_py-2026.1.0.dev0-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:79b68d39a4d9b492d3b65df2b57b8b9e5546adcf3b7d87279cd7f985cb7b34b7", size = 3453269, upload-time = "2026-01-07T08:16:40.123Z" },
+    { url = "https://files.pythonhosted.org/packages/be/f9/9f27c1b1e9e06fad3fb9a11f62657357ac6bd0f5920e91af70dbf7d04d29/portaudio_py-2026.1.0.dev0-cp314-cp314-win_amd64.whl", hash = "sha256:1e5d840e66992135889f6bf3dc939bb315acec9fe86f3911c26ed1a8fbaa502c", size = 146268, upload-time = "2026-01-07T08:16:33.757Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/7d/da1a60db69578de6765523c672e46f358562eaf1a7d8b5b0bd81dccf4f90/portaudio_py-2026.1.0.dev0-cp314-cp314t-macosx_15_0_arm64.whl", hash = "sha256:f6204b40b542705023dd93eb44d14f8af1e98eb1acdeaca8fa0c81df8b74f30b", size = 117521, upload-time = "2026-01-07T08:16:27.23Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/7c/4243dd027866ad933ec89331a5db5c11cdb2b0c260a79dd725f825aee2f3/portaudio_py-2026.1.0.dev0-cp314-cp314t-manylinux_2_34_aarch64.whl", hash = "sha256:13909e67f278e0fe3c2a3c63b1511a6b9027f0a66ea9c6e7069f3b1fb320bf3b", size = 3279899, upload-time = "2026-01-07T08:16:26.589Z" },
+    { url = "https://files.pythonhosted.org/packages/53/59/e59cb63ead261a54f0f48d93370bc9e508a5ce5b24d2cedd60d84aa92929/portaudio_py-2026.1.0.dev0-cp314-cp314t-manylinux_2_34_x86_64.whl", hash = "sha256:0eb4c12402f3d5bacaf2e97ac83aa427c4f4b129b8154690c28353b731cbd6d1", size = 3456483, upload-time = "2026-01-07T08:16:35.68Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/f1/eb88b144d2bd2a56bcea7ac6dfb62029b5f9fbb678f228074d742a30a8ad/portaudio_py-2026.1.0.dev0-cp314-cp314t-win_amd64.whl", hash = "sha256:6fa620ac116738bfe99a9b9c24067a22d18b29b9545caf45466bf1dfec873fd8", size = 158101, upload-time = "2026-01-07T08:16:28.028Z" },
 ]
 
 [[package]]
@@ -845,6 +845,15 @@ wheels = [
 ]
 
 [[package]]
+name = "structlog"
+version = "25.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
+]
+
+[[package]]
 name = "ty"
 version = "0.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -880,24 +889,21 @@ wheels = [
 
 [[package]]
 name = "uvc-py"
-version = "2025.1.0.dev1"
+version = "2026.1.0.dev0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/05/97e6012df1020c2c17a3181694d1a44f70e37e5977a18e73b7ca09729f55/uvc_py-2025.1.0.dev1-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:2207a86229426be6c9d2bfa747bc419a2db9c9544a33b171c6506fe45b38684b", size = 77512, upload-time = "2025-12-23T10:19:02.281Z" },
-    { url = "https://files.pythonhosted.org/packages/17/48/16274c422bfa9719ceaad57b52a8bbec6e3ffd8e1d0ab22114f717aab000/uvc_py-2025.1.0.dev1-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:1bab0432bc0e38ad19d6065a4f8856ac4b2787a71aaf118d900ab98bef142201", size = 88583, upload-time = "2025-12-23T10:19:03.78Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/8b/c04f40217581adeb3149aa0f8197d971885a369e11484f46c49dbeea0a79/uvc_py-2025.1.0.dev1-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:389ec80af7447cac8a55bc4e3e8f3d1a229a157c7726068dd70cd5d73c217eda", size = 94337, upload-time = "2025-12-23T10:19:05.543Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/0b/ecadd9fc67280ad7d825f85a205df44cae05f372fd8b6cff7386dc4497cb/uvc_py-2025.1.0.dev1-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:9028242879acb1e6c530303ea3ca001c3f2622902b59ec6cdc04985f9b75d918", size = 77443, upload-time = "2025-12-23T10:19:05.03Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/f0/d55e8faac64e4586c9cdea24299c6e3a28c28799d5e418c0b8792fe1adab/uvc_py-2025.1.0.dev1-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:fb3abeb99f2a87214055da50c1bc7ca66038154c690ebd4ca1f50cbc2a136b7b", size = 88565, upload-time = "2025-12-23T10:19:04.983Z" },
-    { url = "https://files.pythonhosted.org/packages/ad/4b/d4c84a23664f66bcf42df8c2c0f61355d2ce9a4be013c462e5e3b226cf2b/uvc_py-2025.1.0.dev1-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:18296ff331248b6c6c03c7c5f648d84e58d0b96294382912c0f62e084327d6ed", size = 94313, upload-time = "2025-12-23T10:19:02.14Z" },
-    { url = "https://files.pythonhosted.org/packages/10/57/4905037a9ad4af7122ff00ff21f0f3ebdbc3d997b5318ba353d281b84931/uvc_py-2025.1.0.dev1-cp313-cp313t-macosx_15_0_arm64.whl", hash = "sha256:6610d27389b65772f001a5ff52f54c2c0ced1603033c77dec3cb6d1971d27191", size = 80957, upload-time = "2025-12-23T10:19:00.911Z" },
-    { url = "https://files.pythonhosted.org/packages/65/b6/368840355113db046fbd60e287d3787f3b34d7809d047cf0aad52e9e891c/uvc_py-2025.1.0.dev1-cp313-cp313t-manylinux_2_34_aarch64.whl", hash = "sha256:dc238a2521d180460c763bff5badf19094128d931e25dcbf1f9f1a300690c8d0", size = 91952, upload-time = "2025-12-23T10:19:04.388Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/8b/a5d10919bbdd970fbad2537f4bc892dc29d582feb616df13d6b6e93d9957/uvc_py-2025.1.0.dev1-cp313-cp313t-manylinux_2_34_x86_64.whl", hash = "sha256:a6b6a1ba2779315cc9e5b1cdfac8d0b126da356606e2f4fec944e9e536eb7d11", size = 96461, upload-time = "2025-12-23T10:19:05.306Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/f1/8a6ba677fdcff99ee8224cf95b3d98eb9b41099b6a9c25cd187a901781df/uvc_py-2025.1.0.dev1-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:e850045c7b96c1905350ea80f067a5a1ba687e63f43c2c628e238a461959431d", size = 77366, upload-time = "2025-12-23T10:19:04.24Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/56/48d2032cfebb4f909c0e0036cd45e4ac1d35ca5720b3049b5fedb0510b75/uvc_py-2025.1.0.dev1-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:1282fe7a79cfa781363f5d0f8692e636540b64b28b0b43f00faa359d28302ead", size = 88770, upload-time = "2025-12-23T10:19:04.374Z" },
-    { url = "https://files.pythonhosted.org/packages/32/a1/3e207073e3e535a4ed10572dc28b20e08045b843790b43d7e2364fb17c6a/uvc_py-2025.1.0.dev1-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:910affb192fcdceb81981a00b051ab1ab7d9020f430fb1f8588fafc205c20fc1", size = 94385, upload-time = "2025-12-23T10:19:04.039Z" },
-    { url = "https://files.pythonhosted.org/packages/77/84/7a3392e32483155f1a315795be2fbf7a03dc76d31101b2c27e034a38d9ba/uvc_py-2025.1.0.dev1-cp314-cp314t-macosx_15_0_arm64.whl", hash = "sha256:e2e23b96078fb8fd017d3e6824a56ae1fdf631d0d7564c1b59accf249985438c", size = 81014, upload-time = "2025-12-23T10:19:04.092Z" },
-    { url = "https://files.pythonhosted.org/packages/80/2d/15a44edb0ddd33fc6e87acdc2e0ac4d560b77f483e818cb03ad804549522/uvc_py-2025.1.0.dev1-cp314-cp314t-manylinux_2_34_aarch64.whl", hash = "sha256:b9b36cf4cbb29efbe1f60d2d24238fb77e5c95dcbfc9eb2e4a516eaa684d2a39", size = 92025, upload-time = "2025-12-23T10:19:08.237Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/9f/1e23421576d92fa95b64b3e1b9292af094ec222a6aa27823010c28af79fd/uvc_py-2025.1.0.dev1-cp314-cp314t-manylinux_2_34_x86_64.whl", hash = "sha256:a0ff1615c99878babc268451d47b02da18a253083d3582cf57ee6603b3da19e1", size = 96413, upload-time = "2025-12-23T10:19:06.001Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/72/ea7fcecbb8d2fe6846522af0e8d23a8039068d5b468429efc6a154257556/uvc_py-2026.1.0.dev0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:00b447e96d8db565d22e7dd33ce1b947c40c777695b09aa7590b521ee903e7ad", size = 77475, upload-time = "2026-01-07T08:15:10.597Z" },
+    { url = "https://files.pythonhosted.org/packages/80/93/3c974efe5f8f5af4775c0062ed7498281c4bf771abfa413d7392286234c5/uvc_py-2026.1.0.dev0-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:4b73589f85812554410876630dd5bd06d58a9405814ea04d435b154c9f14686b", size = 88545, upload-time = "2026-01-07T08:15:06.919Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/f8/19b5c770d410df69aaa8783256e8187859fab4839febb8a83499fc691a9c/uvc_py-2026.1.0.dev0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:a3512d3b463a6e0c83d2b0d826987a303d6921f392881959839116c890b67ca0", size = 94298, upload-time = "2026-01-07T08:15:06.414Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/cf/96a89dbc7016941dc007ebf8ec61d1824a0d4d9fc25449675dc9440eb677/uvc_py-2026.1.0.dev0-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:f89a4a71feb35fcceca9d750459a39991ca8d977dfa28e758bd909986f1e4765", size = 77405, upload-time = "2026-01-07T08:15:06.711Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/14/2cd78ad967630b6ee78f44af854505aabd204e7c78f0609fec4b2bb3439b/uvc_py-2026.1.0.dev0-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:219e0a2f9cf2b85ba7dd26979b1d328bfa4751f5c3aad63de46bd455ace658d4", size = 88527, upload-time = "2026-01-07T08:15:06.957Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/95/c4e65298c4612abd14f59ba8bb076b853cde5bd30e976ee4d25545c8cdd5/uvc_py-2026.1.0.dev0-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:f662facda624cf2bf70622b29acd543a3654e04d1a67658221a989c48e6b8d66", size = 94276, upload-time = "2026-01-07T08:15:08.803Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/a9/5445a956dc7d9f94f9c9bcd56874b78b5245e65198008b6f18bda45e1691/uvc_py-2026.1.0.dev0-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:da547b6dbb997cc0753959a4bc13325f66258bcf039aee911189c89a2087faa2", size = 77329, upload-time = "2026-01-07T08:15:08.931Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/a9/564be11336254491e3813e81e37093c9dea08833cf63edeeebb215b7c54f/uvc_py-2026.1.0.dev0-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:1bcf336b022f79634bfe478310605dd6ee7c6abe3131ac7e1c30d3736601046d", size = 88731, upload-time = "2026-01-07T08:15:05.988Z" },
+    { url = "https://files.pythonhosted.org/packages/92/a1/aa57086b793792bcf6c38956c8948806fdbb8a8939e0c9a2a2456504db3e/uvc_py-2026.1.0.dev0-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:3054fe05f12b184aa7515f43ebe0c3c17129be0a7d793a703ffaeab5c01a2845", size = 94348, upload-time = "2026-01-07T08:15:06.93Z" },
+    { url = "https://files.pythonhosted.org/packages/62/a4/21492a43d4fff7ca06d340c427ffdc740700a9b3134929fc7cf398ee0a93/uvc_py-2026.1.0.dev0-cp314-cp314t-macosx_15_0_arm64.whl", hash = "sha256:f2bf6965e46fb200a641a148a0beff44c6ffc6255ad52c7e9eb3ec0aa749e3c4", size = 80978, upload-time = "2026-01-07T08:15:03.023Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/21/4807bb7bce85867aa3c2cea5bb9f6aa281c87214982ae0a15188a66f0b90/uvc_py-2026.1.0.dev0-cp314-cp314t-manylinux_2_34_aarch64.whl", hash = "sha256:0078a47d6f1789574715d28e1988659cce911289ece755e65ab87bb6e301c21a", size = 91989, upload-time = "2026-01-07T08:15:07.108Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/72/148bdb199020c96359d293402a6584093a7e9195f68c96d1db0d74753f55/uvc_py-2026.1.0.dev0-cp314-cp314t-manylinux_2_34_x86_64.whl", hash = "sha256:a5f1d80aae06f7d84f04ee0e5bd99c3d573a71d3e1202335946ebe0cc29a399a", size = 96376, upload-time = "2026-01-07T08:15:06.358Z" },
 ]
 
 [[package]]
