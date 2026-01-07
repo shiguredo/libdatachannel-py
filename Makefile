@@ -15,5 +15,5 @@ example:
 	uv sync --group example
 
 format:
-	clang-format -i src/*.cpp src/*.h
-	uv run ruff format tests/ examples/
+	clang-format -i src/*.cpp
+	uv run ruff format src/ examples/ tests/

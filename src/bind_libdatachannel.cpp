@@ -347,8 +347,8 @@ void bind_description(nb::module_& m) {
            "payload_type"_a, "profile"_a = std::nullopt)
       .def("add_aac_codec", &Description::Audio::addAACCodec, "payload_type"_a,
            "profile"_a = std::nullopt)
-      .def("add_g722_codec", &Description::Audio::addG722Codec, "payload_type"_a,
-           "profile"_a = std::nullopt);
+      .def("add_g722_codec", &Description::Audio::addG722Codec,
+           "payload_type"_a, "profile"_a = std::nullopt);
 
   // Media 継承: Video
   nb::class_<Description::Video, Description::Media>(desc, "Video")
@@ -383,7 +383,8 @@ void bind_description(nb::module_& m) {
       .def("hint_type", &Description::hintType)
       .def("add_ice_option", &Description::addIceOption)
       .def("remove_ice_option", &Description::removeIceOption)
-      .def("set_ice_attribute", &Description::setIceAttribute, "ufrag"_a, "pwd"_a)
+      .def("set_ice_attribute", &Description::setIceAttribute, "ufrag"_a,
+           "pwd"_a)
       .def("set_fingerprint", &Description::setFingerprint)
       .def("__str__",
            [](const Description& d) { return static_cast<std::string>(d); })
@@ -864,7 +865,8 @@ void bind_dependencydescriptor(nb::module_& m) {
   nb::class_<FrameDependencyStructure>(m, "FrameDependencyStructure")
       .def(nb::init<>())
       .def_rw("template_id_offset", &FrameDependencyStructure::templateIdOffset)
-      .def_rw("decode_target_count", &FrameDependencyStructure::decodeTargetCount)
+      .def_rw("decode_target_count",
+              &FrameDependencyStructure::decodeTargetCount)
       .def_rw("chain_count", &FrameDependencyStructure::chainCount)
       .def_rw("decode_target_protected_by",
               &FrameDependencyStructure::decodeTargetProtectedBy)
@@ -894,13 +896,12 @@ void bind_dependencydescriptor(nb::module_& m) {
       .def(nb::init<const DependencyDescriptorContext&>(), "context"_a)
       .def("get_size_bits", &DependencyDescriptorWriter::getSizeBits)
       .def("get_size", &DependencyDescriptorWriter::getSize)
-      .def("write_to",
-           [](const DependencyDescriptorWriter& self) {
-             size_t size = self.getSize();
-             std::vector<std::byte> buf(size);
-             self.writeTo(buf.data(), size);
-             return buf;
-           });
+      .def("write_to", [](const DependencyDescriptorWriter& self) {
+        size_t size = self.getSize();
+        std::vector<std::byte> buf(size);
+        self.writeTo(buf.data(), size);
+        return buf;
+      });
 }
 
 // ---- rtppacketizationconfig.hpp ----
@@ -971,26 +972,27 @@ void bind_rtppacketizer(nb::module_& m) {
       .def("outgoing", &RtpPacketizer::outgoing)
       .def_prop_ro("rtp_config",
                    [](const RtpPacketizer& self) { return self.rtpConfig; })
-      .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
-        return RtpPacketizer::DefaultMaxFragmentSize;
-      })
-      .def_prop_ro_static("VIDEO_CLOCK_RATE",
-                          [](nb::handle) { return RtpPacketizer::VideoClockRate; });
+      .def_prop_ro_static(
+          "DEFAULT_MAX_FRAGMENT_SIZE",
+          [](nb::handle) { return RtpPacketizer::DefaultMaxFragmentSize; })
+      .def_prop_ro_static("VIDEO_CLOCK_RATE", [](nb::handle) {
+        return RtpPacketizer::VideoClockRate;
+      });
 
   // OpusRtpPacketizer と AACRtpPacketizer は同じ型 (AudioRtpPacketizer<48000>)
   nb::class_<OpusRtpPacketizer, RtpPacketizer>(m, "OpusRtpPacketizer")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
-      .def_prop_ro_static(
-          "DEFAULT_CLOCK_RATE",
-          [](nb::handle) { return OpusRtpPacketizer::DefaultClockRate; });
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return OpusRtpPacketizer::DefaultClockRate;
+      });
 
   // PCMARtpPacketizer, PCMURtpPacketizer, G722RtpPacketizer は同じ型 (AudioRtpPacketizer<8000>)
   // 一つだけ登録し、Python 側で別名を定義する
   nb::class_<PCMARtpPacketizer, RtpPacketizer>(m, "PCMARtpPacketizer")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
-      .def_prop_ro_static(
-          "DEFAULT_CLOCK_RATE",
-          [](nb::handle) { return PCMARtpPacketizer::DefaultClockRate; });
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return PCMARtpPacketizer::DefaultClockRate;
+      });
 }
 
 // ---- av1rtppacketizer.hpp ----
@@ -1009,8 +1011,8 @@ void bind_av1rtppacketizer(nb::module_& m) {
            "packetization"_a, "rtp_config"_a,
            "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
       .def("outgoing", &AV1RtpPacketizer::outgoing)
-      .def_prop_ro_static("CLOCK_RATE",
-                          [](nb::handle) { return AV1RtpPacketizer::ClockRate; })
+      .def_prop_ro_static(
+          "CLOCK_RATE", [](nb::handle) { return AV1RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
         return RtpPacketizer::DefaultMaxFragmentSize;
       });
@@ -1025,8 +1027,8 @@ void bind_h264rtppacketizer(nb::module_& m) {
            "separator"_a, "rtp_config"_a,
            "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
       .def("outgoing", &H264RtpPacketizer::outgoing)
-      .def_prop_ro_static("CLOCK_RATE",
-                          [](nb::handle) { return H264RtpPacketizer::ClockRate; })
+      .def_prop_ro_static(
+          "CLOCK_RATE", [](nb::handle) { return H264RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
         return RtpPacketizer::DefaultMaxFragmentSize;
       });
@@ -1041,8 +1043,8 @@ void bind_h265rtppacketizer(nb::module_& m) {
            "separator"_a, "rtp_config"_a,
            "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
       .def("outgoing", &H265RtpPacketizer::outgoing)
-      .def_prop_ro_static("CLOCK_RATE",
-                          [](nb::handle) { return H265RtpPacketizer::ClockRate; })
+      .def_prop_ro_static(
+          "CLOCK_RATE", [](nb::handle) { return H265RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
         return RtpPacketizer::DefaultMaxFragmentSize;
       });
@@ -1058,16 +1060,20 @@ void bind_rtpdepacketizer(nb::module_& m) {
 
   // OpusRtpDepacketizer と AACRtpDepacketizer は同じ型 (AudioRtpDepacketizer<48000>)
   nb::class_<OpusRtpDepacketizer, RtpDepacketizer>(m, "OpusRtpDepacketizer")
-      .def(nb::init<uint32_t>(), "clock_rate"_a = OpusRtpDepacketizer::DefaultClockRate)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE",
-                          [](nb::handle) { return OpusRtpDepacketizer::DefaultClockRate; });
+      .def(nb::init<uint32_t>(),
+           "clock_rate"_a = OpusRtpDepacketizer::DefaultClockRate)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return OpusRtpDepacketizer::DefaultClockRate;
+      });
 
   // PCMARtpDepacketizer, PCMURtpDepacketizer, G722RtpDepacketizer は同じ型 (AudioRtpDepacketizer<8000>)
   // 一つだけ登録し、Python 側で別名を定義する
   nb::class_<PCMARtpDepacketizer, RtpDepacketizer>(m, "PCMARtpDepacketizer")
-      .def(nb::init<uint32_t>(), "clock_rate"_a = PCMARtpDepacketizer::DefaultClockRate)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE",
-                          [](nb::handle) { return PCMARtpDepacketizer::DefaultClockRate; });
+      .def(nb::init<uint32_t>(),
+           "clock_rate"_a = PCMARtpDepacketizer::DefaultClockRate)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return PCMARtpDepacketizer::DefaultClockRate;
+      });
 }
 
 // ---- h264rtpdepacketizer.hpp ----
@@ -1131,8 +1137,10 @@ void bind_rtcpnackresponder(nb::module_& m) {
 void bind_rtcpreceivingsession(nb::module_& m) {
   // SyncTimestamps struct
   nb::class_<RtcpReceivingSession::SyncTimestamps>(m, "SyncTimestamps")
-      .def_ro("rtp_timestamp", &RtcpReceivingSession::SyncTimestamps::rtpTimestamp)
-      .def_ro("ntp_timestamp", &RtcpReceivingSession::SyncTimestamps::ntpTimestamp);
+      .def_ro("rtp_timestamp",
+              &RtcpReceivingSession::SyncTimestamps::rtpTimestamp)
+      .def_ro("ntp_timestamp",
+              &RtcpReceivingSession::SyncTimestamps::ntpTimestamp);
 
   nb::class_<RtcpReceivingSession, MediaHandler>(m, "RtcpReceivingSession")
       .def(nb::init<>())
@@ -1339,7 +1347,8 @@ void bind_peerconnection(nb::module_& m) {
            "additional_ice_servers"_a = std::vector<IceServer>{})
       .def("create_offer", &PeerConnection::createOffer)
       .def("create_answer", &PeerConnection::createAnswer)
-      .def("set_media_handler", &PeerConnection::setMediaHandler, "handler"_a.none())
+      .def("set_media_handler", &PeerConnection::setMediaHandler,
+           "handler"_a.none())
       .def("get_media_handler", &PeerConnection::getMediaHandler)
       .def(
           "create_data_channel",
@@ -1416,8 +1425,8 @@ void bind_iceudpmuxlistener(nb::module_& m) {
            "bind_address"_a = std::nullopt)
       .def("stop", &IceUdpMuxListener::stop)
       .def("port", &IceUdpMuxListener::port)
-      .def("on_unhandled_stun_request", &IceUdpMuxListener::OnUnhandledStunRequest,
-           "callback"_a);
+      .def("on_unhandled_stun_request",
+           &IceUdpMuxListener::OnUnhandledStunRequest, "callback"_a);
 }
 
 // ---- websocketserver.hpp ----

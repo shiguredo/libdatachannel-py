@@ -495,8 +495,12 @@ class WHIPClient:
 
         # SSRC と cname を生成（OBS と同様）
         self.base_ssrc = random.randint(1, 0xFFFFFFFF)
-        self.cname = "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", k=16))
-        media_stream_id = "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", k=16))
+        self.cname = "".join(
+            random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", k=16)
+        )
+        media_stream_id = "".join(
+            random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", k=16)
+        )
 
         # オーディオトラックを追加（OBS と同様に SSRC を設定）
         audio_desc = Description.Audio("audio", Description.Direction.SendOnly)
@@ -512,7 +516,9 @@ class WHIPClient:
             video_desc.add_h265_codec(97)
         else:
             video_desc.add_h264_codec(96)
-        video_desc.add_ssrc(self.base_ssrc + 1, self.cname, media_stream_id, f"{media_stream_id}-video")
+        video_desc.add_ssrc(
+            self.base_ssrc + 1, self.cname, media_stream_id, f"{media_stream_id}-video"
+        )
         self.video_track = self.pc.add_track(video_desc)
 
         # エンコーダーをセットアップ
@@ -604,8 +610,8 @@ class WHIPClient:
 
                 if self.encoded_video_count % 30 == 0:
                     logger.debug(
-                        f"Sent #{self.encoded_video_count} dts={dts_usec/1000:.0f}ms "
-                        f"duration={duration/1000:.1f}ms rtp_ts={self.video_config.timestamp}"
+                        f"Sent #{self.encoded_video_count} dts={dts_usec / 1000:.0f}ms "
+                        f"duration={duration / 1000:.1f}ms rtp_ts={self.video_config.timestamp}"
                     )
             except Exception as e:
                 handle_error("sending encoded video", e)
@@ -769,7 +775,11 @@ class WHIPClient:
         # 要求解像度に近いフォーマットを探す (NV12 優先)
         selected = None
         for fmt in formats:
-            if fmt.width == self.video_width and fmt.height == self.video_height and fmt.fps == self.video_fps:
+            if (
+                fmt.width == self.video_width
+                and fmt.height == self.video_height
+                and fmt.fps == self.video_fps
+            ):
                 if fmt.format == uvc.Format.NV12:
                     selected = fmt
                     break
@@ -799,9 +809,11 @@ class WHIPClient:
 
         # キャプチャ開始 (NV12 出力)
         self.uvc_device.start(
-            self.video_width, self.video_height, self.video_fps,
+            self.video_width,
+            self.video_height,
+            self.video_fps,
             capture_format=selected.format,
-            output_format=uvc.Format.NV12
+            output_format=uvc.Format.NV12,
         )
         self.capture_active = True
 
@@ -1023,10 +1035,7 @@ class WHIPClient:
 
         # エンコード（PLI による強制キーフレームも考慮）
         force_by_pli = self.force_keyframe
-        is_keyframe = (
-            self.video_frame_number % self.key_frame_interval_frames == 0
-            or force_by_pli
-        )
+        is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0 or force_by_pli
         if force_by_pli:
             self.force_keyframe = False
             logger.info(f"Sending keyframe in response to PLI (frame #{self.video_frame_number})")
@@ -1051,7 +1060,9 @@ class WHIPClient:
                 f"Frame #{self.video_frame_number}: render={render_ms:.1f}ms, encode={encode_ms:.1f}ms"
             )
 
-    def _encode_nv12_frame(self, y_plane: np.ndarray, uv_plane: np.ndarray, t0: float, t1: float) -> None:
+    def _encode_nv12_frame(
+        self, y_plane: np.ndarray, uv_plane: np.ndarray, t0: float, t1: float
+    ) -> None:
         """NV12 フレームをエンコード"""
         if not self.video_encoder:
             return
@@ -1070,10 +1081,7 @@ class WHIPClient:
 
         # エンコード（PLI による強制キーフレームも考慮）
         force_by_pli = self.force_keyframe
-        is_keyframe = (
-            self.video_frame_number % self.key_frame_interval_frames == 0
-            or force_by_pli
-        )
+        is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0 or force_by_pli
         if force_by_pli:
             self.force_keyframe = False
             logger.info(f"Sending keyframe in response to PLI (frame #{self.video_frame_number})")
@@ -1332,7 +1340,9 @@ def main():
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
     )
 
-    logger.info(f"Video codec: {args.video_codec_type}, Framerate: {args.framerate}, Bitrate: {args.bitrate}")
+    logger.info(
+        f"Video codec: {args.video_codec_type}, Framerate: {args.framerate}, Bitrate: {args.bitrate}"
+    )
     logger.info(f"WHIP endpoint: {args.url}")
     if args.fake_capture_device:
         logger.info("Using fake capture device (blend2d video + test audio)")
