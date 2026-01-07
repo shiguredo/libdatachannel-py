@@ -29,12 +29,12 @@ file(READ ${CMAKE_CURRENT_SOURCE_DIR}/deps.json DEPS_JSON)
 # MbedTLS の設定を解析
 string(JSON MBEDTLS_TAG GET ${DEPS_JSON} mbedtls tag)
 string(JSON MBEDTLS_GIT_URL GET ${DEPS_JSON} mbedtls url)
-set(MBEDTLS_GIT_TAG "v${MBEDTLS_TAG}")
+set(MBEDTLS_GIT_TAG "${MBEDTLS_TAG}")
 
 # libdatachannel の設定を解析
 string(JSON LIBDATACHANNEL_TAG GET ${DEPS_JSON} libdatachannel tag)
 string(JSON LIBDATACHANNEL_GIT_URL GET ${DEPS_JSON} libdatachannel url)
-set(LIBDATACHANNEL_GIT_TAG "v${LIBDATACHANNEL_TAG}")
+set(LIBDATACHANNEL_GIT_TAG "${LIBDATACHANNEL_TAG}")
 
 # ExternalProject ビルド用の並列ビルドジョブ数を決定
 if(DEFINED ENV{CMAKE_BUILD_PARALLEL_LEVEL})
