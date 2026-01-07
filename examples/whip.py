@@ -27,10 +27,14 @@ from math import pi
 from typing import Optional
 from urllib.parse import urljoin
 
-import cv2
 import httpx
 import numpy as np
-import sounddevice as sd
+
+# portaudio-py
+import portaudio as pa
+
+# uvc-py
+import uvc
 
 # blend2d-py
 from blend2d import CompOp, Context, Image, Path
@@ -449,16 +453,12 @@ class WHIPClient:
         # Key frame interval
         self.key_frame_interval_frames = self.video_fps * 90  # 90秒ごと
 
-        # Camera capture
-        self.camera = None
-        self.camera_thread = None
-        self.video_queue: queue.Queue = queue.Queue(maxsize=30)
+        # Camera capture (uvc-py)
+        self.uvc_device: Optional[uvc.Device] = None
         self.capture_active = False
-        self.last_camera_frame: Optional[np.ndarray] = None
 
-        # Audio capture
-        self.audio_stream = None
-        self.audio_queue: queue.Queue = queue.Queue(maxsize=50)
+        # Audio capture (portaudio-py)
+        self.audio_stream: Optional[pa.Stream] = None
 
         # Test pattern state
         self.pattern_seed = 0
@@ -712,86 +712,105 @@ class WHIPClient:
             self.audio_track.set_media_handler(self.audio_packetizer)
 
     def _start_camera_capture(self) -> None:
-        """カメラキャプチャを開始"""
-        self.camera = cv2.VideoCapture(self.video_input_device)
-        if not self.camera.isOpened():
-            logger.error("Failed to open camera")
+        """カメラキャプチャを開始 (uvc-py)"""
+        # デバイスを開く
+        try:
+            if self.video_input_device is not None:
+                self.uvc_device = uvc.open(self.video_input_device)
+            else:
+                # デフォルトデバイス (index 0)
+                self.uvc_device = uvc.open(0)
+        except RuntimeError as e:
+            logger.error(f"Failed to open camera: {e}")
             return
 
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.video_width)
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.video_height)
-        self.camera.set(cv2.CAP_PROP_FPS, self.video_fps)
+        logger.info(f"Camera device: {self.uvc_device.info.name}")
 
-        actual_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-        backend = self.camera.getBackendName()
-        logger.info(
-            f"Camera opened: {actual_width}x{actual_height} @ {actual_fps}fps (backend: {backend})"
-        )
+        # サポートされているフォーマットを確認
+        formats = self.uvc_device.get_supported_formats()
+        if not formats:
+            logger.error("No supported formats found")
+            return
+
+        # 要求解像度に近いフォーマットを探す (NV12 優先)
+        selected = None
+        for fmt in formats:
+            if fmt.width == self.video_width and fmt.height == self.video_height and fmt.fps == self.video_fps:
+                if fmt.format == uvc.Format.NV12:
+                    selected = fmt
+                    break
+                elif selected is None:
+                    selected = fmt
+
+        # 見つからなければ 30fps の NV12 フォーマットを探す
+        if selected is None:
+            for fmt in formats:
+                if fmt.fps == 30 and fmt.format == uvc.Format.NV12:
+                    selected = fmt
+                    break
+
+        # それでも見つからなければ最初のフォーマット
+        if selected is None:
+            selected = formats[0]
 
         # 実際の解像度に合わせる
-        if actual_width != self.video_width or actual_height != self.video_height:
-            self.video_width = actual_width
-            self.video_height = actual_height
-            logger.info(f"Adjusted video size to camera: {self.video_width}x{self.video_height}")
+        self.video_width = selected.width
+        self.video_height = selected.height
+        self.video_fps = selected.fps
 
+        logger.info(
+            f"Camera opened: {self.video_width}x{self.video_height} @ {self.video_fps}fps "
+            f"(format: {selected.format})"
+        )
+
+        # キャプチャ開始 (NV12 出力)
+        self.uvc_device.start(
+            self.video_width, self.video_height, self.video_fps,
+            capture_format=selected.format,
+            output_format=uvc.Format.NV12
+        )
         self.capture_active = True
 
-        def capture_thread():
-            logger.info("Camera capture thread started")
-            frame_count = 0
-            start_time = time.perf_counter()
-            while self.capture_active:
-                ret, frame = self.camera.read()
-                if ret:
-                    frame_count += 1
-                    self.video_queue.put(frame)
-                    # 1秒ごとに実際のキャプチャレートを表示
-                    if frame_count % 30 == 0:
-                        elapsed = time.perf_counter() - start_time
-                        actual_fps = frame_count / elapsed
-                        logger.debug(f"Camera capture: {actual_fps:.1f} fps")
-                else:
-                    logger.warning("Camera read failed")
-
-        self.camera_thread = threading.Thread(target=capture_thread, daemon=True)
-        self.camera_thread.start()
-
     def _start_audio_capture(self) -> None:
-        """マイクキャプチャを開始"""
+        """マイクキャプチャを開始 (portaudio-py)"""
         # デバイス情報を取得してチャンネル数を決定
         # audio_input_device が None の場合はシステムデフォルトを使用
         device = self.audio_input_device
         if device is None:
-            device = sd.default.device[0]  # デフォルト入力デバイス
-        device_info = sd.query_devices(device, "input")
-        max_channels = device_info["max_input_channels"]
+            device = pa.get_default_input_device()
+            if device == pa.NO_DEVICE:
+                logger.error("No default input device found")
+                return
+
+        device_info = pa.get_device_info(device)
+        if device_info is None:
+            logger.error(f"Failed to get device info for device {device}")
+            return
+
+        max_channels = device_info.max_input_channels
         if max_channels < 1:
             logger.error(f"Audio device {device} has no input channels")
             return
         # デバイスの最大チャンネル数を使用（モノラルかステレオ）
         self.audio_channels = min(max_channels, 2)
 
-        def audio_callback(indata, frames, time_info, status):
-            if status:
-                logger.warning(f"Audio capture status: {status}")
-            try:
-                self.audio_queue.put_nowait(indata.copy())
-            except queue.Full:
-                pass
-
-        self.audio_stream = sd.InputStream(
+        # 入力パラメータを作成
+        input_params = pa.StreamParameters(
             device=device,
-            samplerate=self.audio_sample_rate,
-            channels=self.audio_channels,
-            dtype=np.float32,
-            blocksize=self.audio_frame_size,
-            callback=audio_callback,
+            channel_count=self.audio_channels,
+            sample_format=pa.FLOAT32,
+            suggested_latency=device_info.default_low_input_latency,
+        )
+
+        # ストリームを開く
+        self.audio_stream = pa.Stream(
+            input_parameters=input_params,
+            sample_rate=self.audio_sample_rate,
+            frames_per_buffer=self.audio_frame_size,
         )
         self.audio_stream.start()
         logger.info(
-            f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch (device: {device_info['name']})"
+            f"Audio capture started: {self.audio_sample_rate}Hz, {self.audio_channels}ch (device: {device_info.name})"
         )
 
     def _generate_test_audio(self) -> np.ndarray:
@@ -856,13 +875,13 @@ class WHIPClient:
                         next_time += frame_interval
                     time.sleep(0.001)
             else:
-                # カメラモード: フレーム到着を待つ
-                while self._running:
-                    try:
-                        bgr_frame = self.video_queue.get(timeout=0.1)
-                        self._encode_camera_frame(bgr_frame)
-                    except queue.Empty:
-                        pass
+                # カメラモード (uvc-py): フレーム到着を待つ
+                while self._running and self.uvc_device:
+                    uvc_frame = self.uvc_device.get_frame()
+                    if uvc_frame is not None:
+                        self._encode_camera_frame(uvc_frame)
+                    else:
+                        time.sleep(0.001)
 
         def audio_encode_loop():
             """オーディオエンコードループ"""
@@ -913,16 +932,19 @@ class WHIPClient:
             if audio_send_thread:
                 audio_send_thread.join(timeout=1.0)
 
-    def _encode_camera_frame(self, bgr_frame: np.ndarray) -> None:
-        """カメラフレームをエンコード"""
+    def _encode_camera_frame(self, uvc_frame: uvc.Frame) -> None:
+        """カメラフレームをエンコード (NV12)"""
         if not self.video_encoder:
             return
 
         t0 = time.perf_counter()
-        bgra_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2BGRA)
+
+        # NV12 フォーマットで Y と UV プレーンを取得
+        y_plane, uv_plane = uvc_frame.to_nv12()
+
         t1 = time.perf_counter()
 
-        self._encode_bgra_frame(bgra_frame, t0, t1)
+        self._encode_nv12_frame(y_plane, uv_plane, t0, t1)
 
     def _encode_video_frame(self) -> None:
         """ビデオフレームをエンコード（Blend2D モード用）"""
@@ -988,8 +1010,48 @@ class WHIPClient:
                 f"Frame #{self.video_frame_number}: render={render_ms:.1f}ms, encode={encode_ms:.1f}ms"
             )
 
+    def _encode_nv12_frame(self, y_plane: np.ndarray, uv_plane: np.ndarray, t0: float, t1: float) -> None:
+        """NV12 フレームをエンコード"""
+        if not self.video_encoder:
+            return
+
+        # タイムスタンプはフレーム番号から計算（マイクロ秒単位）
+        timestamp_us = int(self.video_frame_number * 1_000_000 / self.video_fps)
+
+        # NV12 VideoFrame を作成
+        nv12_init: VideoFrameBufferInit = {
+            "format": VideoPixelFormat.NV12,
+            "coded_width": self.video_width,
+            "coded_height": self.video_height,
+            "timestamp": timestamp_us,
+        }
+        frame = VideoFrame(y_plane, uv_plane, nv12_init)
+
+        # エンコード
+        is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0
+        try:
+            if is_keyframe:
+                self.video_encoder.encode(frame, {"key_frame": True})
+            else:
+                self.video_encoder.encode(frame)
+        except Exception as e:
+            handle_error("encoding video frame", e)
+
+        frame.close()
+        self.video_frame_number += 1
+
+        t2 = time.perf_counter()
+
+        # パフォーマンス計測（1秒ごとに出力）
+        if self.video_frame_number % self.video_fps == 0:
+            capture_ms = (t1 - t0) * 1000
+            encode_ms = (t2 - t1) * 1000
+            logger.debug(
+                f"Frame #{self.video_frame_number}: capture={capture_ms:.1f}ms, encode={encode_ms:.1f}ms"
+            )
+
     def _encode_audio_frame(self) -> None:
-        """オーディオフレームをエンコード"""
+        """オーディオフレームをエンコード (portaudio-py)"""
         if not self.audio_encoder:
             return
 
@@ -998,12 +1060,14 @@ class WHIPClient:
             # テスト音声（無音）
             audio_samples = self._generate_test_audio()
         else:
-            # マイクからオーディオを取得
-            if self.audio_queue.empty():
+            # マイクからオーディオを取得 (portaudio-py)
+            if not self.audio_stream:
                 return
             try:
-                audio_samples = self.audio_queue.get_nowait()
-            except queue.Empty:
+                # float32 形式で読み込み (shape: [frames, channels])
+                audio_samples = self.audio_stream.read_float32(self.audio_frame_size)
+            except Exception as e:
+                handle_error("reading audio", e)
                 return
 
         # AudioData を作成
@@ -1069,10 +1133,8 @@ class WHIPClient:
 
         # キャプチャを停止
         self.capture_active = False
-        if self.camera_thread:
-            self.camera_thread.join(timeout=1.0)
-        if self.camera:
-            self.camera.release()
+        if self.uvc_device:
+            self.uvc_device.stop()
         if self.audio_stream:
             self.audio_stream.stop()
             self.audio_stream.close()

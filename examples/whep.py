@@ -19,10 +19,12 @@ import time
 from typing import Optional
 from urllib.parse import urljoin
 
-import cv2
 import httpx
 import numpy as np
 from wish import get_nal_type_name, handle_error, parse_link_header
+
+# raw-player
+from raw_player import VideoPlayer
 
 # webcodecs-py
 from webcodecs import (
@@ -79,9 +81,12 @@ class WHEPClient:
         self.video_decoder: Optional[VideoDecoder] = None
         self.decoder_configured = False
 
-        # OpenCV display
-        self.window_name = "WHEP Video"
-        self.frame_queue: Optional[queue.Queue] = queue.Queue(maxsize=10) if display_video else None
+        # Video settings
+        self.video_width = 1920
+        self.video_height = 1080
+
+        # raw-player display
+        self.player: Optional[VideoPlayer] = None
 
         # Running flag
         self.running = True
@@ -168,32 +173,21 @@ class WHEPClient:
                     f"{frame.coded_width}x{frame.coded_height}"
                 )
 
-            # 表示用にキューに追加
-            if self.frame_queue:
+            # 表示用に VideoPlayer に enqueue
+            if self.player:
                 try:
-                    # I420 → RGB 変換
-                    width = frame.coded_width
-                    height = frame.coded_height
-
-                    # RGB バッファを作成
-                    rgb_size = width * height * 3
-                    rgb_buffer = np.zeros(rgb_size, dtype=np.uint8)
-
-                    # copy_to で RGB に変換
-                    frame.copy_to(rgb_buffer, {"format": VideoPixelFormat.RGB})
-
-                    # 形状を変更
-                    rgb_frame = rgb_buffer.reshape((height, width, 3))
-
-                    # BGR に変換（OpenCV 用）
-                    bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
-
-                    self.frame_queue.put_nowait(bgr_frame)
-                except queue.Full:
-                    pass  # Drop frame
+                    pts_us = frame.timestamp
+                    if frame.format == VideoPixelFormat.NV12:
+                        y_data = frame.plane(0)
+                        uv_data = frame.plane(1)
+                        self.player.enqueue_video_nv12(y_data, uv_data, pts_us)
+                    else:
+                        # I420
+                        y_data, u_data, v_data = frame.planes()
+                        self.player.enqueue_video_i420(y_data, u_data, v_data, pts_us)
                 except Exception as e:
                     if self.decoded_frame_count <= 5:
-                        logger.error(f"Error converting frame: {e}")
+                        logger.error(f"Error enqueuing frame: {e}")
 
             frame.close()
 
@@ -254,6 +248,10 @@ class WHEPClient:
             # デフォルト値を使用
             width = 1920
             height = 1080
+
+            # video_width/height を更新
+            self.video_width = width
+            self.video_height = height
 
             config: VideoDecoderConfig = {
                 "codec": "avc1.64001F",  # H.264 High Profile
@@ -465,56 +463,45 @@ class WHEPClient:
 
 
 def display_frames(client: WHEPClient) -> bool:
-    """フレームを表示（メインスレッドで実行）"""
+    """フレームを表示（メインスレッドで実行、raw-player 使用）"""
     logger.info("Starting video display...")
 
-    cv2.namedWindow(client.window_name, cv2.WINDOW_AUTOSIZE)
-    cv2.moveWindow(client.window_name, 100, 100)
+    # VideoPlayer を作成
+    client.player = VideoPlayer(
+        width=client.video_width,
+        height=client.video_height,
+        title=f"WHEP Video ({client.video_width}x{client.video_height})",
+    )
+
+    # キーコールバックを設定 (ESC または q で終了)
+    def on_key(key: int) -> bool:
+        if key == 27 or key == 113:  # ESC or 'q'
+            return False
+        return True
+
+    client.player.set_key_callback(on_key)
+    client.player.play()
+
+    logger.info(f"GPU Renderer: {client.player.renderer_name}")
     logger.info("Window created (Press 'q' or ESC to close)")
 
-    frame_count = 0
     window_closed = False
 
-    while client.running:
-        try:
-            frame = client.frame_queue.get(timeout=0.1)
-            frame_count += 1
+    while client.running and client.player.is_open:
+        if not client.player.poll_events():
+            logger.info("Window closed by user")
+            window_closed = True
+            break
+        time.sleep(0.001)
 
-            if frame_count == 1:
-                logger.info(f"First frame: shape={frame.shape}")
+    logger.info(f"Display finished. Decoded frames: {client.decoded_frame_count}")
 
-            cv2.imshow(client.window_name, frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:
-                logger.info("User pressed 'q' or ESC")
-                break
-
-            try:
-                if cv2.getWindowProperty(client.window_name, cv2.WND_PROP_VISIBLE) < 1:
-                    logger.info("Window closed by user")
-                    window_closed = True
-                    break
-            except cv2.error:
-                window_closed = True
-                break
-
-        except queue.Empty:
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:
-                break
-
-            try:
-                if cv2.getWindowProperty(client.window_name, cv2.WND_PROP_VISIBLE) < 1:
-                    window_closed = True
-                    break
-            except cv2.error:
-                window_closed = True
-                break
-
-    logger.info(f"Display finished. Frames displayed: {frame_count}")
-    if not window_closed:
-        cv2.destroyAllWindows()
+    # プレイヤー統計を表示
+    if client.player:
+        stats = client.player.stats()
+        logger.info(f"Player stats: {stats}")
+        client.player.close()
+        client.player = None
 
     return window_closed
 
