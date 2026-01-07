@@ -1,4 +1,4 @@
-.PHONY: wheel develop test format
+.PHONY: wheel develop test format lint typecheck
 
 wheel:
 	uv build --wheel
@@ -17,3 +17,9 @@ example:
 format:
 	clang-format -i src/*.cpp
 	uv run ruff format src/ examples/ tests/
+
+lint:
+	uv run ruff check examples/
+
+typecheck:
+	uv run ty check examples/

@@ -21,7 +21,7 @@ from urllib.parse import urljoin
 import httpx
 import numpy as np
 import structlog
-from wish import get_nal_type_name, handle_error, parse_link_header
+from whip import get_nal_type_name, handle_error, parse_link_header
 
 # raw-player
 from raw_player import AudioPlayer, VideoPlayer
@@ -456,14 +456,14 @@ class WHEPClient:
             self.video_width = width
             self.video_height = height
 
-            config = {
+            h264_config: VideoDecoderConfig = {
                 "codec": "avc1.64001F",  # H.264 High Profile
                 "coded_width": width,
                 "coded_height": height,
             }
 
             try:
-                self.video_decoder.configure(config)
+                self.video_decoder.configure(h264_config)
                 self.video_decoder_configured = True
                 logger.info(
                     "Video decoder configured (H.264)",

@@ -21,16 +21,16 @@ import argparse
 import logging
 import queue
 import random
+import re
 import threading
 import time
 from math import pi
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urljoin
-
-import structlog
 
 import httpx
 import numpy as np
+import structlog
 
 # portaudio-py
 import portaudio as pa
@@ -58,7 +58,6 @@ from webcodecs import (
     VideoFrameBufferInit,
     VideoPixelFormat,
 )
-from wish import handle_error, parse_link_header
 
 # libdatachannel-py
 from libdatachannel import (
@@ -67,6 +66,7 @@ from libdatachannel import (
     Description,
     H264RtpPacketizer,
     H265RtpPacketizer,
+    IceServer,
     NalUnit,
     OpusRtpPacketizer,
     PeerConnection,
@@ -78,6 +78,106 @@ from libdatachannel import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+# ============================================================================
+# ユーティリティ関数（whep.py と共有）
+# ============================================================================
+
+
+def handle_error(context: str, error: Exception) -> None:
+    """エラーハンドリング"""
+    logger.error(f"Error {context}: {error}")
+    if logger.isEnabledFor(logging.DEBUG):
+        import traceback
+
+        traceback.print_exc()
+
+
+def get_nal_type_name(nal_type: int) -> str:
+    """H.264 NAL タイプ名を取得"""
+    nal_type_names = {
+        0: "Unspecified",
+        1: "Coded slice (non-IDR)",
+        2: "Coded slice data partition A",
+        3: "Coded slice data partition B",
+        4: "Coded slice data partition C",
+        5: "Coded slice (IDR)",
+        6: "SEI",
+        7: "SPS",
+        8: "PPS",
+        9: "Access unit delimiter",
+        10: "End of sequence",
+        11: "End of stream",
+        12: "Filler data",
+        13: "SPS extension",
+        14: "Prefix NAL unit",
+        15: "Subset SPS",
+        19: "Coded slice of auxiliary picture",
+        20: "Coded slice extension",
+    }
+    return nal_type_names.get(nal_type, f"Reserved/Unknown ({nal_type})")
+
+
+def parse_link_header(link_header: str) -> List[IceServer]:
+    """Link ヘッダーから ICE サーバーを取得"""
+    ice_servers: List[IceServer] = []
+    if not link_header:
+        return ice_servers
+
+    # Parse Link header: <turn:turn.example.com>; rel="ice-server"; username="user"; credential="pass"
+    # Split by comma to handle multiple servers
+    entries = []
+    current = ""
+    in_quotes = False
+
+    for char in link_header:
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == "," and not in_quotes:
+            entries.append(current.strip())
+            current = ""
+            continue
+        current += char
+    if current:
+        entries.append(current.strip())
+
+    for entry in entries:
+        # Extract URL from <...>
+        url_match = re.match(r"<([^>]+)>", entry)
+        if not url_match:
+            continue
+
+        url = url_match.group(1)
+
+        # Skip TURN TCP as it's not supported by libdatachannel
+        if "transport=tcp" in url.lower() or "?tcp" in url.lower():
+            logger.info(f"Skipping TURN TCP server (not supported): {url}")
+            continue
+
+        # Check if it's an ICE server
+        if 'rel="ice-server"' not in entry:
+            continue
+
+        if url.startswith("stun:") or url.startswith("turn:"):
+            ice_server = IceServer(url)
+
+            # Extract username
+            username_match = re.search(r'username="([^"]+)"', entry)
+            if username_match:
+                ice_server.username = username_match.group(1)
+
+            # Extract credential
+            credential_match = re.search(r'credential="([^"]+)"', entry)
+            if credential_match:
+                ice_server.password = credential_match.group(1)
+
+            ice_servers.append(ice_server)
+            logger.info(f"Added ICE server from Link header: {url}")
+            if hasattr(ice_server, "username") and ice_server.username:
+                logger.info(f"  with username: {ice_server.username}")
+
+    return ice_servers
 
 
 # ============================================================================
@@ -339,14 +439,13 @@ class Blend2DRenderer:
             if random.random() < 0.5:
                 w = random.randint(40, 100)
                 h = random.randint(40, 100)
-                self.shapes.append(MovingRect(x, y, w, h, vx, vy, *color, alpha))
+                self.shapes.append(MovingRect(x, y, w, h, vx, vy, color[0], color[1], color[2], alpha))
             else:
-                r = random.randint(20, 50)
-                self.shapes.append(MovingCircle(x, y, r, vx, vy, *color, alpha))
+                radius = random.randint(20, 50)
+                self.shapes.append(MovingCircle(x, y, radius, vx, vy, color[0], color[1], color[2], alpha))
 
     def render_frame(self) -> np.ndarray:
         """フレームを描画して BGRA 配列を返す"""
-        t0 = time.perf_counter()
         self.ctx.set_comp_op(CompOp.SRC_COPY)
         self.ctx.set_fill_style_rgba(30, 30, 30, 255)
         self.ctx.fill_all()
@@ -599,7 +698,8 @@ class WHIPClient:
 
                 # クロックレートに変換してタイムスタンプをインクリメント
                 elapsed_timestamp = int(elapsed_seconds * 90000)
-                self.video_config.timestamp = self.video_config.timestamp + elapsed_timestamp
+                if self.video_config is not None:
+                    self.video_config.timestamp = self.video_config.timestamp + elapsed_timestamp
 
                 # 送信
                 self.video_track.send(bytes(data))
@@ -608,7 +708,7 @@ class WHIPClient:
                 self.last_video_dts_usec = dts_usec
                 self.encoded_video_count += 1
 
-                if self.encoded_video_count % 30 == 0:
+                if self.encoded_video_count % 30 == 0 and self.video_config is not None:
                     logger.debug(
                         f"Sent #{self.encoded_video_count} dts={dts_usec / 1000:.0f}ms "
                         f"duration={duration / 1000:.1f}ms rtp_ts={self.video_config.timestamp}"
@@ -1040,10 +1140,11 @@ class WHIPClient:
             self.force_keyframe = False
             logger.info(f"Sending keyframe in response to PLI (frame #{self.video_frame_number})")
         try:
-            if is_keyframe:
-                self.video_encoder.encode(frame, {"key_frame": True})
-            else:
-                self.video_encoder.encode(frame)
+            if self.video_encoder is not None:
+                if is_keyframe:
+                    self.video_encoder.encode(frame, {"key_frame": True})
+                else:
+                    self.video_encoder.encode(frame)
         except Exception as e:
             handle_error("encoding video frame", e)
 
@@ -1077,7 +1178,7 @@ class WHIPClient:
             "coded_height": self.video_height,
             "timestamp": timestamp_us,
         }
-        frame = VideoFrame(y_plane, uv_plane, nv12_init)
+        frame = VideoFrame(y_plane, uv_plane, nv12_init)  # type: ignore[call-overload]
 
         # エンコード（PLI による強制キーフレームも考慮）
         force_by_pli = self.force_keyframe
@@ -1086,10 +1187,11 @@ class WHIPClient:
             self.force_keyframe = False
             logger.info(f"Sending keyframe in response to PLI (frame #{self.video_frame_number})")
         try:
-            if is_keyframe:
-                self.video_encoder.encode(frame, {"key_frame": True})
-            else:
-                self.video_encoder.encode(frame)
+            if self.video_encoder is not None:
+                if is_keyframe:
+                    self.video_encoder.encode(frame, {"key_frame": True})
+                else:
+                    self.video_encoder.encode(frame)
         except Exception as e:
             handle_error("encoding video frame", e)
 
@@ -1168,7 +1270,8 @@ class WHIPClient:
 
             # クロックレートに変換してタイムスタンプをインクリメント
             elapsed_timestamp = int(elapsed_seconds * 48000)
-            self.audio_config.timestamp = self.audio_config.timestamp + elapsed_timestamp
+            if self.audio_config is not None:
+                self.audio_config.timestamp = self.audio_config.timestamp + elapsed_timestamp
 
             self.audio_track.send(data)
 

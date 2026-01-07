@@ -1,7 +1,5 @@
 import time
 
-import pytest
-
 from libdatachannel import WebSocket, WebSocketConfiguration
 
 

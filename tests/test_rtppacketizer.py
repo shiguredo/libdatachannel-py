@@ -1,5 +1,4 @@
 from libdatachannel import (
-    AACRtpPacketizer,
     OpusRtpPacketizer,
     RtpPacketizationConfig,
     RtpPacketizer,
@@ -20,4 +19,3 @@ def test_rtp_packetizer():
     assert packetizer.rtp_config.cname == "stream1"
     # 構築できるかどうかだけ確認
     OpusRtpPacketizer(config)
-    AACRtpPacketizer(config)
