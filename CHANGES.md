@@ -14,6 +14,11 @@
 - [ADD] Python 3.12 に対応する
   - @voluntas
 
+### misc
+
+- [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
+  - @voluntas
+
 ## 2025.1.2
 
 **リリース日**:: 2025-11-25
