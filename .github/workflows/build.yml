@@ -57,8 +57,7 @@ jobs:
       - name: Repair wheel with auditwheel
         shell: bash
         run: |
-          uv sync --group pypi
-          uv run auditwheel repair dist/*.whl --strip --only-plat
+          uvx auditwheel repair dist/*.whl --strip --only-plat
 
       # - run: uv run pytest tests/ -v
 

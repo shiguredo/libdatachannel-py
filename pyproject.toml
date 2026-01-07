@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.11", "nanobind>=2.10.2"]
+requires = ["scikit-build-core", "nanobind>=2.10.2"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -29,8 +29,8 @@ Discord = "https://discord.gg/shiguredo"
 [dependency-groups]
 dev = [
     { include-group = "test" },
-    { include-group = "lint" },
     { include-group = "example" },
+    { include-group = "lint" },
 ]
 test = [
     "pytest",
@@ -40,18 +40,18 @@ test = [
     "hypothesis",
     "aiohttp",
 ]
-lint = ["ruff", "ty"]
 example = [
-    "opencv-python",
-    "blend2d-py",
     "httpx",
-    "sounddevice",
+    "uvc-py",
+    "blend2d-py",
+    "portaudio-py",
     "webcodecs-py",
+    "raw-player",
 ]
-pypi = ["auditwheel", "patchelf"]
+lint = ["ruff", "ty"]
 
 [tool.scikit-build]
-minimum-version = "0.11"
+minimum-version = "0.11.3"
 sdist.include = ["VERSION", "deps.json"]
 build-dir = "_build"
 
