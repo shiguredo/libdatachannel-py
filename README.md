@@ -28,6 +28,49 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 [webcodecs-py](https://github.com/shiguredo/webcodecs-py) を利用してください。
 
+## Python
+
+- 3.14
+- 3.13
+- 3.12
+
+## プラットフォーム
+
+- macOS 26 arm64
+- macOS 15 arm64
+- Ubuntu 24.04 LTS x86_64
+- Ubuntu 24.04 LTS arm64
+
+## リリースビルド
+
+```bash
+make wheel
+```
+
+## 開発ビルド
+
+```bash
+make develop
+```
+
+## テスト
+
+```bash
+uv sync
+make test
+```
+
+## サンプル
+
+[examples/](examples/) ディレクトリにサンプルコードがあります。
+
+## 依存ライブラリ
+
+- [ngtcp2](https://github.com/ngtcp2/ngtcp2)
+- [nghttp3](https://github.com/ngtcp2/nghttp3)
+- [nghttp2](https://github.com/nghttp2/nghttp2)
+- [BoringSSL](https://boringssl.googlesource.com/boringssl/)
+
 ## 優先実装
 
 優先実装とは Sora / Sora Cloud の契約頂いているお客様向けに libdatachannel-py の実装予定機能を有償にて前倒しで実装することです。
@@ -40,7 +83,6 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
   - x86_64
 - Windows Server 2025 対応
   - x86_64
-  - arm64
 
 ## サポートについて
 
@@ -63,8 +105,8 @@ Discord へお願いします。
 Apache License 2.0
 
 ```text
-Copyright 2025-2025, Wandbox LLC (Original Author)
-Copyright 2025-2025, Shiguredo Inc.
+Copyright 2025-2026, Wandbox LLC (Original Author)
+Copyright 2025-2026, Shiguredo Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
