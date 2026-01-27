@@ -97,11 +97,25 @@ RTP_HEADER_EXT_URI_RID = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
 
 
 @dataclass
+class SimulcastLayerConfig:
+    """Simulcast レイヤーの設定（OBS 準拠）"""
+
+    layer_index: int
+    width: int
+    height: int
+    bitrate: int
+    rid: str
+
+
+@dataclass
 class VideoLayerState:
+    """Simulcast レイヤーの RTP 送信状態"""
+
     ssrc: int
     rid: str
     sequence_number: int
     timestamp: int
+    layer_config: SimulcastLayerConfig
     last_dts_usec: int = 0
     first_dts_usec: Optional[int] = None
     last_keyframe_epoch: int = 0
@@ -544,7 +558,10 @@ class WHIPClient:
         self.audio_track: Optional[Track] = None
         self.session_url: Optional[str] = None
 
-        # webcodecs Encoders
+        # Simulcast レイヤー設定（_setup_video_encoder で初期化）
+        self.simulcast_layer_configs: List[SimulcastLayerConfig] = []
+
+        # webcodecs Encoders（各 Simulcast レイヤーに1つ）
         self.video_encoders: List[VideoEncoder] = []
         self.audio_encoder: Optional[AudioEncoder] = None
 
@@ -725,11 +742,67 @@ class WHIPClient:
 
         logger.info("WHIP signaling completed")
 
-    def _setup_video_encoder(self) -> None:
-        """webcodecs-py ビデオエンコーダーをセットアップ"""
+    def _calculate_simulcast_layers(self) -> List[SimulcastLayerConfig]:
+        """Simulcast レイヤーの設定を計算（OBS WHIP 準拠）
 
-        # simulcast レイヤ数を 1〜4 に丸める
+        OBS の実装では:
+        - レイヤー 0: 最高解像度（オリジナル）
+        - レイヤー 1: 中間解像度（約50%）
+        - レイヤー 2: 最低解像度（約25%）
+
+        webcodecs-py の VideoEncoder は自動リサイズをサポートしているため、
+        各エンコーダーに設定した width/height に合わせて自動的にリサイズされる。
+        """
         simulcast_layers = max(1, min(self.simulcast_total_layers, 4))
+        configs: List[SimulcastLayerConfig] = []
+
+        for layer_index in range(simulcast_layers):
+            if layer_index == 0:
+                # レイヤー 0: オリジナル解像度
+                width = self.video_width
+                height = self.video_height
+                bitrate = self.video_bitrate
+            else:
+                # OBS パターン: 段階的にスケールダウン
+                # レイヤー 1: 約 66% (2/3)
+                # レイヤー 2: 約 33% (1/3)
+                # レイヤー 3: 約 25% (1/4)
+                scale_factor = (simulcast_layers - layer_index) / simulcast_layers
+                width = int(self.video_width * scale_factor)
+                height = int(self.video_height * scale_factor)
+                # 2の倍数に切り捨て（エンコーダー要件）
+                width -= width % 2
+                height -= height % 2
+                # 最小サイズを保証
+                width = max(width, 160)
+                height = max(height, 90)
+                # ビットレートも比例して減少
+                bitrate = int(self.video_bitrate * scale_factor * scale_factor)
+                bitrate = max(bitrate, 100_000)  # 最小 100kbps
+
+            configs.append(
+                SimulcastLayerConfig(
+                    layer_index=layer_index,
+                    width=width,
+                    height=height,
+                    bitrate=bitrate,
+                    rid=str(layer_index),
+                )
+            )
+
+        return configs
+
+    def _setup_video_encoder(self) -> None:
+        """webcodecs-py ビデオエンコーダーをセットアップ（Simulcast 対応）
+
+        OBS WHIP Simulcast 実装を参考に:
+        - 各レイヤーに独立したエンコーダーを作成
+        - 各エンコーダーは異なる解像度・ビットレートで設定
+        - webcodecs-py のエンコーダーが自動的にフレームをリサイズ
+          (VideoToolbox は VTPixelTransferSession、他は libyuv を使用)
+        """
+        # Simulcast レイヤー設定を計算
+        self.simulcast_layer_configs = self._calculate_simulcast_layers()
 
         def on_output(layer_index: int):
             def handler(chunk: EncodedVideoChunk) -> None:
@@ -773,8 +846,10 @@ class WHIPClient:
                     if layer_index == 0:
                         self.encoded_video_count += 1
                         if self.encoded_video_count % 30 == 0:
+                            cfg = layer.layer_config
                             logger.debug(
-                                f"Sent #{self.encoded_video_count} dts={dts_usec / 1000:.0f}ms "
+                                f"Sent #{self.encoded_video_count} layer={layer_index} "
+                                f"({cfg.width}x{cfg.height}) dts={dts_usec / 1000:.0f}ms "
                                 f"duration={duration / 1000:.1f}ms rtp_ts={layer.timestamp}"
                             )
                 except Exception as e:
@@ -795,32 +870,15 @@ class WHIPClient:
         else:
             codec_string = "avc1.64002A"  # H.264 High Profile Level 4.2
 
-        # OBS と同様に段階的にビットレート/解像度を下げる
-        bitrate_step = max(1, self.video_bitrate // simulcast_layers)
-        width_step = self.video_width // simulcast_layers
-        height_step = self.video_height // simulcast_layers
-
-        for layer_index in range(simulcast_layers):
-            if layer_index == 0:
-                width = self.video_width
-                height = self.video_height
-                bitrate = self.video_bitrate
-            else:
-                scale = simulcast_layers - layer_index
-                width = width_step * scale
-                height = height_step * scale
-                width -= width % 2
-                height -= height % 2
-                bitrate = max(1, self.video_bitrate - (bitrate_step * layer_index))
-
+        # 各 Simulcast レイヤー用のエンコーダーを作成
+        for layer_config in self.simulcast_layer_configs:
             encoder_config: VideoEncoderConfig = {
                 "codec": codec_string,
-                "width": width,
-                "height": height,
-                "bitrate": bitrate,
+                "width": layer_config.width,
+                "height": layer_config.height,
+                "bitrate": layer_config.bitrate,
                 "latency_mode": LatencyMode.REALTIME,
             }
-            # 元フレームはそのまま渡し、内部リサイズに任せる
 
             if self.codec == "h264":
                 encoder_config["avc"] = {"format": "annexb"}
@@ -833,19 +891,22 @@ class WHIPClient:
                     HardwareAccelerationEngine.APPLE_VIDEO_TOOLBOX
                 )
 
-            encoder = VideoEncoder(on_output(layer_index), on_error(layer_index))
+            encoder = VideoEncoder(
+                on_output(layer_config.layer_index), on_error(layer_config.layer_index)
+            )
             encoder.configure(encoder_config)
             self.video_encoders.append(encoder)
+
             logger.info(
-                "Video encoder configured",
-                layer=layer_index,
+                "Simulcast encoder configured",
+                layer=layer_config.layer_index,
+                rid=layer_config.rid,
                 codec=codec_string,
-                width=width,
-                height=height,
-                bitrate=bitrate,
+                resolution=f"{layer_config.width}x{layer_config.height}",
+                bitrate=f"{layer_config.bitrate / 1_000_000:.2f} Mbps",
             )
 
-        # RTP パケッタイザーをセットアップ
+        # RTP パケッタイザーをセットアップ（OBS WHIP 準拠）
         if self.codec == "av1":
             payload_type = 35
         elif self.codec == "h265":
@@ -853,7 +914,8 @@ class WHIPClient:
         else:
             payload_type = 96
 
-        # SDP の extmap と揃えるため MID/RID を明示
+        # OBS と同様に RTP ヘッダー拡張で MID/RID を設定
+        # SDP の a=extmap と対応させる
         self.video_config = RtpPacketizationConfig(
             ssrc=self.base_ssrc + 1,  # Description と同じ SSRC
             cname=self.cname,
@@ -863,8 +925,9 @@ class WHIPClient:
         self.video_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
         self.video_config.timestamp = self.video_config.start_timestamp
         self.video_config.sequence_number = random.randint(0, 0xFFFF)
-        self.video_config.mid_id = 1
-        self.video_config.rid_id = 2
+        # RTP ヘッダー拡張 ID（SDP の a=extmap と一致させる）
+        self.video_config.mid_id = 1  # urn:ietf:params:rtp-hdrext:sdes:mid
+        self.video_config.rid_id = 2  # urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id
         self.video_config.mid = "video"
 
         if self.codec == "av1":
@@ -888,9 +951,9 @@ class WHIPClient:
         self.video_sr_reporter = RtcpSrReporter(self.video_config)
         self.video_packetizer.add_to_chain(self.video_sr_reporter)
 
-        # PLI handler
+        # PLI handler（全レイヤにキーフレーム要求を伝播）
         def on_pli():
-            logger.info("PLI received - forcing keyframe")
+            logger.info("PLI received - forcing keyframe on all layers")
             # 全レイヤに確実に反映するため epoch を進める
             self.force_keyframe_epoch += 1
 
@@ -904,18 +967,24 @@ class WHIPClient:
         if self.video_track:
             self.video_track.set_media_handler(self.video_packetizer)
 
-        # レイヤ状態を初期化
+        # 各 Simulcast レイヤーの RTP 状態を初期化（OBS 準拠）
+        # OBS: base_ssrc + 1 + layer_index で SSRC を割り当て
         self.video_layer_states.clear()
-        for layer_index in range(simulcast_layers):
-            # レイヤごとの SSRC/RID/シーケンスを独立させる
+        for layer_config in self.simulcast_layer_configs:
             start_ts = random.randint(0, 0xFFFFFFFF)
             self.video_layer_states.append(
                 VideoLayerState(
-                    ssrc=self.base_ssrc + 1 + layer_index,
-                    rid=str(layer_index),
+                    ssrc=self.base_ssrc + 1 + layer_config.layer_index,
+                    rid=layer_config.rid,
                     sequence_number=random.randint(0, 0xFFFF),
                     timestamp=start_ts,
+                    layer_config=layer_config,
                 )
+            )
+            logger.debug(
+                f"Initialized layer state: layer={layer_config.layer_index} "
+                f"rid={layer_config.rid} ssrc={self.base_ssrc + 1 + layer_config.layer_index} "
+                f"resolution={layer_config.width}x{layer_config.height}"
             )
 
     def _setup_audio_encoder(self) -> None:
@@ -1247,7 +1316,11 @@ class WHIPClient:
         }
         frame = VideoFrame(i420_buffer, i420_init)
 
-        # エンコード（PLI による強制キーフレームも考慮）
+        # Simulcast: 同一フレームを各レイヤーのエンコーダーに渡す
+        # webcodecs-py のエンコーダーは自動リサイズをサポート:
+        # - H.264/H.265 (VideoToolbox): VTPixelTransferSession でハードウェアリサイズ
+        # - AV1/VP8/VP9: libyuv でソフトウェアリサイズ
+        # 各エンコーダーは設定された width/height に合わせてフレームをリサイズしてエンコード
         force_epoch = self.force_keyframe_epoch
         is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0
         try:
@@ -1259,6 +1332,7 @@ class WHIPClient:
                     logger.info(
                         f"Sending keyframe in response to PLI (frame #{self.video_frame_number})"
                     )
+                # 同じフレームを渡す - エンコーダーが layer_config の解像度にリサイズ
                 if send_keyframe:
                     encoder.encode(frame, {"key_frame": True})
                     if force_by_pli:
@@ -1277,8 +1351,13 @@ class WHIPClient:
         if self.video_frame_number % self.video_fps == 0:
             render_ms = (t1 - t0) * 1000
             encode_ms = (t2 - t1) * 1000
+            layers_info = ", ".join(
+                f"L{cfg.layer_index}:{cfg.width}x{cfg.height}"
+                for cfg in self.simulcast_layer_configs
+            )
             logger.debug(
-                f"Frame #{self.video_frame_number}: render={render_ms:.1f}ms, encode={encode_ms:.1f}ms"
+                f"Frame #{self.video_frame_number}: render={render_ms:.1f}ms, "
+                f"encode={encode_ms:.1f}ms ({layers_info})"
             )
 
     def _encode_nv12_frame(
@@ -1300,7 +1379,8 @@ class WHIPClient:
         }
         frame = VideoFrame(y_plane, uv_plane, nv12_init)  # type: ignore[call-overload]
 
-        # エンコード（PLI による強制キーフレームも考慮）
+        # Simulcast: 同一フレームを各レイヤーのエンコーダーに渡す（NV12 版）
+        # webcodecs-py のエンコーダーは自動リサイズをサポート
         force_epoch = self.force_keyframe_epoch
         is_keyframe = self.video_frame_number % self.key_frame_interval_frames == 0
         try:
@@ -1312,6 +1392,7 @@ class WHIPClient:
                     logger.info(
                         f"Sending keyframe in response to PLI (frame #{self.video_frame_number})"
                     )
+                # 同じフレームを渡す - エンコーダーが layer_config の解像度にリサイズ
                 if send_keyframe:
                     encoder.encode(frame, {"key_frame": True})
                     if force_by_pli:
@@ -1330,8 +1411,13 @@ class WHIPClient:
         if self.video_frame_number % self.video_fps == 0:
             capture_ms = (t1 - t0) * 1000
             encode_ms = (t2 - t1) * 1000
+            layers_info = ", ".join(
+                f"L{cfg.layer_index}:{cfg.width}x{cfg.height}"
+                for cfg in self.simulcast_layer_configs
+            )
             logger.debug(
-                f"Frame #{self.video_frame_number}: capture={capture_ms:.1f}ms, encode={encode_ms:.1f}ms"
+                f"Frame #{self.video_frame_number}: capture={capture_ms:.1f}ms, "
+                f"encode={encode_ms:.1f}ms ({layers_info})"
             )
 
     def _encode_audio_frame(self) -> None:
@@ -1473,6 +1559,7 @@ class WHIPClient:
         self.video_config = None
         self.audio_config = None
         self.video_layer_states = []
+        self.simulcast_layer_configs = []
         self.video_track = None
         self.audio_track = None
 
@@ -1587,10 +1674,14 @@ def main():
         "Video settings",
         codec=args.video_codec_type,
         framerate=args.framerate,
-        bitrate=args.bitrate,
+        bitrate=f"{args.bitrate / 1_000_000:.2f} Mbps",
         simulcast_layers=args.whip_simulcast_total_layers,
     )
     logger.info(f"WHIP endpoint: {args.url}")
+    logger.info(
+        f"Simulcast: {args.whip_simulcast_total_layers} layers "
+        "(webcodecs-py encoders will auto-resize frames to each layer's resolution)"
+    )
     if args.fake_capture_device:
         logger.info("Using fake capture device (blend2d video + test audio)")
     else:
