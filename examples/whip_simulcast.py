@@ -52,10 +52,14 @@ from webcodecs import (
     AudioEncoder,
     AudioEncoderConfig,
     AudioSampleFormat,
+    AVCNalUnitType,
     EncodedAudioChunk,
     EncodedVideoChunk,
     HardwareAccelerationEngine,
+    HEVCNalUnitType,
     LatencyMode,
+    parse_avc_annexb,
+    parse_hevc_annexb,
     VideoEncoder,
     VideoEncoderConfig,
     VideoFrame,
@@ -113,28 +117,11 @@ def handle_error(context: str, error: Exception) -> None:
 
 
 def get_nal_type_name(nal_type: int) -> str:
-    """H.264 NAL タイプ名を取得"""
-    nal_type_names = {
-        0: "Unspecified",
-        1: "Coded slice (non-IDR)",
-        2: "Coded slice data partition A",
-        3: "Coded slice data partition B",
-        4: "Coded slice data partition C",
-        5: "Coded slice (IDR)",
-        6: "SEI",
-        7: "SPS",
-        8: "PPS",
-        9: "Access unit delimiter",
-        10: "End of sequence",
-        11: "End of stream",
-        12: "Filler data",
-        13: "SPS extension",
-        14: "Prefix NAL unit",
-        15: "Subset SPS",
-        19: "Coded slice of auxiliary picture",
-        20: "Coded slice extension",
-    }
-    return nal_type_names.get(nal_type, f"Reserved/Unknown ({nal_type})")
+    """H.264 NAL タイプ名を取得 (webcodecs-py の AVCNalUnitType を使用)"""
+    try:
+        return AVCNalUnitType(nal_type).name
+    except ValueError:
+        return f"Reserved/Unknown ({nal_type})"
 
 
 def parse_link_header(link_header: str) -> List[IceServer]:
@@ -217,41 +204,11 @@ def simulcast_layers_in_answer(answer: str) -> int:
 
 
 def get_h265_nal_type_name(nal_type: int) -> str:
-    """H.265 NAL タイプ名を取得"""
-    names = {
-        0: "TRAIL_N",
-        1: "TRAIL_R",
-        19: "IDR_W_RADL",
-        20: "IDR_N_LP",
-        21: "CRA_NUT",
-        32: "VPS",
-        33: "SPS",
-        34: "PPS",
-        35: "AUD",
-        39: "SEI_PREFIX",
-        40: "SEI_SUFFIX",
-    }
-    return names.get(nal_type, f"Unknown({nal_type})")
-
-
-def find_nal_units(data: bytes) -> list[tuple[int, int, int]]:
-    """NAL ユニットのスタートコードを検索
-
-    Returns:
-        list of (start_code_offset, nal_start_offset, start_code_length)
-    """
-    units = []
-    offset = 0
-    while offset < len(data):
-        if offset + 4 <= len(data) and data[offset : offset + 4] == b"\x00\x00\x00\x01":
-            units.append((offset, offset + 4, 4))
-            offset += 4
-        elif offset + 3 <= len(data) and data[offset : offset + 3] == b"\x00\x00\x01":
-            units.append((offset, offset + 3, 3))
-            offset += 3
-        else:
-            offset += 1
-    return units
+    """H.265 NAL タイプ名を取得 (webcodecs-py の HEVCNalUnitType を使用)"""
+    try:
+        return HEVCNalUnitType(nal_type).name
+    except ValueError:
+        return f"Unknown({nal_type})"
 
 
 # ============================================================================

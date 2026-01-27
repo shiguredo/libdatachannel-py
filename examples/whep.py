@@ -22,7 +22,6 @@ import httpx
 import numpy as np
 import structlog
 from whip import (
-    find_nal_units,
     get_h265_nal_type_name,
     get_nal_type_name,
     handle_error,
@@ -38,12 +37,16 @@ from webcodecs import (
     AudioDecoder,
     AudioDecoderConfig,
     AudioSampleFormat,
+    AVCNalUnitType,
     EncodedAudioChunk,
     EncodedAudioChunkInit,
     EncodedAudioChunkType,
     EncodedVideoChunk,
     EncodedVideoChunkInit,
     EncodedVideoChunkType,
+    HEVCNalUnitType,
+    parse_avc_annexb,
+    parse_hevc_annexb,
     VideoDecoder,
     VideoDecoderConfig,
     VideoFrame,
@@ -346,110 +349,98 @@ class WHEPClient:
         )
 
     def _configure_video_decoder(self, data: bytes) -> None:
-        """デコーダーを設定（SPS/PPS または VPS/SPS/PPS から）"""
+        """デコーダーを設定（SPS/PPS または VPS/SPS/PPS から webcodecs-py でパース）"""
         if self.video_decoder_configured or not self.video_decoder:
             return
 
-        # NAL ユニットを検索
-        nal_positions = find_nal_units(data)
-        h264_has_sps = False
-        h264_has_pps = False
-        h265_has_vps = False
-        h265_has_sps = False
-        h265_has_pps = False
+        # webcodecs-py で NAL ユニットをパース
+        if self.video_codec == "h265":
+            info = parse_hevc_annexb(data)
+            has_required = info.vps is not None and info.sps is not None and info.pps is not None
 
-        for i, (_, nal_start, _) in enumerate(nal_positions):
-            if nal_start >= len(data):
-                continue
+            if has_required and info.sps is not None:
+                # SPS から解像度を取得
+                width = info.sps.width if info.sps.width > 0 else 960
+                height = info.sps.height if info.sps.height > 0 else 540
 
-            if self.video_codec == "h265":
-                nal_type = (data[nal_start] >> 1) & 0x3F
-                if nal_type == 32:
-                    h265_has_vps = True
-                elif nal_type == 33:
-                    h265_has_sps = True
-                elif nal_type == 34:
-                    h265_has_pps = True
-            else:
-                nal_type = data[nal_start] & 0x1F
-                if nal_type == 7:
-                    h264_has_sps = True
-                elif nal_type == 8:
-                    h264_has_pps = True
+                self.video_width = width
+                self.video_height = height
+                config: VideoDecoderConfig = {
+                    "codec": "hev1.1.6.L93.B0",
+                    "coded_width": width,
+                    "coded_height": height,
+                }
+                try:
+                    self.video_decoder.configure(config)
+                    self.video_decoder_configured = True
+                    logger.info(
+                        "Video decoder configured (H.265)",
+                        codec="hev1.1.6.L93.B0",
+                        width=width,
+                        height=height,
+                    )
+                except Exception as e:
+                    logger.error("Failed to configure H.265 video decoder", error=str(e))
+        else:
+            info = parse_avc_annexb(data)
+            has_required = info.sps is not None and info.pps is not None
 
-        # デフォルト解像度
-        width = 960
-        height = 540
+            if has_required and info.sps is not None:
+                # SPS から解像度を取得
+                width = info.sps.width if info.sps.width > 0 else 960
+                height = info.sps.height if info.sps.height > 0 else 540
 
-        if self.video_codec == "h265" and h265_has_vps and h265_has_sps and h265_has_pps:
-            self.video_width = width
-            self.video_height = height
-            config: VideoDecoderConfig = {
-                "codec": "hev1.1.6.L93.B0",
-                "coded_width": width,
-                "coded_height": height,
-            }
-            try:
-                self.video_decoder.configure(config)
-                self.video_decoder_configured = True
-                logger.info(
-                    "Video decoder configured (H.265)",
-                    codec="hev1.1.6.L93.B0",
-                    width=width,
-                    height=height,
-                )
-            except Exception as e:
-                logger.error("Failed to configure H.265 video decoder", error=str(e))
-
-        elif self.video_codec == "h264" and h264_has_sps and h264_has_pps:
-            self.video_width = width
-            self.video_height = height
-            h264_config: VideoDecoderConfig = {
-                "codec": "avc1.64001F",
-                "coded_width": width,
-                "coded_height": height,
-            }
-            try:
-                self.video_decoder.configure(h264_config)
-                self.video_decoder_configured = True
-                logger.info(
-                    "Video decoder configured (H.264)",
-                    codec="avc1.64001F",
-                    width=width,
-                    height=height,
-                )
-            except Exception as e:
-                logger.error("Failed to configure H.264 video decoder", error=str(e))
+                self.video_width = width
+                self.video_height = height
+                h264_config: VideoDecoderConfig = {
+                    "codec": "avc1.64001F",
+                    "coded_width": width,
+                    "coded_height": height,
+                }
+                try:
+                    self.video_decoder.configure(h264_config)
+                    self.video_decoder_configured = True
+                    logger.info(
+                        "Video decoder configured (H.264)",
+                        codec="avc1.64001F",
+                        width=width,
+                        height=height,
+                    )
+                except Exception as e:
+                    logger.error("Failed to configure H.264 video decoder", error=str(e))
 
     def _on_video_frame(self, data: bytes, frame_info) -> None:
-        """ビデオフレームを受信"""
+        """ビデオフレームを受信（webcodecs-py で NAL ユニットをパース）"""
         self.video_frame_count += 1
 
-        # NAL ユニットを解析
-        nal_positions = find_nal_units(data)
-        nal_units = []
+        # webcodecs-py で NAL ユニットを解析
         has_keyframe = False
+        nal_units = []
 
-        for _, nal_start, _ in nal_positions:
-            if nal_start >= len(data):
-                continue
-
-            nal_header = data[nal_start]
-            if self.video_codec == "h265":
-                nal_type = (nal_header >> 1) & 0x3F
-                # IDR_W_RADL=19, IDR_N_LP=20, CRA_NUT=21, VPS=32, SPS=33, PPS=34
-                if nal_type in [19, 20, 21, 32, 33, 34]:
-                    has_keyframe = True
+        if self.video_codec == "h265":
+            info = parse_hevc_annexb(data)
+            for nal_header in info.nal_units:
+                nal_type = nal_header.nal_unit_type
                 type_name = get_h265_nal_type_name(nal_type)
-            else:
-                nal_type = nal_header & 0x1F
-                if nal_type == 5:  # IDR
+                nal_units.append({"type": nal_type, "type_name": type_name})
+                # is_key_frame または is_irap でキーフレーム判定
+                if nal_header.is_key_frame or nal_header.is_irap:
                     has_keyframe = True
-                elif nal_type in [7, 8]:  # SPS, PPS
+                # VPS/SPS/PPS もキーフレームとして扱う
+                if nal_type in [HEVCNalUnitType.VPS, HEVCNalUnitType.SPS, HEVCNalUnitType.PPS]:
                     has_keyframe = True
+        else:
+            info = parse_avc_annexb(data)
+            for nal_header in info.nal_units:
+                nal_type = nal_header.nal_unit_type
                 type_name = get_nal_type_name(nal_type)
-
-            nal_units.append({"type": nal_type, "type_name": type_name})
+                nal_units.append({"type": nal_type, "type_name": type_name})
+                # is_key_frame または is_idr でキーフレーム判定
+                if nal_header.is_key_frame or nal_header.is_idr:
+                    has_keyframe = True
+                # SPS/PPS もキーフレームとして扱う
+                if nal_type in [AVCNalUnitType.SPS, AVCNalUnitType.PPS]:
+                    has_keyframe = True
 
         # デコーダーを設定
         if not self.video_decoder_configured:
