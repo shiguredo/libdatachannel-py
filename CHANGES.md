@@ -11,6 +11,8 @@
 
 ## develop
 
+- [UPDATE] nanobind の最小バージョンを 2.11.0 にする
+  - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
 
