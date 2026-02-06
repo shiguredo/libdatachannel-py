@@ -62,3 +62,5 @@ def echo_websocket_server():
     if loop:
         loop.call_soon_threadsafe(loop.stop)
     thread.join(timeout=5)
+    if loop:
+        loop.close()
