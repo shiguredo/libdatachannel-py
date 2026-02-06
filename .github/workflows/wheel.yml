@@ -30,6 +30,7 @@ jobs:
             runs_on: ubuntu-24.04-arm
         python_version:
           - "3.14"
+          - "3.14t"
           - "3.13"
           - "3.12"
     runs-on: ${{ matrix.platform.runs_on }}
@@ -43,13 +44,13 @@ jobs:
 
       # 依存ライブラリのビルドキャッシュ
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: _deps
-          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-
             ${{ runner.os }}-deps-${{ matrix.platform.name }}-
-            ${{ runner.os }}-deps-
 
       - name: Build wheel
         run: uv build --wheel
@@ -78,6 +79,7 @@ jobs:
             runs_on: macos-15
         python_version:
           - "3.14"
+          - "3.14t"
           - "3.13"
           - "3.12"
     runs-on: ${{ matrix.platform.runs_on }}
@@ -90,14 +92,14 @@ jobs:
           python-version: ${{ matrix.python_version }}
 
       # 依存ライブラリのビルドキャッシュ
-      # - name: Cache dependencies
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: _deps
-      #     key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-deps-${{ matrix.platform.name }}-
-      #       ${{ runner.os }}-deps-
+      - name: Cache dependencies
+        uses: actions/cache@v5
+        with:
+          path: _deps
+          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-
+            ${{ runner.os }}-deps-${{ matrix.platform.name }}-
 
       - name: Build wheel
         run: uv build --wheel --out-dir wheelhouse
@@ -139,6 +141,7 @@ jobs:
           - name: macos-15_arm64
         python_version:
           - "3.14"
+          - "3.14t"
           - "3.13"
           - "3.12"
     runs-on: ubuntu-24.04
@@ -147,7 +150,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
           path: wheelhouse/
@@ -167,7 +170,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download all artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           path: artifacts/
 
