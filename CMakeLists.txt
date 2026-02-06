@@ -153,6 +153,7 @@ endif()
 # nanobind モジュール
 nanobind_add_module(libdatachannel_ext
   NB_DOMAIN "libdatachannel"
+  FREE_THREADED
   src/bind_libdatachannel.cpp
   src/libdatachannel_ext.cpp
 )
