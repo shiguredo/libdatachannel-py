@@ -170,7 +170,7 @@ jobs:
           ENABLE_VIDEOTOOLBOX: 1
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}_debug
           path: "dist_debug/"
