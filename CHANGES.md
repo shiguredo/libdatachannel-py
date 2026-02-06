@@ -11,11 +11,18 @@
 
 ## develop
 
+- [UPDATE] nanobind の最小バージョンを 2.11.0 にする
+  - @voluntas
+- [ADD] Python 3.14t に対応する
+  - Free Threading 対応
+  - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
 
 ### misc
 
+- [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
+  - @voluntas
 - [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
   - @voluntas
 

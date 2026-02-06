@@ -71,7 +71,7 @@ jobs:
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
           ver=${ver#v}
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
@@ -135,7 +135,7 @@ jobs:
           ver=$(grep '^OPENH264_VERSION=' DEPS | cut -d= -f2)
           ver=${ver#v}
           echo "OPENH264_VERSION=$ver" >> $GITHUB_ENV
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           name: libdatachannel_python-${{ matrix.python_version }}
           path: libdatachannel/
@@ -170,7 +170,7 @@ jobs:
           ENABLE_VIDEOTOOLBOX: 1
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}_debug
           path: "dist_debug/"

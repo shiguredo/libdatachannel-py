@@ -31,15 +31,18 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 ## Python
 
 - 3.14
+- 3.14t
 - 3.13
 - 3.12
 
 ## プラットフォーム
 
-- macOS 26 arm64
-- macOS 15 arm64
 - Ubuntu 24.04 LTS x86_64
 - Ubuntu 24.04 LTS arm64
+- Ubuntu 22.04 LTS x86_64
+- Ubuntu 22.04 LTS arm64
+- macOS 26 arm64
+- macOS 15 arm64
 
 ## リリースビルド
 
@@ -63,13 +66,6 @@ make test
 ## サンプル
 
 [examples/](examples/) ディレクトリにサンプルコードがあります。
-
-## 依存ライブラリ
-
-- [ngtcp2](https://github.com/ngtcp2/ngtcp2)
-- [nghttp3](https://github.com/ngtcp2/nghttp3)
-- [nghttp2](https://github.com/nghttp2/nghttp2)
-- [BoringSSL](https://boringssl.googlesource.com/boringssl/)
 
 ## 優先実装
 

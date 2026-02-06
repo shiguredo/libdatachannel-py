@@ -1,21 +1,26 @@
-__pycache__
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+_build/
+dist/
+wheels/
+*.egg-info
+*.pyi
+.venv/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
 
-/.pytest_cache
-/_source
-/_build
-/_install
-/_deps
-/src/libdatachannel/*.so
-/src/libdatachannel/*.dll
-/src/libdatachannel/*.pyd
-/src/libdatachannel/py.typed
-/src/libdatachannel/**/*.pyi
-/src/*.egg-info
+# CMake dependencies
+_deps/
 
-/dist
-/*.so
+# macos
+.DS_Store
 
+# Agent
+.codex/
+.claude/
+
+# H.264 binary files
 libopenh264*
-examples/whip-webrtc*
-
-/.hypothesis
