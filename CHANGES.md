@@ -11,7 +11,11 @@
 
 ## develop
 
-- [UPDATE] nanobind の最小バージョンを 2.11.0 にする
+- [UPDATE} cmake の最小バージョンを 4.3 にする
+  - @voluntas
+- [UPDATE] scikit-build-core の最小バージョンを 0.12.0 にする
+  - @voluntas
+- [UPDATE] nanobind の最小バージョンを 2.12.0 にする
   - @voluntas
 - [ADD] Python 3.14t に対応する
   - Free Threading 対応
