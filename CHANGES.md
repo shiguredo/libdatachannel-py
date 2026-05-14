@@ -17,7 +17,7 @@
   - 対策 2: Python 側で `PeerConnection` を wrapper class でラップし、 `__del__` で `close()` を呼んでから C++ destructor に渡すようにする
   - これにより `tests/test_peerconnection.py::test_leak` の skip も解除する
   - @sile
-- [UPDATE} cmake の最小バージョンを 4.3 にする
+- [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
 - [UPDATE] scikit-build-core の最小バージョンを 0.12.0 にする
   - @voluntas
