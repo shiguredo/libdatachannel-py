@@ -1,4 +1,22 @@
 from .libdatachannel_ext import *  # noqa: F401,F403
+from .libdatachannel_ext import PeerConnection as _PeerConnection
+
+# PeerConnection の Python wrapper
+# 目的: pc = None など明示的な close() を伴わない destruct が走った場合に、
+# libdatachannel 本体の ~PeerConnection() 内 mProcessor.join() が GIL を
+# 保持したまま長時間 blocking する事象を回避する。
+# __del__ で先に close() を呼ぶことで非同期処理の完了まで待った状態で
+# C++ destructor に進ませ、 mProcessor.join() を即時 return させる。
+# close() の binding 側 (bind_libdatachannel.cpp) で GIL を release しつつ
+# state==Closed まで polling で待つ実装になっているため、 __del__ 中でも
+# 他スレッド (webhook サーバー等) が動ける。
+class PeerConnection(_PeerConnection):  # type: ignore[misc]
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
 
 # Audio RTP Packetizers
 # OpusRtpPacketizer と AACRtpPacketizer は同じ型 (AudioRtpPacketizer<48000>)
