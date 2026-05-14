@@ -1321,21 +1321,25 @@ void bind_peerconnection(nb::module_& m) {
   // PeerConnection
   pc.def(nb::init<>())
       .def(nb::init<Configuration>(), "config"_a)
-      // close() 自体は libdatachannel 内部で非同期処理 (SCTP shutdown 等) を
-      // 起動するだけで即時 return する。 ただし state が Closed に達するまでに
-      // 時間がかかるため、 Python 側でメインスレッドが解放処理の完了を待たずに
-      // 抜けると、 そのあとの destructor (mProcessor.join()) で GIL を保持した
-      // まま長時間 blocking してしまう。
-      // ここでは close() 後に state==Closed まで同期的に待ち、 かつ
-      // nb::call_guard<nb::gil_scoped_release>() で GIL を解放することで、
-      // 別 thread (Python の webhook サーバー / コールバック等) が動ける状態を
-      // 保ちつつ確実に閉鎖完了させる。
+      // close() は libdatachannel 内部で SCTP shutdown 等を非同期に起動して即時
+      // return するため、 そのまま destructor に進むと mProcessor.join() が
+      // GIL 保持下で長時間 blocking する。 ここでは GIL を release した状態で
+      // state==Closed まで polling し、 destructor 到達前に閉鎖を完了させる。
+      // 何らかの理由で Closed に到達しない場合 (相手の応答待ち停滞等) は
+      // timeout で諦める。 timeout 後の残処理は destructor 側の mProcessor.join()
+      // に委ねる。
       .def(
           "close",
           [](PeerConnection& self) {
+              constexpr auto kPollInterval = std::chrono::milliseconds(10);
+              constexpr auto kCloseTimeout = std::chrono::seconds(30);
               self.close();
+              const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
               while (self.state() != PeerConnection::State::Closed) {
-                  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                  if (std::chrono::steady_clock::now() >= deadline) {
+                      break;
+                  }
+                  std::this_thread::sleep_for(kPollInterval);
               }
           },
           nb::call_guard<nb::gil_scoped_release>())
