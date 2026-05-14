@@ -25,6 +25,10 @@
 // libdatachannel
 #include <rtc/rtc.hpp>
 
+// 標準ライブラリ
+#include <chrono>
+#include <thread>
+
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace rtc;
@@ -1317,7 +1321,24 @@ void bind_peerconnection(nb::module_& m) {
   // PeerConnection
   pc.def(nb::init<>())
       .def(nb::init<Configuration>(), "config"_a)
-      .def("close", &PeerConnection::close)
+      // close() 自体は libdatachannel 内部で非同期処理 (SCTP shutdown 等) を
+      // 起動するだけで即時 return する。 ただし state が Closed に達するまでに
+      // 時間がかかるため、 Python 側でメインスレッドが解放処理の完了を待たずに
+      // 抜けると、 そのあとの destructor (mProcessor.join()) で GIL を保持した
+      // まま長時間 blocking してしまう。
+      // ここでは close() 後に state==Closed まで同期的に待ち、 かつ
+      // nb::call_guard<nb::gil_scoped_release>() で GIL を解放することで、
+      // 別 thread (Python の webhook サーバー / コールバック等) が動ける状態を
+      // 保ちつつ確実に閉鎖完了させる。
+      .def(
+          "close",
+          [](PeerConnection& self) {
+              self.close();
+              while (self.state() != PeerConnection::State::Closed) {
+                  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+              }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("config", &PeerConnection::config, nb::rv_policy::reference)
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)
