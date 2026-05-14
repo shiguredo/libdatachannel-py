@@ -200,7 +200,6 @@ def test_track():
 
 
 # test_track() と同じようなことをするけど、バインドしたまま close せずに終了する
-@pytest.mark.skip(reason="なぜかブロックして止まったままになるのでいったんスキップ")
 def test_leak():
     config1 = Configuration()
     pc1 = PeerConnection(config1)
