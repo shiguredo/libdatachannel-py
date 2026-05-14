@@ -1331,7 +1331,13 @@ void bind_peerconnection(nb::module_& m) {
       .def(
           "close",
           [](PeerConnection& self) {
+              // SCTP / DTLS shutdown 完了 (典型的に数百 ms 〜 数秒) に対し
+              // 十分短く、 busy loop にならない値として 10ms を採用する。
               constexpr auto kPollInterval = std::chrono::milliseconds(10);
+              // polling 全体の上限。 通常の close は数秒で完了するため、
+              // ネットワーク遅延やリトライを見込んでも 30 秒あれば余裕がある。
+              // これを超えても Closed に到達しないケースは相手応答停滞等の
+              // 異常状態と判断し、 polling を諦めて destructor 側に委ねる。
               constexpr auto kCloseTimeout = std::chrono::seconds(30);
               self.close();
               const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
