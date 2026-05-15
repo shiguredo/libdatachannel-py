@@ -64,6 +64,88 @@ struct type_caster<std::vector<std::byte>> {
 
 namespace {
 
+// ---- close() binding 共通ヘルパー ----
+
+// state==Closed まで polling し、 timeout 時は Python の RuntimeWarning を出す。
+// GIL は呼び出し側 (nb::call_guard<nb::gil_scoped_release>) で release 済みで
+// あることを前提とする。
+//
+// 注: 1 回目の呼び出しが timeout して警告を出した直後、 同じインスタンスに対して
+// 再度呼ばれた場合 (Python wrapper の __del__ 経由など)、 state がまだ Closed に
+// 到達していないため再度 polling に入る。 すなわち最悪 30 秒 × 2 = 60 秒の待ちが
+// 発生しうる。 これは libdatachannel 側の処理停滞という異常状態でのみ起きるレア
+// ケースであり、 wrapper 側で二重呼び出しを抑制するフラグを持つコストに見合わない
+// ため許容する。
+template <typename Self, typename GetState, typename State>
+void wait_for_closed(Self& self,
+                     GetState get_state,
+                     State closed,
+                     const char* warning_msg) {
+  // SCTP / DTLS shutdown 完了 (典型的に数百 ms 〜 数秒) に対し十分短く、
+  // busy loop にならない値として 10ms を採用する。
+  constexpr auto kPollInterval = std::chrono::milliseconds(10);
+  // polling 全体の上限。 通常の close は数秒で完了するため、 ネットワーク
+  // 遅延やリトライを見込んでも 30 秒あれば余裕がある。 これを超えても Closed
+  // に到達しないケースは相手応答停滞等の異常状態と判断し、 polling を諦めて
+  // destructor 側の join に委ねる。
+  constexpr auto kCloseTimeout = std::chrono::seconds(30);
+  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+  while (get_state(self) != closed) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      // 異常状態を呼び出し側に伝えるため RuntimeWarning を出す。
+      // GIL を取り直してから PyErr_WarnEx を呼ぶ。
+      nb::gil_scoped_acquire gil;
+      PyErr_WarnEx(PyExc_RuntimeWarning, warning_msg, 1);
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+}
+
+// PeerConnection.close() の binding 本体。
+// 既に Closed なら no-op で早期 return する。 そうでなければ close() を呼んで
+// state==Closed まで polling する。 詳細な意図は wait_for_closed のコメントを
+// 参照。
+void close_peer_connection(PeerConnection& self) {
+  if (self.state() == PeerConnection::State::Closed) return;
+  self.close();
+  wait_for_closed(
+      self, [](PeerConnection& s) { return s.state(); },
+      PeerConnection::State::Closed,
+      "PeerConnection.close(): state did not reach Closed within timeout; "
+      "the remaining cleanup is delegated to the C++ destructor and may "
+      "block briefly.");
+}
+
+// WebSocket.close() の binding 本体。
+//
+// 既に Closed の場合は no-op で早期 return する。
+//
+// 既に Closing の場合も polling せずに即 return する。
+//   - libdatachannel の WebSocket::close() は state==Connecting/Open のときし
+//     か動かず、 Closing 以降は内部で何もしない。 そこから state==Closed に
+//     進むのは TLS/TCP の close handshake (別 thread) を待つ必要があり、
+//     対向応答が遅延すると polling が 30 秒 timeout まで待たされてしまう。
+//   - このため Closing 状態では polling を諦めて呼び出し側に即返し、 残りの
+//     状態遷移は ~WebSocket() (destructor) 側の処理に委ねる。
+//   - 副作用として、 close() 戻り直後に ws.is_closed() が True であるとは
+//     限らなくなる (元から timeout 経路でも保証していなかったが、 Closing
+//     状態では「待たない」ことが明示的な規約になる)。
+//
+// それ以外は close() を呼んで state==Closed まで polling する。
+void close_websocket(WebSocket& self) {
+  auto current = self.readyState();
+  if (current == WebSocket::State::Closed) return;
+  if (current == WebSocket::State::Closing) return;
+  self.close();
+  wait_for_closed(
+      self, [](WebSocket& s) { return s.readyState(); },
+      WebSocket::State::Closed,
+      "WebSocket.close(): state did not reach Closed within timeout; the "
+      "remaining cleanup is delegated to the C++ destructor and may block "
+      "briefly.");
+}
+
 // ---- configuration.hpp ----
 
 void bind_configuration(nb::module_& m) {
@@ -1321,46 +1403,13 @@ void bind_peerconnection(nb::module_& m) {
   // PeerConnection
   pc.def(nb::init<>())
       .def(nb::init<Configuration>(), "config"_a)
-      // close() は libdatachannel 内部で SCTP shutdown 等を非同期に起動して即時
-      // return するため、 そのまま destructor に進むと mProcessor.join() が
-      // GIL 保持下で長時間 blocking する。 ここでは GIL を release した状態で
-      // state==Closed まで polling し、 destructor 到達前に閉鎖を完了させる。
-      // 何らかの理由で Closed に到達しない場合 (相手の応答待ち停滞等) は
-      // timeout で諦める。 timeout 後の残処理は destructor 側の mProcessor.join()
-      // に委ねる。
-      .def(
-          "close",
-          [](PeerConnection& self) {
-              // SCTP / DTLS shutdown 完了 (典型的に数百 ms 〜 数秒) に対し
-              // 十分短く、 busy loop にならない値として 10ms を採用する。
-              constexpr auto kPollInterval = std::chrono::milliseconds(10);
-              // polling 全体の上限。 通常の close は数秒で完了するため、
-              // ネットワーク遅延やリトライを見込んでも 30 秒あれば余裕がある。
-              // これを超えても Closed に到達しないケースは相手応答停滞等の
-              // 異常状態と判断し、 polling を諦めて destructor 側に委ねる。
-              constexpr auto kCloseTimeout = std::chrono::seconds(30);
-              self.close();
-              const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
-              bool timed_out = false;
-              while (self.state() != PeerConnection::State::Closed) {
-                  if (std::chrono::steady_clock::now() >= deadline) {
-                      timed_out = true;
-                      break;
-                  }
-                  std::this_thread::sleep_for(kPollInterval);
-              }
-              if (timed_out) {
-                  // 異常状態を呼び出し側に伝えるため Python の RuntimeWarning を出す。
-                  // GIL を取り直してから PyErr_WarnEx を呼ぶ。
-                  nb::gil_scoped_acquire acquire;
-                  PyErr_WarnEx(PyExc_RuntimeWarning,
-                               "PeerConnection.close(): state did not reach Closed "
-                               "within timeout; the remaining cleanup is delegated "
-                               "to the C++ destructor and may block briefly.",
-                               1);
-              }
-          },
-          nb::call_guard<nb::gil_scoped_release>())
+      // close() は libdatachannel 内部で SCTP shutdown 等を非同期に起動するため、
+      // そのまま destructor に進むと mProcessor.join() が GIL 保持下で長時間
+      // blocking する。 GIL を release した状態で state==Closed まで polling
+      // して destructor 到達前に閉鎖を完了させる。 詳細は close_peer_connection
+      // / wait_for_closed のコメントを参照。
+      .def("close", &close_peer_connection,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("config", &PeerConnection::config, nb::rv_policy::reference)
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)
@@ -1436,34 +1485,11 @@ void bind_websocket(nb::module_& m) {
       .def("is_open", &WebSocket::isOpen)
       .def("is_closed", &WebSocket::isClosed)
       .def("max_message_size", &WebSocket::maxMessageSize)
-      // PeerConnection.close() と同じ理由で、 GIL を release した状態で
-      // state==Closed まで polling する。 詳細は PeerConnection の close()
-      // バインディングのコメントを参照。
-      .def(
-          "close",
-          [](WebSocket& self) {
-              constexpr auto kPollInterval = std::chrono::milliseconds(10);
-              constexpr auto kCloseTimeout = std::chrono::seconds(30);
-              self.close();
-              const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
-              bool timed_out = false;
-              while (self.readyState() != WebSocket::State::Closed) {
-                  if (std::chrono::steady_clock::now() >= deadline) {
-                      timed_out = true;
-                      break;
-                  }
-                  std::this_thread::sleep_for(kPollInterval);
-              }
-              if (timed_out) {
-                  nb::gil_scoped_acquire acquire;
-                  PyErr_WarnEx(PyExc_RuntimeWarning,
-                               "WebSocket.close(): state did not reach Closed "
-                               "within timeout; the remaining cleanup is delegated "
-                               "to the C++ destructor and may block briefly.",
-                               1);
-              }
-          },
-          nb::call_guard<nb::gil_scoped_release>())
+      // PeerConnection.close() と同様に GIL を release した状態で polling する。
+      // 加えて Closing 状態の特別扱いがある。 詳細は close_websocket のコメント
+      // を参照。
+      .def("close", &close_websocket,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a)
       .def(
