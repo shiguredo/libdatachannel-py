@@ -1341,11 +1341,23 @@ void bind_peerconnection(nb::module_& m) {
               constexpr auto kCloseTimeout = std::chrono::seconds(30);
               self.close();
               const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+              bool timed_out = false;
               while (self.state() != PeerConnection::State::Closed) {
                   if (std::chrono::steady_clock::now() >= deadline) {
+                      timed_out = true;
                       break;
                   }
                   std::this_thread::sleep_for(kPollInterval);
+              }
+              if (timed_out) {
+                  // 異常状態を呼び出し側に伝えるため Python の RuntimeWarning を出す。
+                  // GIL を取り直してから PyErr_WarnEx を呼ぶ。
+                  nb::gil_scoped_acquire acquire;
+                  PyErr_WarnEx(PyExc_RuntimeWarning,
+                               "PeerConnection.close(): state did not reach Closed "
+                               "within timeout; the remaining cleanup is delegated "
+                               "to the C++ destructor and may block briefly.",
+                               1);
               }
           },
           nb::call_guard<nb::gil_scoped_release>())
