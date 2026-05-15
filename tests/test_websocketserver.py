@@ -112,13 +112,11 @@ def test_websocketserver():
     print("Success")
 
 
-# close()/stop() を呼ばずに WebSocket/WebSocketServer の参照を切っても
-# destructor で hang しないことを確認する。
-# PeerConnection と異なり、 WebSocket は destructor で blocking しない
-# (impl::WebSocket::~WebSocket は PLOG のみ)。 WebSocketServer は stop() で
-# mThread.join() するが、 tcpServer->close() により accept loop が即時抜ける
-# ため、 GIL 保持下でも join() は短時間で完了する。 したがって PeerConnection
-# のような __del__ で事前 close を呼ぶ wrapper は不要。
+# close()/stop() を呼ばずに WebSocket / WebSocketServer の参照を切っても
+# destructor で hang しないことを確認する回帰テスト。
+# 内部実装上 PeerConnection ほど確実に hang する経路ではないが、 対称的に
+# wrapper class を入れているため、 wrapper の __del__ 経由で close()/stop()
+# が呼ばれて hang しないことを保証する。
 def test_destruct_without_explicit_close():
     server_config = WebSocketServerConfiguration()
     server_config.port = 48081
