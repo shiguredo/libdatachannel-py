@@ -197,8 +197,10 @@ def test_track():
     print("Success")
 
 
-# test_track() と同じようなことをするけど、バインドしたまま close せずに終了する
-def test_leak():
+# test_track() と同じ流れだが、 明示的に close() を呼ばずに参照を切って終了する。
+# wrapper class の __del__ 経由で close() が呼ばれて destructor で hang しない
+# ことを確認する回帰テスト。
+def test_destruct_without_explicit_close():
     config1 = Configuration()
     pc1 = PeerConnection(config1)
 
