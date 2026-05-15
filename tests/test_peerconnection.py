@@ -1,3 +1,4 @@
+import gc
 import sys
 import time
 
@@ -310,6 +311,9 @@ def test_destruct_without_explicit_close():
     assert t2 is not None
     assert t2.is_open()
 
-    # これが無いとリークする
+    # callback closure が pc1/pc2 を循環参照しているため、 単純な None 代入だけ
+    # では即時破棄されない。 明示的に GC を回して wrapper の __del__ を発火させ、
+    # destructor で hang しないことを検証する。
     pc1 = None
     pc2 = None
+    gc.collect()

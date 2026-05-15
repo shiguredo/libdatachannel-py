@@ -1,3 +1,4 @@
+import gc
 import time
 
 from libdatachannel import (
@@ -183,9 +184,11 @@ def test_destruct_without_explicit_close():
     assert ws.is_open()
     assert received
 
-    # close()/stop() を呼ばずに参照を切る
+    # close()/stop() を呼ばずに参照を切る。 callback closure が循環参照を
+    # 作っているため、 明示的に GC を回して wrapper の __del__ を発火させる。
     ws = None
     server = None
     client = None
+    gc.collect()
 
     print("Success")
