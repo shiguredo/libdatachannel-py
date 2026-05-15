@@ -1436,7 +1436,34 @@ void bind_websocket(nb::module_& m) {
       .def("is_open", &WebSocket::isOpen)
       .def("is_closed", &WebSocket::isClosed)
       .def("max_message_size", &WebSocket::maxMessageSize)
-      .def("close", &WebSocket::close)
+      // PeerConnection.close() と同じ理由で、 GIL を release した状態で
+      // state==Closed まで polling する。 詳細は PeerConnection の close()
+      // バインディングのコメントを参照。
+      .def(
+          "close",
+          [](WebSocket& self) {
+              constexpr auto kPollInterval = std::chrono::milliseconds(10);
+              constexpr auto kCloseTimeout = std::chrono::seconds(30);
+              self.close();
+              const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+              bool timed_out = false;
+              while (self.readyState() != WebSocket::State::Closed) {
+                  if (std::chrono::steady_clock::now() >= deadline) {
+                      timed_out = true;
+                      break;
+                  }
+                  std::this_thread::sleep_for(kPollInterval);
+              }
+              if (timed_out) {
+                  nb::gil_scoped_acquire acquire;
+                  PyErr_WarnEx(PyExc_RuntimeWarning,
+                               "WebSocket.close(): state did not reach Closed "
+                               "within timeout; the remaining cleanup is delegated "
+                               "to the C++ destructor and may block briefly.",
+                               1);
+              }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a)
       .def(
@@ -1478,7 +1505,12 @@ void bind_websocketserver(nb::module_& m) {
   nb::class_<WebSocketServer>(m, "WebSocketServer")
       .def(nb::init<>())
       .def(nb::init<WebSocketServer::Configuration>(), "config"_a)
-      .def("stop", &WebSocketServer::stop)
+      // stop() は mThread.join() で同期完了するが、 GIL を保持したまま呼ぶと
+      // join 中に動く callback (on_client 等) が GIL を取れず deadlock する。
+      // WebSocketServer には state 確認 API がないため polling は行わず、
+      // GIL の release のみ行う。
+      .def("stop", &WebSocketServer::stop,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("port", &WebSocketServer::port)
       .def("on_client", &WebSocketServer::onClient, "callback"_a);
 }
