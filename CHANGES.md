@@ -11,11 +11,11 @@
 
 ## develop
 
-- [FIX] PeerConnection / WebSocket / WebSocketServer を close()/stop() せずに destruct したときに hang する問題を修正する
-  - PeerConnection は destructor 内 `mProcessor.join()` が GIL 保持下で blocking していた。 WebSocket / WebSocketServer も同じ系統の問題を持つ可能性があるため、 対称的に対処する
+- [FIX] PeerConnection / WebSocket / WebSocketServer / IceUdpMuxListener を close()/stop() せずに destruct したときに hang する問題を修正する
+  - PeerConnection は destructor 内 `mProcessor.join()` が GIL 保持下で blocking していた。 WebSocket / WebSocketServer / IceUdpMuxListener も同じ系統の問題を持つ可能性があるため、 対称的に対処する
   - 各 close()/stop() の binding を GIL release で同期実行する形に変更する
   - Python 側で各クラスを wrapper class にラップし、 `__del__` で close()/stop() を呼ぶようにする
-  - 公開クラス `libdatachannel.PeerConnection / WebSocket / WebSocketServer` は Python wrapper class に置き換わる (`isinstance` は維持されるが `type()` 厳密比較は変わる)
+  - 公開クラス `libdatachannel.PeerConnection / WebSocket / WebSocketServer / IceUdpMuxListener` は Python wrapper class に置き換わる (`isinstance` は維持されるが `type()` 厳密比較は変わる)
   - `WebSocketServer.on_client` callback に渡される `WebSocket` は wrapper ではなく native class インスタンスなので、 callback 内で保持する場合は明示的に `close()` を呼ぶことを推奨する
   - destruct hang のリグレッション検知用に `tests/test_peerconnection.py::test_destruct_without_explicit_close` と `tests/test_websocketserver.py::test_destruct_without_explicit_close` を追加する
   - @sile

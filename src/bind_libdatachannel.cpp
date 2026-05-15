@@ -1525,7 +1525,12 @@ void bind_iceudpmuxlistener(nb::module_& m) {
   nb::class_<IceUdpMuxListener>(m, "IceUdpMuxListener")
       .def(nb::init<uint16_t, optional<string>>(), "port"_a,
            "bind_address"_a = std::nullopt)
-      .def("stop", &IceUdpMuxListener::stop)
+      // stop() 内部で juice_mux_listen → release_registry → conn_mux_registry_cleanup
+      // → thread_join が走り得る。 WebSocketServer と同じく GIL 保持下では
+      // Python callback (on_unhandled_stun_request) と deadlock するため、
+      // GIL を release する。 stop() 自体が同期完了するため polling は不要。
+      .def("stop", &IceUdpMuxListener::stop,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("port", &IceUdpMuxListener::port)
       .def("on_unhandled_stun_request",
            &IceUdpMuxListener::OnUnhandledStunRequest, "callback"_a);

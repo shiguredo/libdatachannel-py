@@ -1,4 +1,5 @@
 from .libdatachannel_ext import *  # noqa: F401,F403
+from .libdatachannel_ext import IceUdpMuxListener as _IceUdpMuxListener
 from .libdatachannel_ext import PeerConnection as _PeerConnection
 from .libdatachannel_ext import WebSocket as _WebSocket
 from .libdatachannel_ext import WebSocketServer as _WebSocketServer
@@ -56,6 +57,21 @@ class WebSocketServer(_WebSocketServer):  # type: ignore[misc]
     Python wrapper ではなく nanobind の native class インスタンスである。
     ``__del__`` 経由の自動 close は走らないため、 callback 内で保持して
     使う場合は明示的に ``close()`` を呼んで破棄するのが安全。
+    """
+
+    def __del__(self):
+        try:
+            self.stop()
+        except Exception:
+            pass
+
+
+class IceUdpMuxListener(_IceUdpMuxListener):  # type: ignore[misc]
+    """IceUdpMuxListener の Python wrapper。
+
+    リソースの確実な解放のため、 利用後は明示的に ``stop()`` を呼ぶことを
+    推奨する。 ``stop()`` を呼び忘れた場合のセーフティネットとして、
+    ``__del__`` 内で ``stop()`` を呼んで destructor の hang を回避する。
     """
 
     def __del__(self):
