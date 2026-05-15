@@ -11,11 +11,12 @@
 
 ## develop
 
-- [FIX] PeerConnection / WebSocket / WebSocketServer を close()/stop() せずに destruct すると GIL を保持したまま hang する問題を修正する
-  - libdatachannel 本体の destructor 内 blocking 処理 (`mProcessor.join()` / `mThread.join()` 等) が GIL 保持下で別スレッドの Python callback と deadlock していた
-  - 対策 1: 各 close()/stop() の binding を `nb::call_guard<nb::gil_scoped_release>()` で GIL release し、 PeerConnection / WebSocket は state==Closed まで polling する形に変更する
-  - 対策 2: Python 側で各クラスを wrapper class にラップし、 `__del__` で close()/stop() を呼んでから C++ destructor に渡すようにする
-  - リグレッション検知テストとして `tests/test_peerconnection.py::test_leak` の skip 解除と `tests/test_websocketserver.py::test_destruct_without_explicit_close` の追加を行う
+- [FIX] PeerConnection / WebSocket / WebSocketServer を close()/stop() せずに destruct したときに hang する問題を修正する
+  - PeerConnection は destructor 内 `mProcessor.join()` が GIL 保持下で blocking していた。 WebSocket / WebSocketServer も同じ系統の問題を持つ可能性があるため、 対称的に対処する
+  - 各 close()/stop() の binding を GIL release で同期実行する形に変更する
+  - Python 側で各クラスを wrapper class にラップし、 `__del__` で close()/stop() を呼ぶようにする
+  - 公開クラス `libdatachannel.PeerConnection / WebSocket / WebSocketServer` は Python wrapper class に置き換わる (`isinstance` は維持されるが `type()` 厳密比較は変わる)
+  - destruct hang のリグレッション検知用に `tests/test_peerconnection.py::test_destruct_without_explicit_close` と `tests/test_websocketserver.py::test_destruct_without_explicit_close` を追加する
   - @sile
 - [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
