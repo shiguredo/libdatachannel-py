@@ -94,8 +94,14 @@ void wait_for_closed(Self& self,
     if (std::chrono::steady_clock::now() >= deadline) {
       // 異常状態を呼び出し側に伝えるため RuntimeWarning を出す。
       // GIL を取り直してから PyErr_WarnEx を呼ぶ。
+      // 利用者側で warning が error 昇格されている場合 (filterwarnings=error 等)、
+      // PyErr_WarnEx は -1 を返して Python の pending exception を立てる。
+      // 放置すると次の Python API 呼び出しで SystemError 系の不可解な失敗を
+      // 起こすため、 nb::python_error を throw して nanobind に伝播させる。
       nb::gil_scoped_acquire gil;
-      PyErr_WarnEx(PyExc_RuntimeWarning, warning_msg, 1);
+      if (PyErr_WarnEx(PyExc_RuntimeWarning, warning_msg, 1) < 0) {
+        throw nb::python_error();
+      }
       return;
     }
     std::this_thread::sleep_for(kPollInterval);
