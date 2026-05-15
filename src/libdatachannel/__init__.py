@@ -51,6 +51,11 @@ class WebSocketServer(_WebSocketServer):  # type: ignore[misc]
     リソースの確実な解放のため、 利用後は明示的に ``stop()`` を呼ぶことを
     推奨する。 ``stop()`` を呼び忘れた場合のセーフティネットとして、
     ``__del__`` 内で ``stop()`` を呼んで destructor の hang を回避する。
+
+    Note: ``on_client`` callback に渡される ``WebSocket`` インスタンスは
+    Python wrapper ではなく nanobind の native class インスタンスである。
+    ``__del__`` 経由の自動 close は走らないため、 callback 内で保持して
+    使う場合は明示的に ``close()`` を呼んで破棄するのが安全。
     """
 
     def __del__(self):
