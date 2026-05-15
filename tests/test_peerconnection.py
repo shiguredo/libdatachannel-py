@@ -49,6 +49,18 @@ def test_peerconnection_construction():
     assert pc.signaling_state() is PeerConnection.SignalingState.Stable
 
 
+# close() を 2 回呼んでも例外/hang しないことを確認する。
+# 2 回目は binding 側 (close_peer_connection) の state==Closed 早期 return で
+# 即時完了する想定。 もし早期 return が壊れていれば polling timeout (30 秒)
+# まで待たされてテスト全体が極端に遅くなる。
+def test_close_is_idempotent():
+    pc = PeerConnection()
+    pc.close()
+    assert pc.state() is PeerConnection.State.Closed
+    pc.close()
+    assert pc.state() is PeerConnection.State.Closed
+
+
 def test_set_local_description():
     pc = PeerConnection()
     dc = pc.create_data_channel("chat")
