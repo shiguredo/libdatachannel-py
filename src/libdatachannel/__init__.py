@@ -11,6 +11,15 @@ from .libdatachannel_ext import PeerConnection as _PeerConnection
 # state==Closed まで polling で待つ実装になっているため、 __del__ 中でも
 # 他スレッド (webhook サーバー等) が動ける。
 class PeerConnection(_PeerConnection):  # type: ignore[misc]
+    """PeerConnection の Python wrapper。
+
+    リソースの確実な解放のため、 利用後は明示的に ``close()`` を呼ぶことを
+    推奨する。 ``close()`` を呼び忘れた場合のセーフティネットとして、
+    ``__del__`` 内で ``close()`` を呼んで destructor の hang を回避する。
+    ただし ``__del__`` は GC タイミングに依存するため、 close 完了時刻が
+    予測しにくい。
+    """
+
     def __del__(self):
         try:
             self.close()
