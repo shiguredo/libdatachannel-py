@@ -1,15 +1,18 @@
 from .libdatachannel_ext import *  # noqa: F401,F403
 from .libdatachannel_ext import PeerConnection as _PeerConnection
+from .libdatachannel_ext import WebSocket as _WebSocket
+from .libdatachannel_ext import WebSocketServer as _WebSocketServer
 
-# PeerConnection の Python wrapper
-# 目的: pc = None など明示的な close() を伴わない destruct が走った場合に、
-# libdatachannel 本体の ~PeerConnection() 内 mProcessor.join() が GIL を
-# 保持したまま長時間 blocking する事象を回避する。
-# __del__ で先に close() を呼ぶことで非同期処理の完了まで待った状態で
-# C++ destructor に進ませ、 mProcessor.join() を即時 return させる。
-# close() の binding 側 (bind_libdatachannel.cpp) で GIL を release しつつ
-# state==Closed まで polling で待つ実装になっているため、 __del__ 中でも
-# 他スレッド (webhook サーバー等) が動ける。
+# PeerConnection / WebSocket / WebSocketServer の Python wrapper
+# 目的: 明示的な close()/stop() を伴わない destruct が走った場合に、
+# libdatachannel 本体の destructor 内 blocking 処理 (mProcessor.join() /
+# mThread.join() 等) が GIL を保持したまま長時間 hang する事象を回避する。
+# __del__ で先に close()/stop() を呼んでおくことで destructor を即時
+# 完了させる。 binding 側 (bind_libdatachannel.cpp) で GIL を release
+# しつつ閉鎖完了を待つ実装になっているため、 __del__ 中でも他スレッドが
+# 動ける。
+
+
 class PeerConnection(_PeerConnection):  # type: ignore[misc]
     """PeerConnection の Python wrapper。
 
@@ -23,6 +26,36 @@ class PeerConnection(_PeerConnection):  # type: ignore[misc]
     def __del__(self):
         try:
             self.close()
+        except Exception:
+            pass
+
+
+class WebSocket(_WebSocket):  # type: ignore[misc]
+    """WebSocket の Python wrapper。
+
+    リソースの確実な解放のため、 利用後は明示的に ``close()`` を呼ぶことを
+    推奨する。 ``close()`` を呼び忘れた場合のセーフティネットとして、
+    ``__del__`` 内で ``close()`` を呼んで destructor の hang を回避する。
+    """
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class WebSocketServer(_WebSocketServer):  # type: ignore[misc]
+    """WebSocketServer の Python wrapper。
+
+    リソースの確実な解放のため、 利用後は明示的に ``stop()`` を呼ぶことを
+    推奨する。 ``stop()`` を呼び忘れた場合のセーフティネットとして、
+    ``__del__`` 内で ``stop()`` を呼んで destructor の hang を回避する。
+    """
+
+    def __del__(self):
+        try:
+            self.stop()
         except Exception:
             pass
 
