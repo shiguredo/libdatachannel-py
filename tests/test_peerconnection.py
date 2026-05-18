@@ -210,23 +210,19 @@ def test_destruct_without_explicit_close(recwarn):
     config2.port_range_end = 6000
     pc2 = PeerConnection(config2)
 
+    # pytest stdout capture と組み合わせると issues/pending/0005 の callback I/O block
+    # 経路を踏みテストが hang するため、 callback 内では print を一切行わない。
+    # 根本対応は 0005 を参照。
     def pc1_on_local_description(desc):
-        # pytest stdout capture と組み合わせると issues/pending/0005 の callback I/O block
-        # 経路を踏みテストが hang するため、 callback 内の print は全てコメントアウトする。
-        # 根本対応は 0005 を参照。
-        # print("Description 1: " + str(desc))
         pc2.set_remote_description(Description(str(desc)))
 
     def pc1_on_local_candidate(candidate):
-        # print("Candidate 1: " + str(candidate))
         pc2.add_remote_candidate(Candidate(str(candidate)))
 
     def pc1_on_state_change(state):
-        # print("State 1: " + str(state))
         pass
 
     def pc1_on_gathering_state_change(state):
-        # print("Gathering state 1: " + str(state))
         pass
 
     pc1.on_local_description(pc1_on_local_description)
@@ -235,19 +231,15 @@ def test_destruct_without_explicit_close(recwarn):
     pc1.on_gathering_state_change(pc1_on_gathering_state_change)
 
     def pc2_on_local_description(desc):
-        # print("Description 2: " + str(desc))
         pc1.set_remote_description(Description(str(desc)))
 
     def pc2_on_local_candidate(candidate):
-        # print("Candidate 2: " + str(candidate))
         pc1.add_remote_candidate(Candidate(str(candidate)))
 
     def pc2_on_state_change(state):
-        # print("State 2: " + str(state))
         pass
 
     def pc2_on_gathering_state_change(state):
-        # print("Gathering state 2: " + str(state))
         pass
 
     pc2.on_local_description(pc2_on_local_description)
@@ -261,17 +253,13 @@ def test_destruct_without_explicit_close(recwarn):
     def pc2_on_track(t):
         nonlocal t2
         mid = t.mid()
-        # print(f'Track 2: Received track with mid "{mid}"')
         if mid != new_track_mid:
-            # print("Wrong track mid", file=sys.stderr)
             return
 
         def t_on_open():
-            # print(f'Track 2: Track with mid "{mid}" is open')
             pass
 
         def t_on_closed():
-            # print(f'Track 2: Track with mid "{mid}" is closed')
             pass
 
         t.on_open(t_on_open)

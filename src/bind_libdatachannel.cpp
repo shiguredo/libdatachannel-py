@@ -64,47 +64,14 @@ struct type_caster<std::vector<std::byte>> {
 
 namespace {
 
-// ---- close() binding 共通ヘルパー ----
+// ---- close() binding 共通定数 ----
 
-// SCTP / DTLS / TCP shutdown は典型的に数百 ms 〜 数秒で完了する。 これに対し
-// 十分短く busy loop にもならない値として 10 ms を採用する。 後続の WebSocket
-// でも同じ定数を共有する。
+// SCTP / DTLS shutdown は典型的に数百 ms 〜 数秒で完了する。 これに対し
+// 十分短く busy loop にもならない値として 10 ms を採用する。
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
 // libdatachannel の ICE / DTLS タイムアウト最大値を踏まえ、 ネットワーク
-// 遅延・リトライを見込んでも余裕がある上限として 30 秒。 これを超えても
-// Closed に到達しないケースは異常状態と判断し polling を諦め、 destructor
-// 側の mProcessor.join() に委ねる。
+// 遅延・リトライを見込んでも余裕がある上限として 30 秒。
 constexpr auto kCloseTimeout = std::chrono::seconds(30);
-
-// 呼び出し側 binding は `nb::call_guard<nb::gil_scoped_release>()` で GIL を
-// release した状態で本関数を呼び、 polling ループ中も GIL を保持しない。
-// `get_state(self)` は atomic load 等の軽量・ GIL 不要な操作であること
-// (PeerConnection::state() / WebSocket::readyState() 等)。
-//
-// 注: 1 回目の `close()` が timeout した直後に `__del__` 経由で再度呼ばれる
-// 直列ケースでは、 最悪 `kCloseTimeout × 2 = 60` 秒待ち得る。 libdatachannel
-// 側の処理停滞時のみのレアケースで、 wrapper 側に重複抑制フラグを持たせる
-// コストに見合わないため許容する。
-template <typename Self, typename GetState, typename State>
-void wait_for_closed(Self& self,
-                     GetState get_state,
-                     State closed,
-                     const char* warning_msg) {
-  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
-  while (get_state(self) != closed) {
-    if (std::chrono::steady_clock::now() >= deadline) {
-      nb::gil_scoped_acquire gil;
-      // filterwarnings=error 等で warning が例外昇格された場合は pending
-      // exception を放置せず Python 例外として伝播させる。
-      if (PyErr_WarnEx(PyExc_RuntimeWarning, warning_msg, 1) < 0) {
-        throw nb::python_error();
-      }
-      // polling は諦め、 残処理は destructor の mProcessor.join() に委ねる。
-      return;
-    }
-    std::this_thread::sleep_for(kPollInterval);
-  }
-}
 
 // ---- configuration.hpp ----
 
@@ -1313,23 +1280,35 @@ void bind_track(nb::module_& m) {
 
 // ---- peerconnection.hpp ----
 
-// PeerConnection.close() の binding 本体。
-//
-// 既に Closed なら no-op で早期 return する (libdatachannel 側 close() は
-// `closing.exchange(true)` で冪等性が確保されているが、 polling 30 秒経由を
-// 避けるための早期 return)。 そうでなければ close() を呼び、
-// wait_for_closed で state==Closed まで polling する。
+// PeerConnection.close() の binding 本体。 既に Closed なら早期 return し、
+// そうでなければ close() を呼んで state==Closed まで polling する。
+// 呼び出し側 binding で nb::call_guard<nb::gil_scoped_release>() により GIL を
+// release した状態で呼ばれる前提。 polling 中も GIL を保持しない。
+// 明示 close() が timeout した直後に __del__ 経由で再呼び出しされる直列
+// ケースでは、 最悪 kCloseTimeout × 2 = 60 秒待ち得るが許容する。
 void close_peer_connection(PeerConnection& self) {
   if (self.state() == PeerConnection::State::Closed) {
     return;
   }
   self.close();
-  wait_for_closed(
-      self, [](PeerConnection& s) { return s.state(); },
-      PeerConnection::State::Closed,
-      "PeerConnection.close(): state did not reach Closed within timeout; "
-      "the remaining cleanup is delegated to the C++ destructor and may "
-      "block.");
+  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+  while (self.state() != PeerConnection::State::Closed) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      nb::gil_scoped_acquire gil;
+      // filterwarnings=error 等で warning が例外昇格された場合は pending
+      // exception を放置せず Python 例外として伝播させる。
+      if (PyErr_WarnEx(
+              PyExc_RuntimeWarning,
+              "PeerConnection.close(): state did not reach Closed within "
+              "timeout; the remaining cleanup is delegated to the C++ "
+              "destructor and may block.",
+              1) < 0) {
+        throw nb::python_error();
+      }
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
 }
 
 void bind_peerconnection(nb::module_& m) {

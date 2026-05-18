@@ -11,7 +11,7 @@
 
 ## develop
 
-- [UPDATE} cmake の最小バージョンを 4.3 にする
+- [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
 - [UPDATE] scikit-build-core の最小バージョンを 0.12.0 にする
   - @voluntas
