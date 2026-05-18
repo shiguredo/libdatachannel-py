@@ -1280,12 +1280,10 @@ void bind_track(nb::module_& m) {
 
 // ---- peerconnection.hpp ----
 
-// PeerConnection.close() の binding 本体。 既に Closed なら早期 return し、
+// PeerConnection.close() の binding 本体。 state==Closed なら早期 return し、
 // そうでなければ close() を呼んで state==Closed まで polling する。
-// 呼び出し側 binding で nb::call_guard<nb::gil_scoped_release>() により GIL を
-// release した状態で呼ばれる前提。 polling 中も GIL を保持しない。
-// 明示 close() が timeout した直後に __del__ 経由で再呼び出しされる直列
-// ケースでは、 最悪 kCloseTimeout × 2 = 60 秒待ち得るが許容する。
+// 呼び出し側 binding は nb::call_guard<nb::gil_scoped_release>() で GIL を
+// release する前提で、 polling 中も GIL を保持しない。
 void close_peer_connection(PeerConnection& self) {
   if (self.state() == PeerConnection::State::Closed) {
     return;

@@ -85,4 +85,6 @@ line-length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-timeout = 60
+# 異常系で wait_for_closed が 30 秒 timeout を踏む可能性を踏まえ、 接続待ち
+# (test_track の attempts ループ最大 22 秒) + polling timeout の余裕を見て 120 秒。
+timeout = 120

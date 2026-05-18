@@ -311,28 +311,27 @@ def test_destruct_without_explicit_close(recwarn):
 
 
 def test_wrapper_del_releases_native():
-    """callback を一切登録しない最小ケースで wrapper の __del__ 経由 close を検証する。
+    """callback 未登録の最小ケースで wrapper の __del__ 経由 close を検証する。
 
-    native PeerConnection には nb::is_weak_referenceable() 指定が無いため weakref 不可だが、
-    Python 側で class PeerConnection(_PeerConnection) と subclass しているため、 派生 class
-    には Python の type 機構が自動で __weakref__ slot を付与する。 したがって wrapper
-    instance に対する weakref は動作する。 wrapper の refcount が 0 になり __del__ →
-    close() → native 解放と進むと weakref が dead になる。
+    Python subclass である wrapper には __weakref__ slot が CPython の type 機構で
+    自動付与されるため weakref が動作する。 Free Threading 環境では refcount=0 の
+    即時 destruct 保証が弱いので gc.collect() を介して確実に発火させる。
     """
     import weakref
 
     pc = PeerConnection()
     ref = weakref.ref(pc)
     pc = None
+    gc.collect()
     assert ref() is None
 
 
 def test_close_is_idempotent():
-    """2 回目の close() が早期 return で即時完了することを検証する。
+    """close() を 2 回呼んでも 2 回目が早期 return で即時完了することを検証する。
 
-    1 回目の close() は SCTP 未生成のため remoteClose() 同期実行で State::Closed まで
-    進み、 polling は while 条件評価のみで即抜ける。 2 回目は state == Closed 早期
-    return で即時 return する。
+    SCTP 未生成のため 1 回目で同期的に State::Closed に到達するので、 本 test では
+    wait_for_closed の polling loop は実走されない (polling は実 E2E test で間接的
+    にカバー)。 検証対象は close_peer_connection の早期 return ロジック。
     """
     pc = PeerConnection()
     pc.close()
@@ -340,7 +339,7 @@ def test_close_is_idempotent():
     start = time.monotonic()
     pc.close()
     elapsed = time.monotonic() - start
-    # CI ばらつきを許容する余裕値。 早期 return が壊れて 30 秒 timeout を踏むケースは
-    # 確実に検出できる。
-    assert elapsed < 1.0
+    # 2 回目は state==Closed 早期 return で即時 return するため μs オーダーで完了
+    # するはず。 0.1 秒は CI ばらつきを許容しつつ regression を検出できる値。
+    assert elapsed < 0.1
     assert pc.state() is PeerConnection.State.Closed

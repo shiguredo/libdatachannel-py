@@ -1,4 +1,6 @@
 from .libdatachannel_ext import *  # noqa: F401,F403
+
+# native を後勝ち上書きするため private 名で退避する。
 from .libdatachannel_ext import PeerConnection as _PeerConnection
 
 
@@ -6,9 +8,9 @@ class PeerConnection(_PeerConnection):  # type: ignore[misc]
     """PeerConnection の Python wrapper。
 
     明示的に ``close()`` を呼ぶことを推奨する。 ``__del__`` 内で ``close()``
-    を呼ぶセーフティネットを備えるが、 ``__del__`` は GC タイミングに依存
-    するため close 完了時刻は予測しにくく、 interpreter shutdown 時の挙動
-    保証もできない。 例外を観測したい場合は明示 ``close()`` を呼ぶこと。
+    を呼ぶセーフティネットを備えるが、 ``__del__`` 経由では timeout 警告も
+    含めた全例外が握り潰される silent failure になる。 例外や警告を観測したい
+    場合は明示 ``close()`` を呼ぶこと。
     """
 
     def __del__(self):
