@@ -1,6 +1,7 @@
 import gc
 import sys
 import time
+import weakref
 
 from libdatachannel import (
     Candidate,
@@ -296,12 +297,20 @@ def test_destruct_without_explicit_close(recwarn):
     assert t2 is not None
     assert t2.is_open()
 
-    # callback closure で pc1/pc2 が循環参照しているため、 単に None 代入だけでは
-    # wrapper の __del__ が発火しない。 gc.collect() で循環を解消して wrapper の
-    # __del__ → close() 経路を確実に発火させ、 destruct hang を回避できることを検証する。
+    # callback closure による pc1/pc2 の循環参照は nanobind 側の PyObject 参照が
+    # GC traversal に参加しないため、 gc.collect() だけでは解消されない場合がある。
+    # reset_callbacks() で libdatachannel 側の callback を null 化して循環を明示的に
+    # 断ち切り、 wrapper の __del__ → close() 経路が refcount=0 で確実に発火する
+    # 状態にする (= destruct hang 回避経路のリグレッション検知を実体化する)。
+    pc1.reset_callbacks()
+    pc2.reset_callbacks()
+    ref1 = weakref.ref(pc1)
+    ref2 = weakref.ref(pc2)
     pc1 = None
     pc2 = None
     gc.collect()
+    assert ref1() is None, "pc1 wrapper の __del__ が発火しなかった"
+    assert ref2() is None, "pc2 wrapper の __del__ が発火しなかった"
 
     runtime_warnings = [w for w in recwarn.list if issubclass(w.category, RuntimeWarning)]
     assert not runtime_warnings, (
@@ -317,8 +326,6 @@ def test_wrapper_del_releases_native():
     自動付与されるため weakref が動作する。 Free Threading 環境では refcount=0 の
     即時 destruct 保証が弱いので gc.collect() を介して確実に発火させる。
     """
-    import weakref
-
     pc = PeerConnection()
     ref = weakref.ref(pc)
     pc = None
