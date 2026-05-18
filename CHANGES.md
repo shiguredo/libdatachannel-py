@@ -22,6 +22,12 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] PeerConnection を明示的に close() せずに destruct した場合に発生する GIL 保持 hang を修正する
+  - 公開クラス `PeerConnection` が Python wrapper に置き換わる (`isinstance` は維持、 `type()` 厳密比較は変わる)
+  - `__del__` 経由で `close()` が自動的に呼ばれる
+  - 明示 `close()` の挙動が変わる (GIL release で実行、 state==Closed まで polling)
+  - timeout 30 秒で `RuntimeWarning` を出す
+  - @sile
 
 ### misc
 
