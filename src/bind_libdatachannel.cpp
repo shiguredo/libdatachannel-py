@@ -64,15 +64,6 @@ struct type_caster<std::vector<std::byte>> {
 
 namespace {
 
-// ---- close() binding 共通定数 ----
-
-// SCTP / DTLS shutdown は典型的に数百 ms 〜 数秒で完了する。 これに対し
-// 十分短く busy loop にもならない値として 10 ms を採用する。
-constexpr auto kPollInterval = std::chrono::milliseconds(10);
-// libdatachannel の ICE / DTLS タイムアウト最大値を踏まえ、 ネットワーク
-// 遅延・リトライを見込んでも余裕がある上限として 30 秒。
-constexpr auto kCloseTimeout = std::chrono::seconds(30);
-
 // ---- configuration.hpp ----
 
 void bind_configuration(nb::module_& m) {
@@ -1285,6 +1276,13 @@ void bind_track(nb::module_& m) {
 // 呼び出し側 binding は nb::call_guard<nb::gil_scoped_release>() で GIL を
 // release する前提で、 polling 中も GIL を保持しない。
 void close_peer_connection(PeerConnection& self) {
+  // SCTP / DTLS shutdown は典型的に数百 ms 〜 数秒で完了する。 これに対し
+  // 十分短く busy loop にもならない値として 10 ms を採用する。
+  constexpr auto kPollInterval = std::chrono::milliseconds(10);
+  // libdatachannel の ICE / DTLS タイムアウト最大値を踏まえ、 ネットワーク
+  // 遅延・リトライを見込んでも余裕がある上限として 30 秒。
+  constexpr auto kCloseTimeout = std::chrono::seconds(30);
+
   if (self.state() == PeerConnection::State::Closed) {
     return;
   }
