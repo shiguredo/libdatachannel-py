@@ -200,8 +200,8 @@ def test_track():
 
 
 # test_track() と同じようなことをするけど、 バインドしたまま明示的に close せずに終了する。
-# wrapper の __del__ 経由で close() が呼ばれることで destruct 経路の hang が回避されること、
-# polling timeout 警告が出ないことを recwarn で検証する。
+# binding 側で定義した __del__ 経由で close() が呼ばれることで destruct 経路の hang が
+# 回避されること、 polling timeout 警告が出ないことを recwarn で検証する。
 def test_destruct_without_explicit_close(recwarn):
     config1 = Configuration()
     pc1 = PeerConnection(config1)
@@ -300,8 +300,8 @@ def test_destruct_without_explicit_close(recwarn):
     # callback closure による pc1/pc2 の循環参照は nanobind 側の PyObject 参照が
     # GC traversal に参加しないため、 gc.collect() だけでは解消されない場合がある。
     # reset_callbacks() で libdatachannel 側の callback を null 化して循環を明示的に
-    # 断ち切り、 wrapper の __del__ → close() 経路が refcount=0 で確実に発火する
-    # 状態にする (= destruct hang 回避経路のリグレッション検知を実体化する)。
+    # 断ち切り、 __del__ → close() 経路が refcount=0 で確実に発火する状態にする
+    # (= destruct hang 回避経路のリグレッション検知を実体化する)。
     pc1.reset_callbacks()
     pc2.reset_callbacks()
     ref1 = weakref.ref(pc1)
@@ -309,8 +309,8 @@ def test_destruct_without_explicit_close(recwarn):
     pc1 = None
     pc2 = None
     gc.collect()
-    assert ref1() is None, "pc1 wrapper の __del__ が発火しなかった"
-    assert ref2() is None, "pc2 wrapper の __del__ が発火しなかった"
+    assert ref1() is None, "pc1 の __del__ が発火しなかった"
+    assert ref2() is None, "pc2 の __del__ が発火しなかった"
 
     runtime_warnings = [w for w in recwarn.list if issubclass(w.category, RuntimeWarning)]
     assert not runtime_warnings, (
@@ -319,12 +319,12 @@ def test_destruct_without_explicit_close(recwarn):
     )
 
 
-def test_wrapper_del_releases_native():
-    """callback 未登録の最小ケースで wrapper の __del__ 経由 close を検証する。
+def test_del_releases_native():
+    """callback 未登録の最小ケースで __del__ 経由 close を検証する。
 
-    Python subclass である wrapper には __weakref__ slot が CPython の type 機構で
-    自動付与されるため weakref が動作する。 Free Threading 環境では refcount=0 の
-    即時 destruct 保証が弱いので gc.collect() を介して確実に発火させる。
+    binding 側で nb::is_weak_referenceable() を指定しているため、 native instance に
+    対して weakref が動作する。 Free Threading 環境では refcount=0 の即時 destruct
+    保証が弱いので gc.collect() を介して確実に発火させる。
     """
     pc = PeerConnection()
     ref = weakref.ref(pc)

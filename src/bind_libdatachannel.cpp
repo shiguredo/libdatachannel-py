@@ -1322,7 +1322,8 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
-  nb::class_<PeerConnection> pc(m, "PeerConnection");
+  nb::class_<PeerConnection> pc(m, "PeerConnection",
+                                nb::is_weak_referenceable());
 
   // PeerConnection 内の enum
   nb::enum_<PeerConnection::State>(pc, "State")
@@ -1360,6 +1361,24 @@ void bind_peerconnection(nb::module_& m) {
   pc.def(nb::init<>())
       .def(nb::init<Configuration>(), "config"_a)
       .def("close", &close_peer_connection,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 close() を呼ばずに destruct した場合のセーフティネット。
+      // 利用者が明示 close() を呼べばこの経路は state==Closed 早期 return で
+      // 即時抜ける。 __del__ 経由では Python 慣例上、 例外を上に伝播させても
+      // 呼び出し側で捕捉できないため、 RuntimeWarning として記録するだけで
+      // silent に握り潰し、 destructor が落ちないようにする。
+      .def("__del__",
+           [](PeerConnection& self) {
+             try {
+               close_peer_connection(self);
+             } catch (...) {
+               nb::gil_scoped_acquire gil;
+               if (PyErr_Occurred()) PyErr_Clear();
+               PyErr_WarnEx(PyExc_RuntimeWarning,
+                            "PeerConnection.__del__: close() failed", 1);
+               if (PyErr_Occurred()) PyErr_Clear();
+             }
+           },
            nb::call_guard<nb::gil_scoped_release>())
       .def("config", &PeerConnection::config, nb::rv_policy::reference)
       .def("state", &PeerConnection::state)
