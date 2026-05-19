@@ -25,6 +25,10 @@
 // libdatachannel
 #include <rtc/rtc.hpp>
 
+// 標準ライブラリ
+#include <chrono>
+#include <thread>
+
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace rtc;
@@ -1267,6 +1271,40 @@ void bind_track(nb::module_& m) {
 
 // ---- peerconnection.hpp ----
 
+// PeerConnection.close() のバインディング本体。 libdatachannel の close() は非同期で
+// 進むため、 ここで state==Closed まで待機し、 close() から戻った時点で破棄しても
+// 安全な状態を保証する。 呼び出し側バインディングは
+// nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提。
+void close_peer_connection(PeerConnection& self) {
+  // ビジーループにならない値でのポーリング間隔。
+  constexpr auto kPollInterval = std::chrono::milliseconds(10);
+  // ポーリングの上限。 これを超えた場合はデストラクタ側に委ねる。
+  constexpr auto kCloseTimeout = std::chrono::seconds(30);
+
+  if (self.state() == PeerConnection::State::Closed) {
+    return;
+  }
+  self.close();
+  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+  while (self.state() != PeerConnection::State::Closed) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      nb::gil_scoped_acquire gil;
+      // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
+      // 放置せず Python 例外として伝播させる。
+      if (PyErr_WarnEx(
+              PyExc_RuntimeWarning,
+              "PeerConnection.close(): state did not reach Closed within "
+              "timeout; the remaining cleanup is delegated to the C++ "
+              "destructor and may block.",
+              1) < 0) {
+        throw nb::python_error();
+      }
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+}
+
 void bind_peerconnection(nb::module_& m) {
   nb::class_<DataChannelInit>(m, "DataChannelInit")
       .def(nb::init<>())
@@ -1280,7 +1318,9 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
-  nb::class_<PeerConnection> pc(m, "PeerConnection");
+  // test 側で weakref.ref(pc) を使うために __weakref__ slot を有効化する。
+  nb::class_<PeerConnection> pc(m, "PeerConnection",
+                                nb::is_weak_referenceable());
 
   // PeerConnection 内の enum
   nb::enum_<PeerConnection::State>(pc, "State")
@@ -1317,7 +1357,26 @@ void bind_peerconnection(nb::module_& m) {
   // PeerConnection
   pc.def(nb::init<>())
       .def(nb::init<Configuration>(), "config"_a)
-      .def("close", &PeerConnection::close)
+      .def("close", &close_peer_connection,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 close_peer_connection
+      // で state==Closed まで進めることで、 デストラクタ内 mProcessor.join() の残
+      // タスクが減って停止を回避しやすい。 __del__ から投げた例外は呼び出し側で
+      // 捕捉できないため RuntimeWarning として記録するだけで握り潰す。
+      .def("__del__",
+           [](PeerConnection& self) {
+             try {
+               close_peer_connection(self);
+             } catch (...) {
+               nb::gil_scoped_acquire gil;
+               PyErr_WarnEx(PyExc_RuntimeWarning,
+                            "PeerConnection.__del__: close() failed", 1);
+               // filterwarnings=error 等で warning が例外に昇格された場合も
+               // destructor を落とさないよう握り潰す。
+               if (PyErr_Occurred()) PyErr_Clear();
+             }
+           },
+           nb::call_guard<nb::gil_scoped_release>())
       .def("config", &PeerConnection::config, nb::rv_policy::reference)
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)

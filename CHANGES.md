@@ -11,7 +11,7 @@
 
 ## develop
 
-- [UPDATE} cmake の最小バージョンを 4.3 にする
+- [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
 - [UPDATE] scikit-build-core の最小バージョンを 0.12.0 にする
   - @voluntas
@@ -22,6 +22,12 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] PeerConnection を明示的に close() せずに破棄したときに Python プロセスが停止する問題を修正する
+  - 従来は破棄時の C++ デストラクタが GIL 保持下で内部処理を実行するため、 内部処理が呼ぶコールバックが GIL 待ちで止まり Python プロセスが永続停止していた
+  - `PeerConnection.__del__` で `close()` を自動的に呼び、 close() 自身も GIL 解放下で close 処理の完了 (Closed 状態) まで待機するようにする
+  - 待機が 30 秒で完了しなかった場合は `RuntimeWarning` を出す
+  - なお、 コールバック内でブロッキング I/O を行うシナリオでは 30 秒タイムアウトに到達する場合があり、 完全な解消にはなっていない (根本解消は今後の課題)
+  - @sile
 
 ### misc
 

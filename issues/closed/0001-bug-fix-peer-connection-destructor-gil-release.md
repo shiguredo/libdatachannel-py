@@ -2,6 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-18
+- Completed: 2026-05-19
 - Model: Opus 4.7
 - Branch: feature/fix-peer-connection-destructor-gil-release
 
@@ -323,3 +324,33 @@ timeout = 60
   - `tests/test_peerconnection.py:1-15` (import), `:203` (`test_leak` の skip マーカ)
   - `pyproject.toml:86-87` (`[tool.pytest.ini_options]` セクション)
   - `CHANGES.md` `## develop` セクション
+
+## 解決方法
+
+issue 当初の設計方針 (Python wrapper class + `wait_for_closed` template + `pyproject.toml` の共通 timeout) から、 レビュー結果を踏まえて以下の方針に変更して実装した。
+
+### binding (`src/bind_libdatachannel.cpp`)
+
+- `nb::class_<PeerConnection>` に `nb::is_weak_referenceable()` を指定し、 `.def("__del__", ...)` で binding 自体に `__del__` を生やす方式に変更 (Python wrapper class 方式から転換)。 これにより callback 経由で渡される instance でも `__del__` が機能する
+- `close_peer_connection` 関数内に polling loop をインライン化 (`wait_for_closed` template の先行導入は撤回)
+- ポーリング定数 (`kPollInterval=10ms` / `kCloseTimeout=30s`) は `close_peer_connection` 関数内 `constexpr` として閉じる
+- `.def("close", ...)` と `.def("__del__", ...)` の両方に `nb::call_guard<nb::gil_scoped_release>()` を付与し、 polling 中も GIL を解放する
+- close timeout 時は `PyErr_WarnEx` で `RuntimeWarning` を出し、 `filterwarnings=error` で例外昇格された場合は `nb::python_error` で伝播。 `__del__` 経由では catch して握り潰す
+
+### Python wrapper (`src/libdatachannel/__init__.py`)
+
+- 当初設計の wrapper class は撤回。 develop と同一に戻る
+
+### テスト (`tests/test_peerconnection.py`)
+
+- 既存 `test_leak` の skip 解除 + `test_destruct_without_explicit_close` にリネーム + callback 内 `print` 全削除 + 末尾で `reset_callbacks()` + `gc.collect()` + `weakref` で `__del__` 発火を実検証
+- `test_del_releases_native` (callback 未登録最小ケース) と `test_close_is_idempotent` (早期 return 検証、 閾値 0.5 秒) を新規追加
+- `@pytest.mark.timeout(120)` を `test_destruct_without_explicit_close` に個別指定 (`pyproject.toml` の共通設定は採用せず)
+
+### CHANGES.md
+
+- `## develop` セクションに `[FIX]` エントリを追加
+
+### 既知の限界
+
+コールバック内でブロッキング I/O を行うシナリオでは 30 秒タイムアウトに到達する場合があり、 完全な解消にはなっていない。 根本解消は [[0005-bug-fix-destructor-callback-deadlock]] に集約する。

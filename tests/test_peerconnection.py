@@ -1,5 +1,7 @@
+import gc
 import sys
 import time
+import weakref
 
 import pytest
 
@@ -199,9 +201,14 @@ def test_track():
     print("Success")
 
 
-# test_track() と同じようなことをするけど、バインドしたまま close せずに終了する
-@pytest.mark.skip(reason="なぜかブロックして止まったままになるのでいったんスキップ")
-def test_leak():
+# test_track() と同じセットアップで、 明示的な close() なしに破棄する。 __del__
+# 経由で close() が呼ばれて停止が回避されること、 ポーリング timeout 警告が出ない
+# ことを recwarn で検証する。
+#
+# pc1 / pc2 双方の __del__ で polling timeout (最大 30 秒 × 2) を踏み得るため、
+# 接続待ち 22 秒と合わせて 120 秒を上限とする。
+@pytest.mark.timeout(120)
+def test_destruct_without_explicit_close(recwarn):
     config1 = Configuration()
     pc1 = PeerConnection(config1)
 
@@ -210,19 +217,20 @@ def test_leak():
     config2.port_range_end = 6000
     pc2 = PeerConnection(config2)
 
+    # pytest stdout capture と組み合わせると issues/pending/0005 の callback I/O block
+    # 経路を踏みテストが hang するため、 callback 内では print を一切行わない。
+    # 根本対応は 0005 を参照。
     def pc1_on_local_description(desc):
-        print("Description 1: " + str(desc))
         pc2.set_remote_description(Description(str(desc)))
 
     def pc1_on_local_candidate(candidate):
-        print("Candidate 1: " + str(candidate))
         pc2.add_remote_candidate(Candidate(str(candidate)))
 
     def pc1_on_state_change(state):
-        print("State 1: " + str(state))
+        pass
 
     def pc1_on_gathering_state_change(state):
-        print("Gathering state 1: " + str(state))
+        pass
 
     pc1.on_local_description(pc1_on_local_description)
     pc1.on_local_candidate(pc1_on_local_candidate)
@@ -230,18 +238,16 @@ def test_leak():
     pc1.on_gathering_state_change(pc1_on_gathering_state_change)
 
     def pc2_on_local_description(desc):
-        print("Description 2: " + str(desc))
         pc1.set_remote_description(Description(str(desc)))
 
     def pc2_on_local_candidate(candidate):
-        print("Candidate 2: " + str(candidate))
         pc1.add_remote_candidate(Candidate(str(candidate)))
 
     def pc2_on_state_change(state):
-        print("State 2: " + str(state))
+        pass
 
     def pc2_on_gathering_state_change(state):
-        print("Gathering state 2: " + str(state))
+        pass
 
     pc2.on_local_description(pc2_on_local_description)
     pc2.on_local_candidate(pc2_on_local_candidate)
@@ -254,16 +260,14 @@ def test_leak():
     def pc2_on_track(t):
         nonlocal t2
         mid = t.mid()
-        print(f'Track 2: Received track with mid "{mid}"')
         if mid != new_track_mid:
-            print("Wrong track mid", file=sys.stderr)
             return
 
         def t_on_open():
-            print(f'Track 2: Track with mid "{mid}" is open')
+            pass
 
         def t_on_closed():
-            print(f'Track 2: Track with mid "{mid}" is closed')
+            pass
 
         t.on_open(t_on_open)
         t.on_closed(t_on_closed)
@@ -299,6 +303,48 @@ def test_leak():
     assert t2 is not None
     assert t2.is_open()
 
-    # これが無いとリークする
+    # callback closure による pc1/pc2 の循環参照を reset_callbacks() で明示的に
+    # 断ち切る。 これで pc1 = None; pc2 = None; gc.collect() の経路で __del__ が
+    # 確実に発火する。
+    pc1.reset_callbacks()
+    pc2.reset_callbacks()
+    ref1 = weakref.ref(pc1)
+    ref2 = weakref.ref(pc2)
     pc1 = None
     pc2 = None
+    gc.collect()
+    assert ref1() is None, "pc1 の __del__ が発火しなかった"
+    assert ref2() is None, "pc2 の __del__ が発火しなかった"
+
+    runtime_warnings = [w for w in recwarn.list if issubclass(w.category, RuntimeWarning)]
+    assert not runtime_warnings, (
+        f"close() の polling timeout 警告が {len(runtime_warnings)} 件発生: "
+        f"{[str(w.message) for w in runtime_warnings]}"
+    )
+
+
+def test_del_releases_native():
+    """callback 未登録の最小ケースで __del__ 経由の close を検証する。
+
+    Free Threading 環境では refcount=0 の即時 destruct 保証が弱いので、
+    gc.collect() を介して確実に発火させる。
+    """
+    pc = PeerConnection()
+    ref = weakref.ref(pc)
+    pc = None
+    gc.collect()
+    assert ref() is None
+
+
+def test_close_is_idempotent():
+    """close() を 2 回呼んでも 2 回目が早期 return で即時完了することを検証する。"""
+    pc = PeerConnection()
+    pc.close()
+    assert pc.state() is PeerConnection.State.Closed
+    start = time.monotonic()
+    pc.close()
+    elapsed = time.monotonic() - start
+    # 2 回目は state==Closed 早期 return で即時完了する。 0.5 秒は CI ばらつきを
+    # 許容しつつ 30 秒タイムアウトの regression を検出できる値。
+    assert elapsed < 0.5
+    assert pc.state() is PeerConnection.State.Closed
