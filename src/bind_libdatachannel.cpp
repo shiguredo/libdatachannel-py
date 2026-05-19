@@ -1322,6 +1322,9 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
+  // nb::is_weak_referenceable() は binding 対象の type に __weakref__ slot を
+  // 追加して weakref.ref(pc) を可能にする。 test_del_releases_native で
+  // 「__del__ 経由 close → native 解放」 を weakref で実検証するために必要。
   nb::class_<PeerConnection> pc(m, "PeerConnection",
                                 nb::is_weak_referenceable());
 
@@ -1362,11 +1365,15 @@ void bind_peerconnection(nb::module_& m) {
       .def(nb::init<Configuration>(), "config"_a)
       .def("close", &close_peer_connection,
            nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに destruct した場合のセーフティネット。
-      // 利用者が明示 close() を呼べばこの経路は state==Closed 早期 return で
-      // 即時抜ける。 __del__ 経由では Python 慣例上、 例外を上に伝播させても
-      // 呼び出し側で捕捉できないため、 RuntimeWarning として記録するだけで
-      // silent に握り潰し、 destructor が落ちないようにする。
+      // 明示 close() を呼ばずに destruct した場合のセーフティネット。 これが無いと
+      // libdatachannel の ~PeerConnection() 内 mProcessor.join() が GIL 保持下で
+      // 走り、 残タスクの Python callback (Track.on_closed 等) が GIL 待ちで止まる
+      // ことで Python プロセス全体が永続 hang する。 __del__ で先に close() を
+      // 呼んで State::Closed まで進めておくことで destruct 経路の負担を減らす
+      // (明示 close() 済みなら state==Closed 早期 return で即時抜ける)。
+      // __del__ 経由では Python 慣例上、 例外を上に伝播させても呼び出し側で
+      // 捕捉できないため、 RuntimeWarning として記録するだけで silent に握り潰し、
+      // destructor が落ちないようにする。
       .def("__del__",
            [](PeerConnection& self) {
              try {
