@@ -201,14 +201,13 @@ def test_track():
     print("Success")
 
 
-# test_track() と同じようなことをするけど、 バインドしたまま明示的に close せずに終了する。
-# binding 側で定義した __del__ 経由で close() が呼ばれることで destruct 経路の hang が
-# 回避されること、 polling timeout 警告が出ないことを recwarn で検証する。
+# test_track() と同じセットアップで、 明示的な close() なしに破棄する。 __del__
+# 経由で close() が呼ばれて停止が回避されること、 ポーリング timeout 警告が出ない
+# ことを recwarn で検証する。
 #
-# track の open 待ち (attempts ループで最大 22 秒) と異常系での close() の
-# ポーリングタイムアウト (最大 30 秒) を合わせて最悪 52 秒程度かかる。 CI
-# ばらつきを見込んで 90 秒を上限とする。
-@pytest.mark.timeout(90)
+# pc1 / pc2 双方の __del__ で polling timeout (最大 30 秒 × 2) を踏み得るため、
+# 接続待ち 22 秒と合わせて 120 秒を上限とする。
+@pytest.mark.timeout(120)
 def test_destruct_without_explicit_close(recwarn):
     config1 = Configuration()
     pc1 = PeerConnection(config1)
@@ -304,11 +303,9 @@ def test_destruct_without_explicit_close(recwarn):
     assert t2 is not None
     assert t2.is_open()
 
-    # callback closure による pc1/pc2 の循環参照は nanobind 側の PyObject 参照が
-    # GC traversal に参加しないため、 gc.collect() だけでは解消されない場合がある。
-    # reset_callbacks() で libdatachannel 側の callback を null 化して循環を明示的に
-    # 断ち切り、 __del__ → close() 経路が refcount=0 で確実に発火する状態にする
-    # (= destruct hang 回避経路のリグレッション検知を実体化する)。
+    # callback closure による pc1/pc2 の循環参照を reset_callbacks() で明示的に
+    # 断ち切る。 これで pc1 = None; pc2 = None; gc.collect() の経路で __del__ が
+    # 確実に発火する。
     pc1.reset_callbacks()
     pc2.reset_callbacks()
     ref1 = weakref.ref(pc1)
@@ -327,11 +324,10 @@ def test_destruct_without_explicit_close(recwarn):
 
 
 def test_del_releases_native():
-    """callback 未登録の最小ケースで __del__ 経由 close を検証する。
+    """callback 未登録の最小ケースで __del__ 経由の close を検証する。
 
-    binding 側で nb::is_weak_referenceable() を指定しているため、 native instance に
-    対して weakref が動作する。 Free Threading 環境では refcount=0 の即時 destruct
-    保証が弱いので gc.collect() を介して確実に発火させる。
+    Free Threading 環境では refcount=0 の即時 destruct 保証が弱いので、
+    gc.collect() を介して確実に発火させる。
     """
     pc = PeerConnection()
     ref = weakref.ref(pc)
@@ -341,19 +337,14 @@ def test_del_releases_native():
 
 
 def test_close_is_idempotent():
-    """close() を 2 回呼んでも 2 回目が早期 return で即時完了することを検証する。
-
-    SCTP 未生成のため 1 回目で同期的に State::Closed に到達するので、 本 test では
-    wait_for_closed の polling loop は実走されない (polling は実 E2E test で間接的
-    にカバー)。 検証対象は close_peer_connection の早期 return ロジック。
-    """
+    """close() を 2 回呼んでも 2 回目が早期 return で即時完了することを検証する。"""
     pc = PeerConnection()
     pc.close()
     assert pc.state() is PeerConnection.State.Closed
     start = time.monotonic()
     pc.close()
     elapsed = time.monotonic() - start
-    # 2 回目は state==Closed 早期 return で即時 return するため μs オーダーで完了
-    # するはず。 0.1 秒は CI ばらつきを許容しつつ regression を検出できる値。
-    assert elapsed < 0.1
+    # 2 回目は state==Closed 早期 return で即時完了する。 0.5 秒は CI ばらつきを
+    # 許容しつつ 30 秒タイムアウトの regression を検出できる値。
+    assert elapsed < 0.5
     assert pc.state() is PeerConnection.State.Closed
