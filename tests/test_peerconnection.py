@@ -3,6 +3,8 @@ import sys
 import time
 import weakref
 
+import pytest
+
 from libdatachannel import (
     Candidate,
     Configuration,
@@ -202,6 +204,11 @@ def test_track():
 # test_track() と同じようなことをするけど、 バインドしたまま明示的に close せずに終了する。
 # binding 側で定義した __del__ 経由で close() が呼ばれることで destruct 経路の hang が
 # 回避されること、 polling timeout 警告が出ないことを recwarn で検証する。
+#
+# track の open 待ち (attempts ループで最大 22 秒) と異常系での close() の
+# ポーリングタイムアウト (最大 30 秒) を合わせて最悪 52 秒程度かかる。 CI
+# ばらつきを見込んで 90 秒を上限とする。
+@pytest.mark.timeout(90)
 def test_destruct_without_explicit_close(recwarn):
     config1 = Configuration()
     pc1 = PeerConnection(config1)
