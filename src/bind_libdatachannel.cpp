@@ -1271,10 +1271,14 @@ void bind_track(nb::module_& m) {
 
 // ---- peerconnection.hpp ----
 
-// PeerConnection.close() のバインディング本体。 state==Closed なら早期 return し、
-// そうでなければ close() を呼んで state==Closed までポーリングする。
-// 呼び出し側バインディングは nb::call_guard<nb::gil_scoped_release>() で GIL を
-// 解放する前提で、 ポーリング中も GIL を保持しない。
+// PeerConnection.close() のバインディング本体。 libdatachannel の close() は非同期で
+// 進むため、 呼び出し直後に破棄すると残タスクで停止しうる。 ここで state==Closed
+// まで待機して、 close() から戻った時点で破棄しても安全な状態を保証する。
+//
+// state==Closed ならすぐに戻り、 そうでなければ close() を呼んで state==Closed
+// までポーリングする。 呼び出し側バインディングは
+// nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提で、 ポーリング中も
+// GIL を保持しない。
 void close_peer_connection(PeerConnection& self) {
   // SCTP / DTLS のシャットダウンは典型的に数百 ms 〜 数秒で完了する。 これより
   // 十分短く、 ビジーループにもならない値として 10 ms を採用する。
