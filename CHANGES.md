@@ -22,10 +22,11 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
-- [FIX] PeerConnection を明示的に close() せずに destruct した場合に発生する GIL 保持 hang を修正する
-  - `__del__` 経由で `close()` が自動的に呼ばれる
-  - 明示 `close()` の挙動が変わる (GIL release で実行、 state==Closed まで polling)
-  - timeout 30 秒で `RuntimeWarning` を出す
+- [FIX] PeerConnection を明示的に close() せずに破棄したときに Python プロセスが停止する問題を修正する
+  - 従来は破棄時の C++ デストラクタが GIL 保持下で内部処理を実行するため、 内部処理が呼ぶコールバックが GIL 待ちで止まり Python プロセスが永続停止していた
+  - `PeerConnection.__del__` で `close()` を自動的に呼ぶようにする
+  - 明示 `close()` を GIL 解放下で実行し、 close 処理の完了 (Closed 状態) まで待機する
+  - 待機が 30 秒で完了しなかった場合は `RuntimeWarning` を出す
   - @sile
 
 ### misc

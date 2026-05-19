@@ -1271,16 +1271,17 @@ void bind_track(nb::module_& m) {
 
 // ---- peerconnection.hpp ----
 
-// PeerConnection.close() の binding 本体。 state==Closed なら早期 return し、
-// そうでなければ close() を呼んで state==Closed まで polling する。
-// 呼び出し側 binding は nb::call_guard<nb::gil_scoped_release>() で GIL を
-// release する前提で、 polling 中も GIL を保持しない。
+// PeerConnection.close() のバインディング本体。 state==Closed なら早期 return し、
+// そうでなければ close() を呼んで state==Closed までポーリングする。
+// 呼び出し側バインディングは nb::call_guard<nb::gil_scoped_release>() で GIL を
+// 解放する前提で、 ポーリング中も GIL を保持しない。
 void close_peer_connection(PeerConnection& self) {
-  // SCTP / DTLS shutdown は典型的に数百 ms 〜 数秒で完了する。 これに対し
-  // 十分短く busy loop にもならない値として 10 ms を採用する。
+  // SCTP / DTLS のシャットダウンは典型的に数百 ms 〜 数秒で完了する。 これより
+  // 十分短く、 ビジーループにもならない値として 10 ms を採用する。
   constexpr auto kPollInterval = std::chrono::milliseconds(10);
-  // libdatachannel の ICE / DTLS タイムアウト最大値を踏まえ、 ネットワーク
-  // 遅延・リトライを見込んでも余裕がある上限として 30 秒。
+  // libdatachannel の ICE / DTLS タイムアウト最大値に、 ネットワーク遅延と
+  // リトライ分の余裕を足して 30 秒を上限とする。 超えた場合はデストラクタ側
+  // に委ねる。
   constexpr auto kCloseTimeout = std::chrono::seconds(30);
 
   if (self.state() == PeerConnection::State::Closed) {
@@ -1291,8 +1292,8 @@ void close_peer_connection(PeerConnection& self) {
   while (self.state() != PeerConnection::State::Closed) {
     if (std::chrono::steady_clock::now() >= deadline) {
       nb::gil_scoped_acquire gil;
-      // filterwarnings=error 等で warning が例外昇格された場合は pending
-      // exception を放置せず Python 例外として伝播させる。
+      // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
+      // 放置せず Python 例外として伝播させる。
       if (PyErr_WarnEx(
               PyExc_RuntimeWarning,
               "PeerConnection.close(): state did not reach Closed within "
@@ -1320,9 +1321,9 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
-  // nb::is_weak_referenceable() は binding 対象の type に __weakref__ slot を
-  // 追加して weakref.ref(pc) を可能にする。 test_del_releases_native で
-  // 「__del__ 経由 close → native 解放」 を weakref で実検証するために必要。
+  // __weakref__ slot を type に持たせて、 Python から weakref.ref(pc) できる
+  // ようにする。 test_del_releases_native が __del__ → close → native 解放を
+  // weakref で検証している。
   nb::class_<PeerConnection> pc(m, "PeerConnection",
                                 nb::is_weak_referenceable());
 
@@ -1363,15 +1364,15 @@ void bind_peerconnection(nb::module_& m) {
       .def(nb::init<Configuration>(), "config"_a)
       .def("close", &close_peer_connection,
            nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに destruct した場合のセーフティネット。 これが無いと
-      // libdatachannel の ~PeerConnection() 内 mProcessor.join() が GIL 保持下で
-      // 走り、 残タスクの Python callback (Track.on_closed 等) が GIL 待ちで止まる
-      // ことで Python プロセス全体が永続 hang する。 __del__ で先に close() を
-      // 呼んで State::Closed まで進めておくことで destruct 経路の負担を減らす
-      // (明示 close() 済みなら state==Closed 早期 return で即時抜ける)。
-      // __del__ 経由では Python 慣例上、 例外を上に伝播させても呼び出し側で
-      // 捕捉できないため、 RuntimeWarning として記録するだけで silent に握り潰し、
-      // destructor が落ちないようにする。
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 これが無いと
+      // 暗黙の破棄で libdatachannel の ~PeerConnection() が GIL を保持したまま
+      // mProcessor.join() を呼ぶ。 そこで残タスクの Python コールバック
+      // (例: Track.on_closed) が GIL 待ちに入ると Python プロセスが永続停止する。
+      // 先に close() を呼んで state==Closed まで進めておけば、 デストラクタ内の
+      // 残タスクが減って停止を回避しやすい。
+      //
+      // __del__ から投げた例外は呼び出し側で捕捉できないため、 RuntimeWarning と
+      // して記録するだけで黙って握り潰す。
       .def("__del__",
            [](PeerConnection& self) {
              try {
