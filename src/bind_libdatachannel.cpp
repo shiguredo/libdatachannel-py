@@ -1383,9 +1383,10 @@ void bind_peerconnection(nb::module_& m) {
                close_peer_connection(self);
              } catch (...) {
                nb::gil_scoped_acquire gil;
-               if (PyErr_Occurred()) PyErr_Clear();
                PyErr_WarnEx(PyExc_RuntimeWarning,
                             "PeerConnection.__del__: close() failed", 1);
+               // filterwarnings=error 等で warning が例外に昇格された場合も
+               // destructor を落とさないよう握り潰す。
                if (PyErr_Occurred()) PyErr_Clear();
              }
            },
