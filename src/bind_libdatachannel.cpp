@@ -1272,20 +1272,13 @@ void bind_track(nb::module_& m) {
 // ---- peerconnection.hpp ----
 
 // PeerConnection.close() のバインディング本体。 libdatachannel の close() は非同期で
-// 進むため、 呼び出し直後に破棄すると残タスクで停止しうる。 ここで state==Closed
-// まで待機して、 close() から戻った時点で破棄しても安全な状態を保証する。
-//
-// state==Closed ならすぐに戻り、 そうでなければ close() を呼んで state==Closed
-// までポーリングする。 呼び出し側バインディングは
-// nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提で、 ポーリング中も
-// GIL を保持しない。
+// 進むため、 ここで state==Closed まで待機し、 close() から戻った時点で破棄しても
+// 安全な状態を保証する。 呼び出し側バインディングは
+// nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提。
 void close_peer_connection(PeerConnection& self) {
-  // SCTP / DTLS のシャットダウンは典型的に数百 ms 〜 数秒で完了する。 これより
-  // 十分短く、 ビジーループにもならない値として 10 ms を採用する。
+  // ビジーループにならない値でのポーリング間隔。
   constexpr auto kPollInterval = std::chrono::milliseconds(10);
-  // libdatachannel の ICE / DTLS タイムアウト最大値に、 ネットワーク遅延と
-  // リトライ分の余裕を足して 30 秒を上限とする。 超えた場合はデストラクタ側
-  // に委ねる。
+  // ポーリングの上限。 これを超えた場合はデストラクタ側に委ねる。
   constexpr auto kCloseTimeout = std::chrono::seconds(30);
 
   if (self.state() == PeerConnection::State::Closed) {
@@ -1325,9 +1318,7 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
-  // __weakref__ slot を type に持たせて、 Python から weakref.ref(pc) できる
-  // ようにする。 test_del_releases_native が __del__ → close → native 解放を
-  // weakref で検証している。
+  // test 側で weakref.ref(pc) を使うために __weakref__ slot を有効化する。
   nb::class_<PeerConnection> pc(m, "PeerConnection",
                                 nb::is_weak_referenceable());
 
@@ -1368,15 +1359,10 @@ void bind_peerconnection(nb::module_& m) {
       .def(nb::init<Configuration>(), "config"_a)
       .def("close", &close_peer_connection,
            nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 これが無いと
-      // 暗黙の破棄で libdatachannel の ~PeerConnection() が GIL を保持したまま
-      // mProcessor.join() を呼ぶ。 そこで残タスクの Python コールバック
-      // (例: Track.on_closed) が GIL 待ちに入ると Python プロセスが永続停止する。
-      // 先に close() を呼んで state==Closed まで進めておけば、 デストラクタ内の
-      // 残タスクが減って停止を回避しやすい。
-      //
-      // __del__ から投げた例外は呼び出し側で捕捉できないため、 RuntimeWarning と
-      // して記録するだけで黙って握り潰す。
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 close_peer_connection
+      // で state==Closed まで進めることで、 デストラクタ内 mProcessor.join() の残
+      // タスクが減って停止を回避しやすい。 __del__ から投げた例外は呼び出し側で
+      // 捕捉できないため RuntimeWarning として記録するだけで握り潰す。
       .def("__del__",
            [](PeerConnection& self) {
              try {
