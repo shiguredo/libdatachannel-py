@@ -13,19 +13,12 @@ import pytest
 from libdatachannel import (
     Candidate,
     Configuration,
-    DataChannelInit,
     Description,
-    FrameInfo,
     IceServer,
     Message,
     NalUnit,
     PeerConnection,
-    Reliability,
     RtpPacketizationConfig,
-    WebSocket,
-    WebSocketConfiguration,
-    WebSocketServer,
-    WebSocketServerConfiguration,
 )
 
 # Free-Threading ビルドかどうかを確認
@@ -124,9 +117,7 @@ def test_concurrent_description_creation():
         barrier.wait()
         for i in range(50):
             try:
-                video = Description.Video(
-                    f"video-{thread_id}-{i}", Description.Direction.SendOnly
-                )
+                video = Description.Video(f"video-{thread_id}-{i}", Description.Direction.SendOnly)
                 video.add_h264_codec(96)
                 video.set_bitrate(3000)
                 video.add_ssrc(1000 + thread_id * 100 + i, "video-send")
@@ -231,6 +222,7 @@ def test_concurrent_peerconnection_callback_registration():
     def register_callbacks(thread_id: int):
         barrier.wait()
         for i in range(100):
+
             def on_state(state, tid=thread_id, idx=i):
                 pass
 

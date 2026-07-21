@@ -1363,20 +1363,22 @@ void bind_peerconnection(nb::module_& m) {
       // で state==Closed まで進めることで、 デストラクタ内 mProcessor.join() の残
       // タスクが減って停止を回避しやすい。 __del__ から投げた例外は呼び出し側で
       // 捕捉できないため RuntimeWarning として記録するだけで握り潰す。
-      .def("__del__",
-           [](PeerConnection& self) {
-             try {
-               close_peer_connection(self);
-             } catch (...) {
-               nb::gil_scoped_acquire gil;
-               PyErr_WarnEx(PyExc_RuntimeWarning,
-                            "PeerConnection.__del__: close() failed", 1);
-               // filterwarnings=error 等で warning が例外に昇格された場合も
-               // destructor を落とさないよう握り潰す。
-               if (PyErr_Occurred()) PyErr_Clear();
-             }
-           },
-           nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "__del__",
+          [](PeerConnection& self) {
+            try {
+              close_peer_connection(self);
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "PeerConnection.__del__: close() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格された場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("config", &PeerConnection::config, nb::rv_policy::reference)
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)

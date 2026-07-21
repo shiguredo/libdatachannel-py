@@ -1,57 +1,64 @@
-[build-system]
-requires = ["scikit-build-core", "nanobind>=2.12.0"]
-build-backend = "scikit_build_core.build"
-
 [project]
 name = "libdatachannel-py"
-authors = [{ name = "Shiguredo Inc.", email = "contact+pypi@shiguredo.jp" }]
-dynamic = ["version"]
 description = "libdatachannel-py is a Python binding for libdatachannel."
 readme = "README.md"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [{ name = "Shiguredo Inc.", email = "contact+pypi@shiguredo.jp" }]
 classifiers = [
-    "Programming Language :: C++",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: Free Threading :: 2 - Beta",
-    "Operating System :: MacOS :: MacOS X",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Free Threading :: 2 - Beta",
 ]
-requires-python = ">=3.12"
+dynamic = ["version"]
 
 [project.urls]
-Source = "https://github.com/shiguredo/libdatachannel-py"
 Discord = "https://discord.gg/shiguredo"
+Source = "https://github.com/shiguredo/libdatachannel-py"
 
 [dependency-groups]
 dev = [
-    { include-group = "test" },
-    { include-group = "example" },
-    { include-group = "lint" },
-]
-test = [
-    "pytest",
-    "pytest-aiohttp",
-    "pytest-timeout",
-    "numpy",
-    "hypothesis",
-    "aiohttp",
+  { include-group = "example" },
+  { include-group = "lint" },
+  { include-group = "test" },
 ]
 example = [
-    "httpx",
-    "structlog",
-    "uvc-py",
-    "blend2d-py",
-    "portaudio-py",
-    "webcodecs-py",
-    "raw-player",
+  "blend2d-py",
+  "httpx",
+  "portaudio-py",
+  "raw-player",
+  "structlog",
+  "uvc-py",
+  "webcodecs-py",
 ]
 lint = ["ruff", "ty"]
+test = [
+  "aiohttp",
+  "hypothesis",
+  "numpy",
+  "pytest",
+  "pytest-aiohttp",
+  "pytest-timeout",
+]
+
+[build-system]
+requires = ["nanobind>=2.12.0", "scikit-build-core"]
+build-backend = "scikit_build_core.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
 
 [tool.scikit-build]
 minimum-version = "0.12.0"
@@ -74,14 +81,10 @@ provider = "scikit_build_core.metadata.regex"
 input = "VERSION"
 regex = "^(?P<value>.+)$"
 
+[tool.ty.src]
+exclude = ["src/libdatachannel/__init__.py"]
+
 [tool.uv]
 package = false
 managed = true
 python-preference = "only-managed"
-
-[tool.ruff]
-target-version = "py312"
-line-length = 100
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

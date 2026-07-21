@@ -477,10 +477,14 @@ class Blend2DRenderer:
             if random.random() < 0.5:
                 w = random.randint(40, 100)
                 h = random.randint(40, 100)
-                self.shapes.append(MovingRect(x, y, w, h, vx, vy, color[0], color[1], color[2], alpha))
+                self.shapes.append(
+                    MovingRect(x, y, w, h, vx, vy, color[0], color[1], color[2], alpha)
+                )
             else:
                 radius = random.randint(20, 50)
-                self.shapes.append(MovingCircle(x, y, radius, vx, vy, color[0], color[1], color[2], alpha))
+                self.shapes.append(
+                    MovingCircle(x, y, radius, vx, vy, color[0], color[1], color[2], alpha)
+                )
 
     def render_frame(self) -> np.ndarray:
         """フレームを描画して BGRA 配列を返す"""
@@ -1219,7 +1223,7 @@ class WHIPClient:
             "coded_height": self.video_height,
             "timestamp": timestamp_us,
         }
-        frame = VideoFrame(y_plane, uv_plane, nv12_init)  # type: ignore[call-overload]
+        frame = VideoFrame(y_plane, uv_plane, nv12_init)  # ty: ignore[no-matching-overload]
 
         # エンコード（PLI による強制キーフレームも考慮）
         force_by_pli = self.force_keyframe

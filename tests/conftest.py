@@ -42,7 +42,7 @@ def echo_websocket_server():
             site = web.TCPSite(runner, "127.0.0.1", 0)
             await site.start()
             # 実際のポート番号を取得
-            port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+            port = site._server.sockets[0].getsockname()[1]  # ty: ignore[unresolved-attribute]
             port_queue.put(port)
 
         loop.run_until_complete(start())

@@ -32,6 +32,7 @@ def test_websocketserver():
         def client_on_open():
             nonlocal client
             print("WebSocketServer: Client connection open")
+            assert client is not None
             path = client.path()
             if path is not None:
                 print(f"WebSocketServer: Requested path is {path}")
@@ -41,6 +42,7 @@ def test_websocketserver():
 
         def client_on_message(message):
             nonlocal client
+            assert client is not None
             client.send(message)
 
         client.on_open(client_on_open)
