@@ -31,6 +31,8 @@
 
 ### misc
 
+- [FIX] Ubuntu 22.04 向け wheel ビルドで auditwheel 6.8.1 以降が要求する patchelf をインストールするようにする
+  - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
   - @voluntas
 - [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
