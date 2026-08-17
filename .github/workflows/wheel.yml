@@ -59,6 +59,36 @@ jobs:
       - name: Build wheel
         run: uv build --wheel
 
+      # Ubuntu 22.04 の apt 版 patchelf は 0.14.3 で、
+      # auditwheel 6.8.1 以降が要求する >= 0.14.5 を満たさない。
+      # 公式リリースのバイナリを /usr/local に入れて PATH で優先させる。
+      - name: Install patchelf for Ubuntu 22.04
+        if: startsWith(matrix.platform.runs_on, 'ubuntu-22.04')
+        env:
+          PATCHELF_VERSION: "0.19.1"
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "${arch}" in
+            x86_64)
+              expected_sha256="a6818fef80128fb354423234ecacdcca3e993913d774e5d8346bc63f70fed4cf"
+              ;;
+            aarch64)
+              expected_sha256="a2f8f5add5910a521d35062adf2c9f55d75b65ae5508d290758787004054e702"
+              ;;
+            *)
+              echo "Unsupported architecture for patchelf install: ${arch}" >&2
+              exit 1
+              ;;
+          esac
+          tarball="patchelf-${PATCHELF_VERSION}-${arch}.tar.gz"
+          url="https://github.com/NixOS/patchelf/releases/download/${PATCHELF_VERSION}/${tarball}"
+          curl -fsSL "${url}" -o "${tarball}"
+          echo "${expected_sha256}  ${tarball}" | sha256sum -c -
+          sudo tar -xzf "${tarball}" -C /usr/local
+          command -v patchelf
+          patchelf --version
+
       - name: Repair wheel with auditwheel
         shell: bash
         run: |
