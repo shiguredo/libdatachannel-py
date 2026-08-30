@@ -2,6 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-05-18
+- Polished: 2026-08-30
 - Model: Opus 4.7
 - Branch: feature/fix-websocketserver-destructor-gil-release
 
@@ -9,79 +10,76 @@
 
 `WebSocketServer` を明示的に `stop()` せずに destruct すると、 libdatachannel 本体の `~WebSocketServer()` 配下で `stop()` が呼ばれ、 内部の `tcpServer->close()` と `mThread.join()` が GIL を保持したまま走る。 受け入れ thread が Python callback (`on_client` 等) の GIL 待ちに入ると Python プロセス全体が hang する。
 
-本 issue では `WebSocketServer` を対象に、 destruct 前に GIL release で同期 `stop()` する仕組みを C++ binding と Python wrapper に追加する。 `WebSocketServer` は state API を持たないため polling は行わず、 GIL release だけを担保する。 加えて `on_client` callback に渡される `WebSocket` インスタンスは Python wrapper にラップされない仕様を明確化する。
+本 issue では `WebSocketServer` を対象に、 destruct 前に GIL release で同期 `stop()` する仕組みを C++ binding に追加する ([[0001-bug-fix-peer-connection-destructor-gil-release]] の解決方法と同じ binding 側 `__del__` 方式)。 `WebSocketServer` は state API を持たないため polling は行わず、 GIL release だけを担保する。 `on_client` callback に渡される `WebSocket` インスタンスの自動 `close()` は [[0002-bug-fix-websocket-destructor-gil-release]] の binding 側 `__del__` により担保されるため、 本 issue では追加対応しない。
 
 ## 優先度根拠
 
 - `WebSocketServer` はサーバー用途の利用者のみが触る API のため、 `PeerConnection` ([[0001-bug-fix-peer-connection-destructor-gil-release]]) や `WebSocket` ([[0002-bug-fix-websocket-destructor-gil-release]]) ほど影響範囲は広くない。
 - しかし destruct 時の hang は debug 困難な事象であり、 一連の修正 ([[0001-bug-fix-peer-connection-destructor-gil-release]] / [[0002-bug-fix-websocket-destructor-gil-release]] / [[0004-bug-fix-ice-udp-mux-listener-destructor-gil-release]]) と整合した形で閉じる必要がある。
-- `on_client` callback で受け取る `WebSocket` が wrapper されない (= `__del__` 経由の自動 `close()` が走らない) という周辺仕様も合わせて明文化する。
+- `on_client` callback で受け取る `WebSocket` の自動 `close()` は 0002 の binding 側 `__del__` で担保されるため、 本 issue では追加対応しない。
 
 ## 現状
 
-- `src/bind_libdatachannel.cpp` の `WebSocketServer` bindings は `stop` を `&WebSocketServer::stop` で直接バインドしており、 GIL を保持したまま `stop()` が実行される。
+- `src/bind_libdatachannel.cpp` の `WebSocketServer` bindings は `stop` を `&WebSocketServer::stop` で直接バインドしており、 GIL を保持したまま `stop()` が実行される。 `__del__` binding も無いため、 明示 `stop()` を呼ばずに destruct した場合も GIL 保持下で `stop()` が走る。
 - `WebSocketServer` には state API がないため、 stop の完了を polling で確認することはできない。 `stop()` の戻り時点で `tcpServer->close()` と `mThread.join()` が完了している前提に乗る。
-- `src/libdatachannel/__init__.py` に Python wrapper class が無い。
 - 利用者が `del server` あるいは function スコープ抜けで destruct した場合に、 `~WebSocketServer()` 内 `stop()` が GIL 保持下で走り、 callback の GIL 待ちと噛み合って Python プロセス全体が hang する。
-- `on_client` callback の引数で渡される `WebSocket` インスタンスは nanobind の native class であり、 Python wrapper に置き換わらない。 これは現状ドキュメント化されておらず、 利用者が wrapper の挙動を期待すると混乱する。
 
 ## 設計方針
 
 ### 1. C++ binding 側 (src/bind_libdatachannel.cpp)
 
-- `WebSocketServer` bindings の `.def("stop", &WebSocketServer::stop)` を `.def("stop", &WebSocketServer::stop, nb::call_guard<nb::gil_scoped_release>())` に差し替える。
-- polling は不要 (state API が無い)。 `wait_for_closed` ヘルパーには依存しない。
+[[0001-bug-fix-peer-connection-destructor-gil-release]] の解決方法 (binding 側の `close_peer_connection` + `.def("__del__", ...)` + `nb::is_weak_referenceable()`) と同型の実装を `WebSocketServer` に適用する。
+
+- `stop_websocket_server` を `namespace {}` に追加する。 `self.stop()` を呼ぶだけで、 polling は行わない (state API が無い)。 `stop()` の戻り時点で `tcpServer->close()` と `mThread.join()` が完了している。
+- `.def("stop", &WebSocketServer::stop)` を `.def("stop", &stop_websocket_server, nb::call_guard<nb::gil_scoped_release>())` に差し替える。
+- `.def("__del__", ...)` を追加し、 GIL release 下で `stop_websocket_server` を呼ぶ。 `__del__` から投げた例外は呼び出し側で捕捉できないため `RuntimeWarning` として記録するだけで握り潰す (0001 の `PeerConnection` binding と同型)。
+- `nb::class_<WebSocketServer>` に `nb::is_weak_referenceable()` を指定する (test で weakref により `__del__` 発火を検証するため)。
 
 ### 2. Python wrapper 側 (src/libdatachannel/__init__.py)
 
-- `from .libdatachannel_ext import WebSocketServer as _WebSocketServer` を追加する。
-- `class WebSocketServer(_WebSocketServer)` を新規追加し、 `__del__` 内で `try/except Exception: pass` で囲んで `self.stop()` を呼ぶ。
-- docstring に以下を明記する。
-  - 「明示的に `stop()` を呼ぶことを推奨。 `__del__` はセーフティネット」
-  - 「`on_client` callback の引数で渡される `WebSocket` インスタンスは Python wrapper ではなく nanobind の native class のため、 `__del__` 経由の自動 close は走らない。 callback 内で `WebSocket` を保持して使う場合は明示的に `close()` を呼ぶこと」
+- 変更不要。 0001 の解決方法で wrapper class 方式は撤回されたため、 本 issue でも Python wrapper は追加せず binding 側の `__del__` 方式に統一する。
 
 ### 3. テスト (tests/test_websocketserver.py)
 
 - `test_destruct_without_explicit_close` を新規追加する。 内容は「`WebSocketServer` を明示 `stop()` を呼ばずに destruct しても hang せず終了する」 ことを検証する。
+- 検証方法は 0001 / 0002 のテストに合わせ、 `weakref` で `__del__` 発火を実検証し、 `@pytest.mark.timeout` で hang 時の上限を指定する。 polling が無いため `RuntimeWarning` 経路は存在せず、 `recwarn` は使わない。
 - 既存テストが PASS することを確認する。
 
 ### 4. CHANGES.md
 
-- 既存の `[FIX]` エントリ ([[0001-bug-fix-peer-connection-destructor-gil-release]] / [[0002-bug-fix-websocket-destructor-gil-release]] と同 PR にまとめる場合は同一エントリに加筆) に以下を追記する。
+- 0001 / 0002 の実装手順により後続 issue は別 PR で着手するため、 `## develop` に 0001 / 0002 のエントリとは別の `[FIX]` エントリを追加する。
   - 「`WebSocketServer` を明示的に `stop()` せずに destruct した場合の GIL 保持 hang を修正する」
-  - 「公開クラス `WebSocketServer` が Python wrapper に置き換わる」
-  - 「`on_client` callback に渡される `WebSocket` は wrapper されない仕様を docstring に明記した」
+  - 「`WebSocketServer.__del__` で `stop()` が自動的に呼ばれる」
 
 ## 完了条件
 
 - `uv sync && make test` で全テストが PASS する。
-- `tests/test_websocketserver.py::test_destruct_without_explicit_close` が、 明示 `stop()` を呼ばずに `server` を destruct しても hang せず終了する。
-- `CHANGES.md` の `## develop` に `[FIX]` エントリが追加 (or 既存エントリに加筆) されている。
-- `on_client` 経由の `WebSocket` が wrapper されない仕様が docstring に明記されている。
+- `tests/test_websocketserver.py::test_destruct_without_explicit_close` が、 明示 `stop()` を呼ばずに `server` を destruct しても hang せず終了し、 weakref により `__del__` 発火が検証できる。
+- `CHANGES.md` の `## develop` に 0001 / 0002 とは別の `[FIX]` エントリが追加されている。
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること。
 
 ## 解決方法
 
 - `src/bind_libdatachannel.cpp`
-  - `WebSocketServer` bindings の `.def("stop", ...)` に `nb::call_guard<nb::gil_scoped_release>()` を追加。
+  - `stop_websocket_server` を匿名 namespace に追加する (polling なし)。
+  - `WebSocketServer` bindings の `.def("stop", ...)` を `&stop_websocket_server` + `nb::call_guard<nb::gil_scoped_release>()` に差し替え、 `.def("__del__", ...)` を追加し、 `nb::class_<WebSocketServer>` に `nb::is_weak_referenceable()` を指定する。
 - `src/libdatachannel/__init__.py`
-  - `from .libdatachannel_ext import WebSocketServer as _WebSocketServer` を追加。
-  - `class WebSocketServer(_WebSocketServer)` を追加し `__del__` で `stop()` を呼ぶ。
-  - docstring に `on_client` callback の `WebSocket` が wrapper されない仕様を明記。
+  - 変更なし (Python wrapper は追加しない)。
 - `tests/test_websocketserver.py`
-  - `test_destruct_without_explicit_close` を追加。
+  - `test_destruct_without_explicit_close` を追加する。
 - `CHANGES.md`
-  - `## develop` セクションに `[FIX]` エントリを追加 (or 0001 / 0002 のエントリに加筆)。
+  - `## develop` セクションに 0001 / 0002 とは別の `[FIX]` エントリを追加する。
 
 ## 参考
 
-- 仕切り直しサマリ: `/tmp/destructor-gil-release-summary.md`
-- 既存ブランチ (参考実装): `feature/fix-destructor-gil-release`
-  - 該当コミット: `85b144a` (`stop()` を GIL release で実行), `6736371` (Python wrapper 追加), `f4a1703` (test 追加), `5869135` (`on_client` 仕様の明記), `7f8112d` (test コメントを wrapper 実装と整合)
-- 関連 issue: [[0001-bug-fix-peer-connection-destructor-gil-release]] / [[0002-bug-fix-websocket-destructor-gil-release]] / [[0004-bug-fix-ice-udp-mux-listener-destructor-gil-release]]
-- libdatachannel 関連コード位置:
-  - `_deps/libdatachannel/v0.24.0/source/src/impl/websocketserver.cpp:61-68` (`stop()` 内 `tcpServer->close()` + `mThread.join()`)
+- 既存ブランチ (試行錯誤の履歴): `feature/fix-destructor-gil-release`
+  - `85b144a` (`stop()` を GIL release で実行) / `6736371` (Python wrapper 追加) / `f4a1703` (test 追加) / `5869135` (`on_client` 仕様の明記) / `7f8112d` (test コメントを wrapper 実装と整合) は wrapper 方式に基づく試行錯誤であり、 0001 の解決方法で撤回された。 cherry-pick せず、 develop に取り込まれた 0001 の実装 (`close_peer_connection` / `.def("__del__")` / `nb::is_weak_referenceable()`) を踏襲すること。
+- 関連 issue: [[0001-bug-fix-peer-connection-destructor-gil-release]] (`close_peer_connection` / `__del__` / `is_weak_referenceable` の実装元) / [[0002-bug-fix-websocket-destructor-gil-release]] (`on_client` 経由の `WebSocket` の自動 `close()` の実装元) / [[0004-bug-fix-ice-udp-mux-listener-destructor-gil-release]] / [[0005-bug-fix-destructor-callback-deadlock]]
+- libdatachannel 関連コード位置 (シンボル名で特定する):
+  - `_deps/libdatachannel/v0.24.0/source/src/websocketserver.cpp` の public `~WebSocketServer()` (impl の `stop()` を呼ぶ) と public `WebSocketServer::stop()`
+  - `_deps/libdatachannel/v0.24.0/source/src/impl/websocketserver.cpp` の `WebSocketServer::stop()` (`tcpServer->close()` + `mThread.join()`) と `WebSocketServer::~WebSocketServer()` (公開 destructor からも `stop()` を呼ぶ)
 
 ## スコープ外 (関連する未解決問題)
 
-- `stop()` に timeout は導入しない。 `stop()` が完了しない異常状態では destruct も完了しないが、 これは `tcpServer->close()` や `mThread.join()` の挙動に依存するため、 timeout の有無は別途設計判断が必要 (レビュー指摘 I-6)。 本 issue ではスコープ外とし、 必要に応じて別 issue で扱う。
+- `stop()` に timeout は導入しない。 `stop()` が完了しない異常状態では destruct も完了しないが、 これは `tcpServer->close()` や `mThread.join()` の挙動に依存するため、 timeout の有無は別途設計判断が必要。 本 issue ではスコープ外とし、 必要に応じて別 issue で扱う。
+- 本 issue は destruct 到達前に GIL release で `stop()` を完了させて destructor 経路の負担を減らすアプローチであり、 完全には hang を防げない。 callback が I/O block する条件下では引き続き hang し得るため、 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] に集約する。
