@@ -10,7 +10,11 @@ hooks = [
   { id = "trailing-whitespace", priority = 0 },
   { id = "end-of-file-fixer", priority = 0 },
   { id = "check-toml", priority = 0 },
-  { id = "check-yaml", priority = 0, exclude = { glob = [".clang-format"] } },
+  {
+    id = "check-yaml",
+    priority = 0,
+    exclude = { glob = [".clang-format"] }
+  },
 ]
 
 [[repos]]
