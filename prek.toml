@@ -19,7 +19,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.14.14"
+rev = "v0.16.10"
 hooks = [
   { id = "ruff-format", priority = 0 },
   { id = "ruff-check", args = ["--fix"], priority = 10 },
@@ -27,7 +27,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/tombi-toml/tombi-pre-commit"
-rev = "v1.2.4"
+rev = "v1.7.3"
 hooks = [
   { id = "tombi-lint", exclude = { glob = "**/uv.lock" } },
   { id = "tombi-format", exclude = { glob = "**/uv.lock" } },
