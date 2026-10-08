@@ -62,6 +62,10 @@
   - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
   - @voluntas
+- [FIX] CI で prek のフック (ruff / ty) が実行されていなかったのを解消する
+  - pull_request と develop への push で prek.toml のフックを実行する
+  - ty はビルドで生成されるスタブを必要とするため、 wheel をビルドするジョブで実行する
+  - @voluntas
 - [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
   - @voluntas
 
