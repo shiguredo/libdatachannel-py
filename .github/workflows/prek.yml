@@ -10,15 +10,15 @@ permissions:
   contents: read
 
 jobs:
-  # ビルドを伴わないフックを実行する。
-  # ty は生成スタブ (ビルド成果物) を必要とするため ty ジョブで実行する。
+  # ビルドを伴わないフックを実行する
   prek:
     runs-on: ubuntu-slim
-    # prek のフック環境の初回準備と Python のダウンロードを見込んで余裕を持たせる
+    # ubuntu-slim はジョブの実行時間が 15 分に制限されるため、 その上限を設定する
+    # (超過すると強制終了して失敗する)
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # ローカルのフックが uv を呼ぶため uv を先に用意する
+      # clang-format を uv tool install で導入するため uv を先に用意する
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: false
@@ -41,6 +41,9 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: false
+          # キャッシュキーの python-3.14 とビルドに使う Python を一致させる
+          # (.python-version は 3.12 のため、 未指定だと uv は 3.12 を選ぶ)
+          python-version: "3.14"
 
       # 依存ライブラリのビルドキャッシュ。 キーは wheel.yml の ubuntu-24.04_x86_64 と
       # 同じ形式にして、 既存のキャッシュにヒットさせる (_deps は Python に依存しない)
