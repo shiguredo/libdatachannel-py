@@ -55,6 +55,10 @@
 
 ### misc
 
+- [FIX] CI で prek.toml のフック (ruff / ty / tombi / clang-format と組み込みフック) が実行されていなかったのを解消する
+  - pull_request と develop への push で prek.toml のフックを実行する
+  - ty はビルドで生成されるスタブを必要とするため、 wheel をビルドするジョブで実行する
+  - @voluntas
 - [FIX] make lint / make typecheck が失敗したままになっていたのを解消し、 ruff の規約セットを明示して固定する
   - ruff / ty は prek.toml の rev でバージョンを管理し、 `[dependency-groups]` から削除する
   - @voluntas

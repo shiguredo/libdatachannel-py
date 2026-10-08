@@ -1,0 +1,68 @@
+name: prek
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  # ビルドを伴わないフックを実行する
+  prek:
+    runs-on: ubuntu-slim
+    # ubuntu-slim はジョブの実行時間が 15 分に制限されるため、 その上限を設定する
+    # (超過すると強制終了して失敗する)
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # clang-format を uv tool install で導入するため uv を先に用意する
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+      # clang-format は runner に入っていないため、 ローカルと同じバージョンを用意する
+      - name: Install clang-format
+        run: uv tool install clang-format==23.1.3
+      - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+        with:
+          extra-args: "--all-files --skip ty"
+
+  # ty は libdatachannel の生成スタブ (src/libdatachannel/__init__.pyi) を必要とする。
+  # *.pyi は git 管理外でビルド時に生成されるため、 wheel をビルドしてからフックを実行する。
+  # ubuntu-slim は 1 vCPU / 5 GB でジョブの実行時間が 15 分に制限されるため、
+  # ビルドを伴うこのジョブでは ubuntu-24.04 を使う。
+  ty:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+          # キャッシュキーの python-3.14 とビルドに使う Python を一致させる
+          # (.python-version は 3.12 のため、 未指定だと uv は 3.12 を選ぶ)
+          python-version: "3.14"
+
+      # 依存ライブラリのビルドキャッシュ。 キーは wheel.yml の ubuntu-24.04_x86_64 と
+      # 同じ形式にして、 既存のキャッシュにヒットさせる (_deps は Python に依存しない)
+      - name: Cache dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: _deps
+          key: ${{ runner.os }}-deps-ubuntu-24.04_x86_64-python-3.14-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-ubuntu-24.04_x86_64-python-3.14-
+            ${{ runner.os }}-deps-ubuntu-24.04_x86_64-
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      # 生成スタブを配置する (make develop と同じ)
+      - name: Copy stub
+        run: cp _build/__init__.pyi src/libdatachannel/
+
+      - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+        with:
+          extra-args: "--all-files ty"
