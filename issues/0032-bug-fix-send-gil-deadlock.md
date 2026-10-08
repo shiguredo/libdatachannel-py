@@ -5,6 +5,7 @@
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-send-gil-deadlock
 - Polished: {YYYY-MM-DD}
+- Reporter: @Geomglot
 
 ## 目的
 
