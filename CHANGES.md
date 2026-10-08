@@ -43,6 +43,10 @@
   - 派生クラス側の binding は変更しない
   - 派生クラスのインスタンスからは従来どおり呼べる。 影響は未バインドで呼んでいたコードと、 型スタブから `Channel` のメソッドが消えることによる型検査 (`Channel` 型で注釈した変数からの呼び出し) に限られる
   - @voluntas
+- [FIX] NalUnit と H265NalUnit にヘッダサイズ未満のバッファを渡すと SIGSEGV する問題を修正する
+  - `NalUnit(0).forbidden_bit()` や `NalUnit(b"").forbidden_bit()` が 0 バイトのバッファで null ポインタを参照して落ち、 `H265NalUnit(1)` は 2 バイトのヘッダを範囲外で読み書きしていた (Release ビルドでは assert が消えるため libdatachannel 本体の防御が働かない)
+  - コンストラクタ (size 版 / bytes 版) でヘッダサイズ以上のバッファが確保されるかを検証し、 範囲外と桁あふれは `ValueError` にする
+  - @voluntas
 
 ### misc
 
