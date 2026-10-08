@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-08
 - Branch: feature/fix-channel-binding-virtual-dispatch
 - Polished: 2026-10-08
 
@@ -55,6 +55,14 @@ Channel.is_open(dc)  # 落ちないが DataChannel::close() を実行する
 - `tests/test_channel.py` に上記を検証するテストが追加されていること
 - `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `bind_channel` から virtual メソッドの binding 7 件 (close / send 2 オーバーロード / is_open / is_closed / max_message_size / buffered_amount) を削除し、 派生 3 クラス (DataChannel / Track / WebSocket) 側の binding に一本化した。 削除後は未バインド呼び出し (`Channel.is_closed(dc)` など) が AttributeError になり、 SIGSEGV / SIGBUS と誤った関数の実行が解消する
+- 削除の理由 (Channel が 2 番目の基底でオブジェクト先頭から 24 バイトずれているため基底オフセットが加算されないこと) と、 非 virtual の binding を残す理由 (基底オフセットが加算されなくても impl() が同一の impl オブジェクトに到達すること) をコメントに残した
+- `bind_channel` 直前の GIL コメントの対象クラス列挙を `DataChannel` / `Track` / `WebSocket` に修正し、 `bind_datachannel` の `buffered_amount` コメントも削除後の状態に合わせて更新した
+- `tests/test_channel.py` に、 `Channel` に virtual メソッドの binding が無いこと / 派生 3 クラスが binding を提供すること / 3 クラスのメソッドが動作すること (2 引数の `send` の未接続時の例外を含む) を検証するテストを追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加し、 未リリースの 0032 のエントリから `Channel.send()` の記載を除いた
 
 ## 参考
 

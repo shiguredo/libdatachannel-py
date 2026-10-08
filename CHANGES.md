@@ -30,12 +30,18 @@
   - @sile
 - [FIX] 送信系 API が GIL を保持したまま送信経路に入り、 受信経路のコールバックとデッドロックする問題を修正する
   - 映像トラックとデータチャネルを同時に使い、 受信側のパケットロスが多い条件下で Python プロセスが恒久停止していた
-  - `Channel.send()` / `DataChannel.send()` / `Track.send()` / `Track.send_frame()` / `WebSocket.send()` を GIL 解放下で実行する
+  - `DataChannel.send()` / `Track.send()` / `Track.send_frame()` / `WebSocket.send()` を GIL 解放下で実行する
   - GIL による直列化が無くなるため、 複数 thread から同一 Track へ送信する場合は呼び出し側で直列化する
   - @voluntas
 - [FIX] DataChannel / Track / WebSocket の `buffered_amount()` を Python から呼ぶと SIGSEGV する問題を修正する
   - `Channel` が 2 番目の基底であるため、 `Channel` 側の binding 経由では基底オフセットが加算されず、 virtual 呼び出しが誤った vtable スロットを読んでいた
-  - `buffered_amount` を派生クラス側にも binding し、 派生クラスのインスタンスから呼ぶ経路を修正する
+  - `buffered_amount` を派生クラス側に binding し、 派生クラスのインスタンスから呼ぶ経路を修正する
+  - @voluntas
+- [FIX] `Channel` の binding 経由で virtual メソッドを呼ぶと落ちる、 または誤った関数が実行される問題を修正する
+  - `Channel` は派生クラスの 2 番目の基底であるため、 `Channel` 側の binding 経由では基底オフセットが加算されず、 virtual 呼び出しが誤った vtable スロットを読んでいた
+  - `Channel` の virtual メソッドの binding を削除する。 対象は close / send (2 オーバーロード) / is_open / is_closed / max_message_size / buffered_amount
+  - 派生クラス側の binding は変更しない
+  - 派生クラスのインスタンスからは従来どおり呼べる。 影響は未バインドで呼んでいたコードと、 型スタブから `Channel` のメソッドが消えることによる型検査 (`Channel` 型で注釈した変数からの呼び出し) に限られる
   - @voluntas
 
 ### misc
