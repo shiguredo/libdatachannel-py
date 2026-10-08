@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-08
 - Branch: feature/fix-lint-typecheck-gate
 - Polished: 2026-10-08
 
@@ -61,6 +61,15 @@
 - ruff / ty が prek.toml の rev で単一管理され、 `[dependency-groups]` に含まれていないこと
 - `uv sync && make test` で全テストが PASS すること。 ただし `tests/test_peerconnection.py::test_destruct_without_explicit_close` は [[0005-bug-fix-destructor-callback-deadlock]] が扱う既知の恒停を持つため、 本 issue の完了判定では同テストの恒停の有無を問わない
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `[tool.ruff.lint]` の `select` に ruff 0.16.10 の既定 413 ルール + F403 / F405 を列挙し、 規約セットを固定した
+- ruff / ty のバージョンは prek.toml の rev (ruff-pre-commit v0.16.10 / ty-pre-commit v0.0.85) を唯一の正とし、 `[dependency-groups]` の `lint` グループと `dev` の include を削除した
+- prek.toml の ty フックをローカルの `uv run ty check` から `astral-sh/ty-pre-commit` (rev v0.0.85、 `args = ["--isolated"]`) に置き換えた
+- Makefile の lint / typecheck / format を `prek run --all-files <hook>` 経由に統一し、 対象をリポジトリ全体にした
+- ruff の 81 errors と ty の 9 diagnostics を修正した。 自動修正できない BLE001 31 箇所は理由コメント付きの `# noqa: BLE001` とし、 `except Exception: pass` 6 箇所は debug ログを残す形にした
+- ruff-format による Markdown 3 ファイルと tombi-format による prek.toml の整形、 README への prek 導入手順の追記、 [[0028-fmt-fix-language-convention-violations]] の現状の更新を行った
 
 ## 参考
 
