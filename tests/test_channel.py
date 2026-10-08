@@ -1,9 +1,12 @@
+from typing import Any
+
 import pytest
 
 from libdatachannel import (
     Channel,
     DataChannel,
     Description,
+    FrameInfo,
     PeerConnection,
     Track,
     WebSocket,
@@ -97,10 +100,45 @@ def test_websocket_channel_methods() -> None:
     assert ws.is_closed()
 
 
-def test_send_with_size_on_unconnected_objects() -> None:
-    """未接続では send(data, size) が RuntimeError になること
+def test_send_size_overloads_are_removed() -> None:
+    """`send` の `(data, size)` 版と `send_frame` の `(data, size, info)` 版が削除されていること
 
-    2 引数版の binding と引数変換の経路が動作し、 クラッシュしないことを確認する。
+    (data, size) 版は size に data の長さを超える値を渡すと範囲外を読み、 その内容を
+    送信していた (SIGBUS でプロセスが落ちることもあった)。 size は len(data) から
+    導出できるため size を取らない版に一本化した。
+    """
+    pc = PeerConnection()
+    dc = pc.create_data_channel("send-size")
+
+    media = Description.Video("video", Description.Direction.SendOnly)
+    media.add_h264_codec(96)
+    media.add_ssrc(1234, "video-send")
+    track = pc.add_track(media)
+
+    ws = WebSocket(WebSocketConfiguration())
+
+    # 型検査 (ty) は削除された 2 引数版の呼び出しを引数過多として検出するため、
+    # 実行時の経路は Any 経由で確認する
+    dc_send: Any = dc.send
+    track_send: Any = track.send
+    track_send_frame: Any = track.send_frame
+    ws_send: Any = ws.send
+
+    with pytest.raises(TypeError):
+        dc_send(b"ab", 2)
+    with pytest.raises(TypeError):
+        track_send(b"ab", 2)
+    with pytest.raises(TypeError):
+        track_send_frame(b"ab", 2, FrameInfo(0))
+    with pytest.raises(TypeError):
+        ws_send(b"ab", 2)
+
+
+def test_send_without_size_on_unconnected_objects() -> None:
+    """size を取らない版の send / send_frame は残り、 未接続では RuntimeError になること
+
+    (data, size) 版の削除後も size を取らない版は従来どおり動作する。 str は bytes と
+    同じく受け付ける。
     """
     pc = PeerConnection()
     dc = pc.create_data_channel("send-size")
@@ -114,11 +152,15 @@ def test_send_with_size_on_unconnected_objects() -> None:
 
     # 未接続のオブジェクトでは送信できず RuntimeError になる
     with pytest.raises(RuntimeError):
-        dc.send(b"ab", 2)
+        dc.send(b"ab")
     with pytest.raises(RuntimeError):
-        track.send(b"ab", 2)
+        dc.send("ab")
     with pytest.raises(RuntimeError):
-        ws.send(b"ab", 2)
+        track.send(b"ab")
+    with pytest.raises(RuntimeError):
+        track.send_frame(b"ab", FrameInfo(0))
+    with pytest.raises(RuntimeError):
+        ws.send(b"ab")
 
 
 def test_data_channel_buffered_amount() -> None:

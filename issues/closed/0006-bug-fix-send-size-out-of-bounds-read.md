@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-08
 - Branch: feature/change-remove-send-size-overload
 - Polished: 2026-10-08
 
@@ -61,7 +61,7 @@ loopback の PeerConnection で DataChannel を確立し、 ペイロード 16 �
   - 削除対象は「2 引数版のみ」とし、 1 引数版 (`message_variant` と `binary` + `FrameInfo`) は変更しない
   - Channel 側の binding は [[0036-bug-fix-channel-binding-virtual-dispatch]] で削除済みのため再登録しない
 - リリース済み API の削除なので後方互換性はなくなる。 変更履歴には `[CHANGE]` として記録し、 影響 (2 引数で呼んでいたコードは `TypeError` になること、 代替は 1 引数版とスライスであること) を書く
-- `tests/test_channel.py` の `test_send_with_size_on_unconnected_objects` は 2 引数版を呼んで `RuntimeError` を期待しているため、 廃止に合わせて書き換える (1 引数版の未接続時の例外は現在どのテストでもカバーされていないため、 1 引数版で書き直して経路を残す)
+- `tests/test_channel.py` の 2 引数版を呼んでいたテスト (旧 `test_send_with_size_on_unconnected_objects`) は、 廃止に合わせて「削除の検証 (`TypeError`)」と「size を取らない版の検証 (未接続時の `RuntimeError`。 `bytes` / `str`)」の 2 テストに書き換える (size を取らない版の未接続時の例外は現在どのテストでもカバーされていないため、 経路を残す)
 - 2 引数版が使えなくなったこと (`TypeError` になること) と、 1 引数版で同じ送信ができることをテストで固定する
 
 ## 完了条件
@@ -73,6 +73,17 @@ loopback の PeerConnection で DataChannel を確立し、 ペイロード 16 �
 - `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
 - `CHANGES.md` の `## develop` に `[CHANGE]` エントリが追加されていること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `bind_datachannel` / `bind_track` / `bind_websocket` の `send` 系 4 箇所から `size` を取る版を削除し、 size を取らない版に一本化した
+  - 削除したのは `DataChannel.send` / `Track.send` / `WebSocket.send` の `(data, size)` 版と、 `Track.send_frame` の `(data, size, info)` 版
+  - `size` に `data` の長さを超える値を渡すと libdatachannel 側が `[data, data + size)` をそのまま読むため、 ヒープの範囲外を読んでその内容が対向に送信されていた (実測: 未接続で `dc.send(b"a", 10**9)` が SIGBUS、 loopback で 16 バイト + size 1024 のとき受信側が 1024 バイトを受信し 1008 バイトが 'A' 以外)
+  - `size` は `len(data)` から導出でき、 前方部分送信は `data[:size]` を渡す形で等価になるため、 削除しても失う機能がない
+  - `Channel` 側の同じ版は `Channel` の virtual メソッドの binding 削除で既に対応済み (再登録しない)
+- `tests/test_channel.py` の 2 引数版を呼んでいたテストを、 削除の検証 (`TypeError`) と size を取らない版の検証 (未接続時の `RuntimeError`。 `bytes` / `str`) の 2 テストに書き換えた
+- `tests/test_websocket.py` に、 スライスした bytes を送って前方部分送信ができることを確認するテストを追加した
+- `CHANGES.md` の `## develop` に `[CHANGE]` エントリを追加した (リリース済み API の削除のため)
 
 ## 参考
 
