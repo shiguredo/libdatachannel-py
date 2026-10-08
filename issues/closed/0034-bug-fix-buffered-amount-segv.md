@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-08
 - Branch: feature/fix-buffered-amount-segv
 - Polished: 2026-10-08
 
@@ -53,6 +53,14 @@ dc.buffered_amount()  # SIGSEGV
 - `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 - スコープ外: `bind_channel` の virtual メソッド binding を未バインドで呼ぶ経路 (`Channel.is_closed(dc)` など) は [[0036-bug-fix-channel-binding-virtual-dispatch]] で扱う
+
+## 解決方法
+
+- `bind_datachannel` / `bind_track` / `bind_websocket` に `.def("buffered_amount", &Channel::bufferedAmount)` を追加した
+- 原因は `Channel` が 2 番目の基底 (オブジェクト先頭から 24 バイト) であること。 `Channel` 側の binding 経由では基底オフセットが加算されず、 virtual 呼び出しが誤った vtable スロットを読んでいた (lldb で不正アドレスへのジャンプを確認)。 派生クラス側に binding すると nanobind が登録クラスのポインタで受け取り、 C++ の暗黙変換で基底オフセットが加算される
+- `tests/test_channel.py` に 3 クラス分の regression テストを追加し、 修正前と等価な経路では 3 件とも SIGSEGV することを確認した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+- `bind_channel` 側の binding は本 issue では変更していない (削除すると型スタブの `Channel` からメソッドが消え、 `Channel` 型でアノテートした変数からの呼び出しが型検査で落ちるため)。 未バインド呼び出しの経路は [[0036-bug-fix-channel-binding-virtual-dispatch]] で扱う
 
 ## 参考
 

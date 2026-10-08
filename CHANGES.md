@@ -33,6 +33,10 @@
   - `Channel.send()` / `DataChannel.send()` / `Track.send()` / `Track.send_frame()` / `WebSocket.send()` を GIL 解放下で実行する
   - GIL による直列化が無くなるため、 複数 thread から同一 Track へ送信する場合は呼び出し側で直列化する
   - @voluntas
+- [FIX] DataChannel / Track / WebSocket の `buffered_amount()` を Python から呼ぶと SIGSEGV する問題を修正する
+  - `Channel` が 2 番目の基底であるため、 `Channel` 側の binding 経由では基底オフセットが加算されず、 virtual 呼び出しが誤った vtable スロットを読んでいた
+  - `buffered_amount` を派生クラス側にも binding し、 派生クラスのインスタンスから呼ぶ経路を修正する
+  - @voluntas
 
 ### misc
 

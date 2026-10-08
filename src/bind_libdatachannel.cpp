@@ -1236,6 +1236,10 @@ void bind_datachannel(nb::module_& m) {
       .def("is_open", &DataChannel::isOpen)
       .def("is_closed", &DataChannel::isClosed)
       .def("max_message_size", &DataChannel::maxMessageSize)
+      // buffered_amount は Channel 側の binding だけだと Channel が 2 番目の基底である
+      // ために基底オフセットが加算されず、 virtual 呼び出しが誤った vtable スロットを
+      // 読んで SIGSEGV する。 派生クラス側にも binding して正しいポインタで呼ぶ。
+      .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &DataChannel::close)
       .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
            "data"_a, nb::call_guard<nb::gil_scoped_release>())
@@ -1261,6 +1265,8 @@ void bind_track(nb::module_& m) {
       .def("is_open", &Track::isOpen)
       .def("is_closed", &Track::isClosed)
       .def("max_message_size", &Track::maxMessageSize)
+      // buffered_amount を派生クラス側にも binding する理由は bind_datachannel 内のコメントを参照。
+      .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &Track::close)
       .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a,
            nb::call_guard<nb::gil_scoped_release>())
@@ -1479,6 +1485,8 @@ void bind_websocket(nb::module_& m) {
       .def("is_open", &WebSocket::isOpen)
       .def("is_closed", &WebSocket::isClosed)
       .def("max_message_size", &WebSocket::maxMessageSize)
+      // buffered_amount を派生クラス側にも binding する理由は bind_datachannel 内のコメントを参照。
+      .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &WebSocket::close)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a, nb::call_guard<nb::gil_scoped_release>())
