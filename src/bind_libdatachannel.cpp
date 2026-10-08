@@ -1170,17 +1170,34 @@ void bind_rtcpsrreporter(nb::module_& m) {
 
 // ---- channel.hpp ----
 
+// 送信系 binding (Channel / DataChannel / Track / WebSocket) は GIL を解放して
+// 実行する。 送信経路は各トランスポート (SCTP / DTLS / TCP など) の内部ロックを
+// 取得するため、 GIL を保持したまま待機すると受信経路の Python callback
+// (PliHandler など) が GIL を取得できず恒久デッドロックする。
+//
+// - call_guard は引数の変換後に評価されるため、 GIL 解放中に Python
+//   オブジェクトへ触れることはない。
+// - 送信経路から同期的に呼ばれる callback (on_buffered_amount_low など) は送信
+//   経路のロックを保持したまま呼ばれるが、 nanobind が GIL を取得してから呼ぶため
+//   GIL の観点では安全である。
+// - 同一 Track への並行 send は想定されていない (メディアハンドラチェーンに
+//   内部同期が無い) ため、 複数 thread から送信する場合は呼び出し側で直列化する。
+//   `RtpPacketizationConfig` などの可変フィールドも送信中に他 thread から
+//   触らないこと。
+// - 送信中の接続に対して他 thread から close() / force_close() を呼ばないこと
+//   (送信経路が参照するトランスポートが解放され得る)。
 void bind_channel(nb::module_& m) {
   nb::class_<Channel>(m, "Channel")
       // Core API
       .def("close", &Channel::close)
-      .def("send", nb::overload_cast<message_variant>(&Channel::send), "data"_a)
+      .def("send", nb::overload_cast<message_variant>(&Channel::send), "data"_a,
+           nb::call_guard<nb::gil_scoped_release>())
       .def(
           "send",
           [](Channel& self, std::vector<byte> data, size_t size) {
             return self.send(data.data(), size);
           },
-          "data"_a, "size"_a)
+          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("is_open", &Channel::isOpen)
       .def("is_closed", &Channel::isClosed)
       .def("max_message_size", &Channel::maxMessageSize)
@@ -1212,6 +1229,8 @@ void bind_channel(nb::module_& m) {
 
 // ---- datachannel.hpp ----
 
+// send が GIL を解放する理由は bind_channel 直前のコメントを参照。
+
 void bind_datachannel(nb::module_& m) {
   nb::class_<DataChannel, Channel>(m, "DataChannel")
       .def("is_open", &DataChannel::isOpen)
@@ -1219,13 +1238,13 @@ void bind_datachannel(nb::module_& m) {
       .def("max_message_size", &DataChannel::maxMessageSize)
       .def("close", &DataChannel::close)
       .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
-           "data"_a)
+           "data"_a, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "send",
           [](DataChannel& self, std::vector<byte> data, size_t size) {
             return self.send(data.data(), size);
           },
-          "data"_a, "size"_a)
+          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &DataChannel::stream)
       .def("id", &DataChannel::id)
       .def("label", &DataChannel::label)
@@ -1235,28 +1254,32 @@ void bind_datachannel(nb::module_& m) {
 
 // ---- track.hpp ----
 
+// send が GIL を解放する理由は bind_channel 直前のコメントを参照。
+
 void bind_track(nb::module_& m) {
   nb::class_<Track, Channel>(m, "Track")
       .def("is_open", &Track::isOpen)
       .def("is_closed", &Track::isClosed)
       .def("max_message_size", &Track::maxMessageSize)
       .def("close", &Track::close)
-      .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a)
+      .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a,
+           nb::call_guard<nb::gil_scoped_release>())
       .def(
           "send",
           [](Track& self, std::vector<byte> data, size_t size) {
             return self.send(data.data(), size);
           },
-          "data"_a, "size"_a)
+          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("send_frame",
            nb::overload_cast<binary, FrameInfo>(&Track::sendFrame), "data"_a,
-           "info"_a)
+           "info"_a, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "send_frame",
           [](Track& self, std::vector<byte> data, size_t size, FrameInfo info) {
             return self.sendFrame(data.data(), size, info);
           },
-          "data"_a, "size"_a, "info"_a)
+          "data"_a, "size"_a, "info"_a,
+          nb::call_guard<nb::gil_scoped_release>())
       .def("mid", &Track::mid)
       .def("direction", &Track::direction)
       .def("description", &Track::description)
@@ -1438,6 +1461,8 @@ void bind_peerconnection(nb::module_& m) {
 
 // ---- websocket.hpp ----
 
+// send が GIL を解放する理由は bind_channel 直前のコメントを参照。
+
 void bind_websocket(nb::module_& m) {
   nb::class_<WebSocket, Channel> ws(m, "WebSocket");
 
@@ -1456,13 +1481,13 @@ void bind_websocket(nb::module_& m) {
       .def("max_message_size", &WebSocket::maxMessageSize)
       .def("close", &WebSocket::close)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
-           "data"_a)
+           "data"_a, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "send",
           [](WebSocket& self, std::vector<byte> data, size_t size) {
             return self.send(data.data(), size);
           },
-          "data"_a, "size"_a)
+          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("ready_state", &WebSocket::readyState)
       .def("open", &WebSocket::open, "url"_a)
       .def("force_close", &WebSocket::forceClose)
