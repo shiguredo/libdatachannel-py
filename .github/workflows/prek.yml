@@ -65,9 +65,10 @@ jobs:
       - name: Copy stub
         run: cp _build/__init__.pyi src/libdatachannel/
 
-      # pytest フック (uv run pytest) が使う .venv にテスト依存と wheel を入れる。
-      # wheel を入れた後に uv sync を実行すると wheel が削除されるため順序を守る。
-      - name: Install test dependencies
+      # pytest フック (uv run pytest) が使う .venv に依存 (dev グループ = example + test)
+      # と wheel を入れる。 wheel を入れた後に uv sync を実行すると wheel が削除されるため
+      # 順序を守る。
+      - name: Sync dependencies
         run: uv sync
 
       - name: Install wheel

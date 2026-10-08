@@ -58,7 +58,6 @@ hooks = [
     name = "pytest",
     entry = "uv run pytest",
     args = [
-      "tests/",
       "-v",
       "--deselect",
       "tests/test_peerconnection.py::test_destruct_without_explicit_close",
