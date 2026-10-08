@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-08
 - Branch: feature/fix-nalunit-empty-size-segv
 - Polished: 2026-10-08
 
@@ -60,6 +60,18 @@ n.forbidden_bit()  # SIGSEGV
 - H264 / H265 / `including_header` / size 版 / bytes 版の組み合わせをカバーするテストが `tests/test_nalunit.py` と `tests/test_h265nalunit.py` に追加されていること
 - `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `bind_nalunit` / `bind_h265nalunit` のコンストラクタ 4 件 (size 版 / bytes 版 × 2 クラス) を検証付きの `__init__` に置き換え、 確保されるバッファがヘッダサイズ以上かを検証するようにした
+  - `NalUnit(size, including_header, type)`: `including_header=true` は `size >= H264_NAL_HEADER_SIZE` (`NalUnit` のヘッダアクセスは `type` に関わらず 1 バイトしか読まない)
+  - `H265NalUnit(size, including_header)`: `including_header=true` は `size >= H265_NAL_HEADER_SIZE`
+  - `including_header=false` は確保サイズが `size + ヘッダサイズ` になるため、 桁あふれでヘッダサイズを下回る場合 (`size > SIZE_MAX - ヘッダサイズ`) を拒否する。 size 0 は確保サイズがヘッダサイズと等しいので従来どおり成功する
+  - bytes 版は `len(data) >= ヘッダサイズ` (ヘッダサイズを加算せず `data` をそのままバッファにするため)
+- 範囲外と桁あふれは `nb::value_error` (Python の `ValueError`) にし、 メッセージに検査内容と実値を含めた
+- メソッド側 (`forbidden_bit` / `payload` / `set_payload` など) には追加のガードを入れず、 コンストラクタの下限保証で経路を塞いだ
+- `tests/test_nalunit.py` と `tests/test_h265nalunit.py` に 10 テストを追加した (ヘッダサイズ未満の拒否 / 境界の許容 / 桁あふれの拒否 / bytes 版 / 最小バッファでのヘッダアクセスと `set_payload()`)
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
 
 ## 参考
 

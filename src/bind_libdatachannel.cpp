@@ -27,6 +27,7 @@
 
 // 標準ライブラリ
 #include <chrono>
+#include <limits>
 #include <thread>
 
 namespace nb = nanobind;
@@ -593,6 +594,53 @@ void bind_message(nb::module_& m) {
 
 // ---- nalunit.hpp ----
 
+// NAL ユニットのヘッダサイズは libdatachannel の定数 (H264_NAL_HEADER_SIZE /
+// H265_NAL_HEADER_SIZE) をそのまま使う。 確保したバッファがこれ未満だと header() /
+// payload() / setPayload() が範囲外を読み書きする (Release ビルドでは assert が
+// 消えるため libdatachannel 本体の防御が働かない)
+
+// size 版コンストラクタの検証。 including_header のときコンストラクタは size を
+// そのまま確保するため、 そのクラスのヘッダアクセスが読むサイズ (min_size) を
+// 要求する。 そうでないときはヘッダサイズ (header_size) を加算するため、 桁あふれ
+// でヘッダサイズ未満になる場合を拒否する
+void check_nalunit_size(size_t size,
+                        bool including_header,
+                        size_t min_size,
+                        size_t header_size,
+                        const char* name) {
+  if (including_header) {
+    if (size < min_size) {
+      throw nb::value_error((std::string(name) + ": size must be at least " +
+                             std::to_string(min_size) +
+                             " when including_header is true, got " +
+                             std::to_string(size))
+                                .c_str());
+    }
+    return;
+  }
+  const size_t max_size = std::numeric_limits<size_t>::max() - header_size;
+  if (size > max_size) {
+    throw nb::value_error((std::string(name) + ": size must be at most " +
+                           std::to_string(max_size) +
+                           " when including_header is false, got " +
+                           std::to_string(size))
+                              .c_str());
+  }
+}
+
+// bytes 版コンストラクタの検証。 ヘッダサイズを加算せず data をそのままバッファに
+// するため、 data 自体がヘッダサイズ以上を必要とする
+void check_nalunit_buffer(const binary& data,
+                          size_t header_size,
+                          const char* name) {
+  if (data.size() < header_size) {
+    throw nb::value_error((std::string(name) + ": data size must be at least " +
+                           std::to_string(header_size) + ", got " +
+                           std::to_string(data.size()))
+                              .c_str());
+  }
+}
+
 void bind_nalunit(nb::module_& m) {
   // --- NalUnitHeader ---
   nb::class_<NalUnitHeader>(m, "NalUnitHeader")
@@ -640,9 +688,27 @@ void bind_nalunit(nb::module_& m) {
       .value("StartSequence", NalUnit::Separator::StartSequence);
 
   nalunit.def(nb::init<>())
-      .def(nb::init<size_t, bool, NalUnit::Type>(), "size"_a,
-           "including_header"_a = true, "type"_a = NalUnit::Type::H264)
-      .def(nb::init<binary&&>())
+      .def(
+          "__init__",
+          [](NalUnit* self, size_t size, bool including_header,
+             NalUnit::Type type) {
+            // NalUnit のヘッダアクセスは type に関わらず 1 バイトしか読まないため、
+            // min_size は型で切り替えない
+            check_nalunit_size(size, including_header, H264_NAL_HEADER_SIZE,
+                               type == NalUnit::Type::H264
+                                   ? H264_NAL_HEADER_SIZE
+                                   : H265_NAL_HEADER_SIZE,
+                               "NalUnit");
+            new (self) NalUnit(size, including_header, type);
+          },
+          "size"_a, "including_header"_a = true, "type"_a = NalUnit::Type::H264)
+      .def(
+          "__init__",
+          [](NalUnit* self, binary&& data) {
+            check_nalunit_buffer(data, H264_NAL_HEADER_SIZE, "NalUnit");
+            new (self) NalUnit(std::move(data));
+          },
+          "data"_a)
       .def("forbidden_bit", &NalUnit::forbiddenBit)
       .def("nri", &NalUnit::nri)
       .def("unit_type", &NalUnit::unitType)
@@ -709,8 +775,21 @@ void bind_h265nalunit(nb::module_& m) {
   // --- H265NalUnit ---
   nb::class_<H265NalUnit, NalUnit>(m, "H265NalUnit")
       .def(nb::init<>())
-      .def(nb::init<size_t, bool>(), "size"_a, "including_header"_a = true)
-      .def(nb::init<binary&&>(), "data"_a)
+      .def(
+          "__init__",
+          [](H265NalUnit* self, size_t size, bool including_header) {
+            check_nalunit_size(size, including_header, H265_NAL_HEADER_SIZE,
+                               H265_NAL_HEADER_SIZE, "H265NalUnit");
+            new (self) H265NalUnit(size, including_header);
+          },
+          "size"_a, "including_header"_a = true)
+      .def(
+          "__init__",
+          [](H265NalUnit* self, binary&& data) {
+            check_nalunit_buffer(data, H265_NAL_HEADER_SIZE, "H265NalUnit");
+            new (self) H265NalUnit(std::move(data));
+          },
+          "data"_a)
       .def("forbidden_bit", &H265NalUnit::forbiddenBit)
       .def("unit_type", &H265NalUnit::unitType)
       .def("nuh_layer_id", &H265NalUnit::nuhLayerId)
