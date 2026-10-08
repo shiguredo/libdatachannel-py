@@ -25,15 +25,14 @@ import re
 import threading
 import time
 from math import pi
-from typing import List, Optional
 from urllib.parse import urljoin
 
 import httpx
 import numpy as np
-import structlog
 
 # portaudio-py
 import portaudio as pa
+import structlog
 
 # uvc-py
 import uvc
@@ -119,9 +118,9 @@ def get_nal_type_name(nal_type: int) -> str:
     return nal_type_names.get(nal_type, f"Reserved/Unknown ({nal_type})")
 
 
-def parse_link_header(link_header: str) -> List[IceServer]:
+def parse_link_header(link_header: str) -> list[IceServer]:
     """Link ヘッダーから ICE サーバーを取得"""
-    ice_servers: List[IceServer] = []
+    ice_servers: list[IceServer] = []
     if not link_header:
         return ice_servers
 
@@ -159,7 +158,7 @@ def parse_link_header(link_header: str) -> List[IceServer]:
         if 'rel="ice-server"' not in entry:
             continue
 
-        if url.startswith("stun:") or url.startswith("turn:"):
+        if url.startswith(("stun:", "turn:")):
             ice_server = IceServer(url)
 
             # Extract username
@@ -530,11 +529,11 @@ class WHIPClient:
     def __init__(
         self,
         whip_url: str,
-        bearer_token: Optional[str] = None,
+        bearer_token: str | None = None,
         codec: str = "h264",
         use_fake_capture: bool = False,
-        video_input_device: Optional[int] = None,
-        audio_input_device: Optional[int] = None,
+        video_input_device: int | None = None,
+        audio_input_device: int | None = None,
         framerate: int = 30,
         bitrate: int = 5_000_000,
         disable_audio_processing: bool = False,
@@ -548,14 +547,14 @@ class WHIPClient:
         self.video_bitrate = bitrate
         self.disable_audio_processing = disable_audio_processing
 
-        self.pc: Optional[PeerConnection] = None
-        self.video_track: Optional[Track] = None
-        self.audio_track: Optional[Track] = None
-        self.session_url: Optional[str] = None
+        self.pc: PeerConnection | None = None
+        self.video_track: Track | None = None
+        self.audio_track: Track | None = None
+        self.session_url: str | None = None
 
         # webcodecs Encoders
-        self.video_encoder: Optional[VideoEncoder] = None
-        self.audio_encoder: Optional[AudioEncoder] = None
+        self.video_encoder: VideoEncoder | None = None
+        self.audio_encoder: AudioEncoder | None = None
 
         # RTP components
         self.video_packetizer = None
@@ -564,8 +563,8 @@ class WHIPClient:
         self.audio_sr_reporter = None
         self.pli_handler = None
         self.nack_responder = None
-        self.video_config: Optional[RtpPacketizationConfig] = None
-        self.audio_config: Optional[RtpPacketizationConfig] = None
+        self.video_config: RtpPacketizationConfig | None = None
+        self.audio_config: RtpPacketizationConfig | None = None
 
         # Frame counters
         self.video_frame_number = 0
@@ -586,7 +585,7 @@ class WHIPClient:
         self.audio_channels = 1  # モノラル（多くのマイクは1ch）
 
         # Blend2D renderer (for fake capture)
-        self.renderer: Optional[Blend2DRenderer] = None
+        self.renderer: Blend2DRenderer | None = None
         self.audio_frame_size = 960  # 20ms @ 48kHz
 
         # タイムスタンプ用（前フレームからの duration でインクリメント）
@@ -600,11 +599,11 @@ class WHIPClient:
         self.force_keyframe = False
 
         # Camera capture (uvc-py)
-        self.uvc_device: Optional[uvc.Device] = None
+        self.uvc_device: uvc.Device | None = None
         self.capture_active = False
 
         # Audio capture (portaudio-py)
-        self.audio_stream: Optional[pa.Stream] = None
+        self.audio_stream: pa.Stream | None = None
 
         # Test pattern state
         self.pattern_seed = 0
@@ -758,7 +757,7 @@ class WHIPClient:
                         f"Sent #{self.encoded_video_count} dts={dts_usec / 1000:.0f}ms "
                         f"duration={duration / 1000:.1f}ms rtp_ts={self.video_config.timestamp}"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("sending encoded video", e)
 
         def on_error(error: str) -> None:
@@ -860,7 +859,7 @@ class WHIPClient:
                 data = np.zeros(chunk.byte_length, dtype=np.uint8)
                 chunk.copy_to(data)
                 self.encoded_audio_queue.put((chunk.timestamp, bytes(data)))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("queueing encoded audio", e)
 
         def on_error(error: str) -> None:
@@ -1019,7 +1018,7 @@ class WHIPClient:
         else:
             return np.column_stack([mono] * self.audio_channels)
 
-    def send_frames(self, duration: Optional[int] = None) -> None:
+    def send_frames(self, duration: int | None = None) -> None:
         """フレームを送信"""
         if not self.pc:
             raise RuntimeError("PeerConnection not initialized")
@@ -1190,7 +1189,7 @@ class WHIPClient:
                     self.video_encoder.encode(frame, {"key_frame": True})
                 else:
                     self.video_encoder.encode(frame)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
             handle_error("encoding video frame", e)
 
         frame.close()
@@ -1237,7 +1236,7 @@ class WHIPClient:
                     self.video_encoder.encode(frame, {"key_frame": True})
                 else:
                     self.video_encoder.encode(frame)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
             handle_error("encoding video frame", e)
 
         frame.close()
@@ -1269,7 +1268,7 @@ class WHIPClient:
             try:
                 # float32 形式で読み込み (shape: [frames, channels])
                 audio_samples = self.audio_stream.read_float32(self.audio_frame_size)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("reading audio", e)
                 return
 
@@ -1291,7 +1290,7 @@ class WHIPClient:
         # エンコード
         try:
             self.audio_encoder.encode(audio_data)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
             handle_error("encoding audio frame", e)
 
         audio_data.close()
@@ -1328,7 +1327,7 @@ class WHIPClient:
                 logger.debug(f"Sent encoded audio frame #{self.encoded_audio_count}")
         except queue.Empty:
             pass
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
             handle_error("sending encoded audio", e)
 
     def disconnect(self) -> None:
@@ -1357,20 +1356,20 @@ class WHIPClient:
                         logger.info("WHIP session terminated successfully")
                     else:
                         logger.warning(f"DELETE request returned status {response.status_code}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("terminating WHIP session", e)
 
         # エンコーダーをフラッシュ
         if self.video_encoder:
             try:
                 self.video_encoder.flush()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
+                logger.debug("Failed to flush the video encoder", error=str(e))
         if self.audio_encoder:
             try:
                 self.audio_encoder.flush()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
+                logger.debug("Failed to flush the audio encoder", error=str(e))
 
         time.sleep(0.5)
 
@@ -1394,14 +1393,12 @@ class WHIPClient:
 
         # Blend2D レンダラーをクリーンアップ
         if self.renderer:
-            self.renderer.ctx = None
-            self.renderer.img = None
             self.renderer = None
 
         if self.pc:
             try:
                 self.pc.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("closing PeerConnection", e)
             finally:
                 self.pc = None
@@ -1409,16 +1406,16 @@ class WHIPClient:
         if self.video_encoder:
             try:
                 self.video_encoder.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
+                logger.debug("Failed to close the video encoder", error=str(e))
             finally:
                 self.video_encoder = None
 
         if self.audio_encoder:
             try:
                 self.audio_encoder.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
+                logger.debug("Failed to close the audio encoder", error=str(e))
             finally:
                 self.audio_encoder = None
 
@@ -1517,12 +1514,12 @@ def main():
         client.send_frames(args.duration)
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外もエラー表示して終了する)
         handle_error("running WHIP client", e)
     finally:
         try:
             client.disconnect()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
             logger.error(f"Error during disconnect: {e}")
 
 

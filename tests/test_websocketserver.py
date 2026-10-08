@@ -59,6 +59,7 @@ def test_websocketserver():
 
     def ws_on_open():
         print("WebSocket: Open")
+        assert ws is not None
         ws.send(b"\x00" * 1001)
         ws.send(my_message)
 

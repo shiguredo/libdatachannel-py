@@ -10,11 +10,7 @@ hooks = [
   { id = "trailing-whitespace", priority = 0 },
   { id = "end-of-file-fixer", priority = 0 },
   { id = "check-toml", priority = 0 },
-  {
-    id = "check-yaml",
-    priority = 0,
-    exclude = { glob = [".clang-format"] }
-  },
+  { id = "check-yaml", priority = 0, exclude = { glob = [".clang-format"] } },
 ]
 
 [[repos]]
@@ -33,18 +29,18 @@ hooks = [
   { id = "tombi-format", exclude = { glob = "**/uv.lock" } },
 ]
 
+# ty: 静的型チェッカ
+# ty のバイナリはフックが自前で用意するため、 pyproject.toml の依存には含めない
+# rev がそのまま ty のバージョンになる。 更新は prek auto-update で行う
+# --isolated で uv.lock / .venv を変更せずに実行する
+[[repos]]
+repo = "https://github.com/astral-sh/ty-pre-commit"
+rev = "v0.0.85"
+hooks = [{ id = "ty", args = ["--isolated"], priority = 20 }]
+
 [[repos]]
 repo = "local"
 hooks = [
-  {
-    id = "ty-check",
-    name = "ty check",
-    entry = "uv run ty check",
-    language = "system",
-    types = ["python"],
-    pass_filenames = false,
-    priority = 20,
-  },
   {
     id = "clang-format",
     name = "clang-format",

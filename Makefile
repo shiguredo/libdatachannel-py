@@ -16,10 +16,13 @@ example:
 
 format:
 	clang-format -i src/*.cpp
-	uv run ruff format src/ examples/ tests/
+	prek run --all-files ruff-format
 
+# prek の ruff フックは git 追跡下のファイルのみを対象にするため、 未追跡ファイルは検査されない。
 lint:
-	uv run ruff check examples/
+	prek run --all-files ruff-check
 
+# ty はプロジェクト全体を走査する。 生成スタブ (src/libdatachannel/__init__.pyi) が無いと
+# libdatachannel を解決できないため、 事前に make develop を実行しておく。
 typecheck:
-	uv run ty check examples/
+	prek run --all-files ty

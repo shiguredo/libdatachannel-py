@@ -221,9 +221,11 @@ def test_destruct_without_explicit_close(recwarn):
     # 経路を踏みテストが hang するため、 callback 内では print を一切行わない。
     # 根本対応は 0005 を参照。
     def pc1_on_local_description(desc):
+        assert pc2 is not None
         pc2.set_remote_description(Description(str(desc)))
 
     def pc1_on_local_candidate(candidate):
+        assert pc2 is not None
         pc2.add_remote_candidate(Candidate(str(candidate)))
 
     def pc1_on_state_change(state):
@@ -238,9 +240,11 @@ def test_destruct_without_explicit_close(recwarn):
     pc1.on_gathering_state_change(pc1_on_gathering_state_change)
 
     def pc2_on_local_description(desc):
+        assert pc1 is not None
         pc1.set_remote_description(Description(str(desc)))
 
     def pc2_on_local_candidate(candidate):
+        assert pc1 is not None
         pc1.add_remote_candidate(Candidate(str(candidate)))
 
     def pc2_on_state_change(state):

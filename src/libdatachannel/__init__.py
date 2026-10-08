@@ -1,4 +1,4 @@
-from .libdatachannel_ext import *  # noqa: F401,F403
+from .libdatachannel_ext import *  # noqa: F403
 
 # Audio RTP Packetizers
 # OpusRtpPacketizer と AACRtpPacketizer は同じ型 (AudioRtpPacketizer<48000>)

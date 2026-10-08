@@ -31,6 +31,9 @@
 
 ### misc
 
+- [FIX] make lint / make typecheck が失敗したままになっていたのを解消し、 ruff の規約セットを明示して固定する
+  - ruff / ty は prek.toml の rev でバージョンを管理し、 `[dependency-groups]` から削除する
+  - @voluntas
 - [FIX] Ubuntu 22.04 向け wheel ビルドで auditwheel 6.8.1 以降が要求する patchelf をインストールするようにする
   - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する

@@ -55,7 +55,7 @@
 
 - `make lint` と `make typecheck` が PASS すること
 - `prek validate-config prek.toml` と `prek run --all-files` が PASS すること
-  - 判定は `make develop` で生成スタブ (`src/libdatachannel/__init__.pyi`) を配置した作業ツリーで行う (未生成の状態では ty が解決できず 87 diagnostics になる)
+  - 判定は `make develop` で生成スタブ (`src/libdatachannel/__init__.pyi`) を配置した作業ツリーで行う (未生成の状態では libdatachannel を解決できず diagnostics が大幅に増える)
   - `prek run --all-files` には ruff-format による Markdown の整形が含まれる。 現状 ruff-format は `issues/0008-bug-fix-non-owning-reference-lifetime.md` / `issues/0014-bug-fix-candidate-hash-inconsistency.md` / `issues/closed/0001-bug-fix-peer-connection-destructor-gil-release.md` の 3 ファイルを整形するため、 これも本 issue に含めてコミットする
 - pyproject.toml の `[tool.ruff.lint]` に select が明示されていること
 - ruff / ty が prek.toml の rev で単一管理され、 `[dependency-groups]` に含まれていないこと

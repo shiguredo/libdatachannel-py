@@ -63,6 +63,18 @@ uv sync
 make test
 ```
 
+## lint と typecheck
+
+[prek](https://github.com/j178/prek) のフックとして実行します。 `make typecheck` は
+`make develop` が生成する型スタブを必要とします。
+
+```bash
+uv tool install prek
+prek install --prepare-hooks
+make lint
+make typecheck
+```
+
 ## サンプル
 
 [examples/](examples/) ディレクトリにサンプルコードがあります。
