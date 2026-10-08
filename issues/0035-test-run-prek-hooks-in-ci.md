@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-run-prek-hooks-in-ci
 - Polished: 2026-10-09
 
@@ -49,6 +49,16 @@
 - `timeout-minutes` の範囲で完走すること
 - `CHANGES.md` の `### misc` に `[FIX]` エントリを追加すること (CI の変更は利用者に見える API / 挙動の変更ではないため misc。 既存の CI 変更と同じ扱い)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `.github/workflows/prek.yml` を追加し、 PR と既定ブランチ (develop) への push で prek.toml のフックを実行するようにした
+  - `prek` ジョブ (ubuntu-slim / timeout 15 分): checkout → setup-uv → `uv tool install clang-format==23.1.3` (runner に clang-format が無いため) → prek-action で `--all-files --skip ty` を実行する
+  - `ty` ジョブ (ubuntu-24.04 / timeout 45 分): checkout → setup-uv (`python-version: "3.14"`) → `_deps` をキャッシュ → `uv build --wheel` → `cp _build/__init__.pyi src/libdatachannel/` → prek-action で `--all-files ty` を実行する。 ty はビルド時に生成されるスタブを必要とし、 素の checkout では 92 diagnostics で失敗するため
+  - ubuntu-slim はジョブの実行時間が 15 分に制限されるため、 wheel ビルドを伴う ty ジョブには ubuntu-24.04 を使う
+  - action は既存ワークフローと同じ「コミットハッシュ固定 + バージョンコメント」で指定し、 `permissions: contents: read` を明示した
+- 既存の wheel.yml / build_debug.yml は変更していない
+- `CHANGES.md` の `### misc` に `[FIX]` エントリを追加した
 
 ## 参考
 
