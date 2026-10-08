@@ -4,7 +4,7 @@
 - Created: 2026-10-08
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-channel-binding-virtual-dispatch
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-08
 
 ## 目的
 
@@ -37,22 +37,26 @@ Channel.is_open(dc)  # 落ちないが DataChannel::close() を実行する
 
 ## 設計方針
 
-- virtual メソッドの binding を派生クラス側 (`nb::class_<DataChannel, Channel>` など) に付け直し、 `bind_channel` から削除する。 nanobind は登録先クラスのポインタで第一引数を受け取るため、 派生クラスに登録すれば基底オフセット (24 バイト) が C++ の暗黙変換で加算される
+- `bind_channel` から virtual メソッドの binding を削除する。 対象は `channel.hpp` の virtual に対応する 7 binding (close / send 2 種 / is_open / is_closed / max_message_size / buffered_amount) で確定であり、 実装時に範囲を判断する余地は残さない
+- 派生 3 クラス (DataChannel / Track / WebSocket) には 7 メソッドすべての binding が既にある (`buffered_amount` は [[0034-bug-fix-buffered-amount-segv]] で追加済み)。 付け直しの作業は不要であり、 再登録してはならない (同名の binding が二重になる)
+- 非 virtual の binding (on_open / on_closed / on_error / on_message 2 種 / on_buffered_amount_low / set_buffered_amount_low_threshold / reset_callbacks / receive / peek / available_amount / on_available) は削除しない。 これらは派生クラス側に binding が無く、 未調整のポインタでも impl の shared_ptr が同一の impl オブジェクトを指すため正しく動作する
+- 削除後の未バインド呼び出し (`Channel.is_closed(dc)` など) は AttributeError になる。 SIGSEGV / SIGBUS と、 落ちずに誤った関数を実行する問題がこれで解消する
 - ラムダ化 (`[](Channel& self) { ... }`) と `nb::cast<Channel&>(self)` は無効である。 nanobind の型変換は継承を判定するが基底オフセットを加算せず同じポインタを返すためで、 最小再現と lldb の実測で確認済み
-- `bind_channel` から virtual メソッドを削除すると型スタブの `Channel` クラスからもメソッドが消え、 `Channel` 型でアノテートした変数からの呼び出しが型検査で落ちる。 この影響を評価し、 削除する範囲を決める
-- 削除後も派生 3 クラス (DataChannel / Track / WebSocket) の binding が各メソッドを提供し続けることを確認する
-- `bind_channel` の virtual メソッド (close / send 2 種 / is_open / is_closed / max_message_size / buffered_amount) を全数確認する
-- `Channel` は Python から生成できないため、 テストは派生クラスのインスタンスを `Channel` 経由で呼ぶ形にする
+- 型スタブは binding から生成されるため `class Channel` から 7 メソッドが消える (派生 3 クラスの宣言には残る)。 リポジトリ内に `Channel` 型でアノテートして呼ぶ箇所は無いため `make typecheck` は落ちない
+- テストは `tests/test_channel.py` に追加する。 派生クラスのインスタンス経由で 7 メソッドが従来どおり動作することと、 `Channel` に virtual メソッドの binding が存在しないこと (`hasattr` が偽) を確認する
+- `CHANGES.md` の `## develop` に公開 API の変更を含む `[FIX]` エントリを追加する。 あわせて [[0032-bug-fix-send-gil-deadlock]] の `[FIX]` エントリから `Channel.send()` の記載を除く (削除後に存在しなくなるため)
+- `bind_channel` 直前の GIL 解放のコメントは、 対象クラスの列挙から `Channel` を除いて `DataChannel` / `Track` / `WebSocket` にする (派生 3 クラスの send から参照されている)
 
 ## 完了条件
 
-- `bind_channel` の virtual メソッドを未バインドで呼んでも落ちないこと (`Channel.is_closed(dc)` は SIGSEGV、 `Channel.buffered_amount(dc)` は SIGSEGV、 `Channel.max_message_size(dc)` は SIGBUS になる)
-- 落ちない経路でも誤った関数が実行されないこと (実測: `Channel.is_open(dc)` は `DataChannel::close()`、 `Channel.close(dc)` は `DataChannel::isOpen()`、 `Channel.send(dc, b"ab")` は `DataChannel::isClosed()`、 `Channel.send(dc, b"ab", 2)` は `DataChannel::maxMessageSize()` を実行していた)
-- `bind_channel` の virtual メソッドを対象にしたテストが `tests/` に追加されていること
+- `bind_channel` の virtual メソッドの binding が削除され、 close / send 2 種 / is_open / is_closed / max_message_size / buffered_amount のすべてで `hasattr(Channel, <name>)` が偽になること
+- 落ちない経路で誤った関数が実行される問題も、 binding が無くなることで解消していること (実測していた誤動作: `Channel.is_open(dc)` は `DataChannel::close()`、 `Channel.close(dc)` は `DataChannel::isOpen()`、 `Channel.send(dc, b"ab")` は `DataChannel::isClosed()`、 `Channel.send(dc, b"ab", 2)` は `DataChannel::maxMessageSize()` を実行していた)
+- 削除後も派生 3 クラス (DataChannel / Track / WebSocket) で 7 メソッドが従来どおり動作すること
+- `tests/test_channel.py` に上記を検証するテストが追加されていること
 - `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
 
-- 対象シンボル: `bind_channel` の virtual メソッド binding (src/bind_libdatachannel.cpp)、 `Channel::isClosed` / `Channel::maxMessageSize` / `Channel::bufferedAmount` (libdatachannel)
-- 関連 issue: [[0034-bug-fix-buffered-amount-segv]]
+- 対象シンボル: `bind_channel` の virtual メソッド binding (src/bind_libdatachannel.cpp)、 `Channel::close` / `Channel::send` / `Channel::isClosed` / `Channel::maxMessageSize` / `Channel::bufferedAmount` (libdatachannel)
+- 関連 issue: [[0034-bug-fix-buffered-amount-segv]] (同じ原因で `buffered_amount` を派生クラス側にも binding 済み)、 [[0032-bug-fix-send-gil-deadlock]] (送信系 binding に GIL 解放を付けた issue。 `Channel.send()` の binding 削除に伴い `CHANGES.md` の記載を修正する)、 [[0026-test-add-missing-binding-tests]] (Channel 系 binding のテストを追加する issue。 本 issue の削除後は Channel 側のメソッドが消えるため、 テストは派生クラス経由になる)
