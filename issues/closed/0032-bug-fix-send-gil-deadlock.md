@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-08
 - Branch: feature/fix-send-gil-deadlock
 - Polished: 2026-10-08
 - Reporter: @Geomglot
@@ -86,6 +86,14 @@ RTC worker:
   - 既存のループバックテストと同じく `@pytest.mark.timeout(...)` をテストに個別指定する。 ただしデッドロックが再発した場合は main thread が GIL を保持したまま native lock で停止するため pytest-timeout は発火せず、 テストは CI の job timeout まで停止する (GIL に依存しない watchdog などの対策は [[0023-test-set-pytest-default-timeout]] と併せて判断する)
 - 既存テスト全件が PASS すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `bind_channel` / `bind_datachannel` / `bind_track` / `bind_websocket` の `send` (2 オーバーロード) と `send_frame` の計 10 箇所に `nb::call_guard<nb::gil_scoped_release>()` を付与し、 送信経路のロック待ちの間 GIL を解放するようにした
+- `bind_channel` の直前に GIL を解放する理由をコメントで明記し、 他の 3 セクションからも参照できるようにした (送信経路が各トランスポートの内部ロックを取得すること、 GIL 解放中も同期 callback は安全であること、 同一 Track への並行 send と送信中の `close()` は呼び出し側で直列化すること)
+- 映像トラックと DataChannel を同時に使うループバック構成で、 `DataChannel.send()` を連続実行している間に `PliHandler` の callback が実行されることを検証する regression テストを `tests/test_peerconnection.py` に追加した。 callback が送信の外側で実行されても検知できないため、 送信中フラグで判定する方式にした
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+- なお `tests/test_peerconnection.py::test_destruct_without_explicit_close` は [[0005-bug-fix-destructor-callback-deadlock]] が扱う既知の恒停を持つため、 完了条件の「既存テスト全件が PASS」からは除外して判定した
 
 ## 参考
 

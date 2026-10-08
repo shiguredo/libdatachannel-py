@@ -11,9 +11,15 @@ from libdatachannel import (
     DataChannel,
     DataChannelInit,
     Description,
+    H264RtpPacketizer,
     LocalDescriptionInit,
+    NalUnit,
     PeerConnection,
+    PliHandler,
     Reliability,
+    RtcpReceivingSession,
+    RtcpSrReporter,
+    RtpPacketizationConfig,
 )
 
 
@@ -352,3 +358,156 @@ def test_close_is_idempotent():
     # 許容しつつ 30 秒タイムアウトの regression を検出できる値。
     assert elapsed < 0.5
     assert pc.state() is PeerConnection.State.Closed
+
+
+@pytest.mark.timeout(120)
+def test_send_releases_gil_for_incoming_callback():
+    """DataChannel.send() を連続実行している間に受信経路の PLI callback が実行されること
+
+    映像トラックの media handler chain に PliHandler を登録し、 受信側から PLI を
+    送ったあと、 送信側の DataChannel.send() を連続実行する。 送信系 binding が GIL を
+    保持したまま送信経路に入ると、 PLI を処理する worker thread は GIL を取得できず
+    恒久デッドロックする。 callback が DataChannel.send() の実行区間で実行された
+    かどうかを送信中フラグで確認する。
+
+    恒久デッドロックはタイミング依存で発生するため、 このテストは callback 経路の
+    regression 検証であり、 修正前のコードではデッドロックして停止するか、 送信中の
+    callback が観測できない。 停止した場合は main thread が GIL を保持したまま
+    native lock で待つため pytest-timeout では中断できず、 外部からの kill が必要に
+    なる。 接続確立と PLI の往復を見込んで 120 秒を上限とする。 なお callback を
+    観測できないまま 200000 送信まで到達すると、 受信側が受信キューを消費しない
+    ため送信側のメモリが数十 MB 増加し、 close() にも時間がかかる。
+    """
+    config1 = Configuration()
+    pc1 = PeerConnection(config1)
+
+    config2 = Configuration()
+    config2.port_range_begin = 5000
+    config2.port_range_end = 6000
+    pc2 = PeerConnection(config2)
+
+    # callback 内では print を行わない (pytest の stdout capture と組み合わせると
+    # callback の I/O block で hang し得るため)。
+    sending = False
+    callback_during_send = False
+
+    def on_pli():
+        nonlocal callback_during_send
+        # DataChannel.send() の実行中に callback が実行されたかどうかを記録する。
+        if sending:
+            callback_during_send = True
+
+    video_ssrc = 1234
+    media = Description.Video("video", Description.Direction.SendOnly)
+    media.add_h264_codec(96)
+    media.set_bitrate(3000)
+    media.add_ssrc(video_ssrc, "video-send")
+    t1 = pc1.add_track(media)
+
+    # 送信側の media handler chain に PliHandler を登録する (whip.py と同様に
+    # PliHandler を chain する構成)。 RtpPacketizationConfig の SSRC は Description
+    # の SSRC と一致させる。
+    rtp_config = RtpPacketizationConfig(
+        video_ssrc, "send-gil-test", 96, H264RtpPacketizer.CLOCK_RATE
+    )
+    video_packetizer = H264RtpPacketizer(NalUnit.Separator.LongStartSequence, rtp_config, 1200)
+    video_packetizer.add_to_chain(RtcpSrReporter(rtp_config))
+    video_packetizer.add_to_chain(PliHandler(on_pli))
+    t1.set_media_handler(video_packetizer)
+
+    # 映像トラックとデータチャネルを同時に使う構成にする。 create_data_channel() は
+    # 自動ネゴシエーションでオファーを生成するため、 先にトラックを追加しておく
+    # (DataChannel を先に作るとオファーに映像の m= 行が入らない)。
+    dc1 = pc1.create_data_channel("send-gil-test")
+
+    def pc1_on_local_candidate(candidate):
+        pc2.add_remote_candidate(Candidate(str(candidate)))
+
+    def pc2_on_local_candidate(candidate):
+        pc1.add_remote_candidate(Candidate(str(candidate)))
+
+    pc1.on_local_candidate(pc1_on_local_candidate)
+    pc2.on_local_candidate(pc2_on_local_candidate)
+
+    t2 = None
+
+    def pc2_on_track(track):
+        nonlocal t2
+        # 受信側のトラックから PLI を送れるようにする。 RtcpReceivingSession は
+        # 受信した RTP の SSRC を PLI の送信元に使う。
+        track.set_media_handler(RtcpReceivingSession())
+        t2 = track
+
+    pc2.on_track(pc2_on_track)
+
+    # オファーは create_data_channel() 内の自動ネゴシエーションで生成されるため、
+    # その通知に依存せず local_description() をポーリングして相互に SDP を交換する
+    # (whip.py と同じく local_description() からオファーを取得する)。 候補が
+    # 揃うまで待つ。
+    offer = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        local = pc1.local_description()
+        if local is not None:
+            offer = str(local)
+            if "a=end-of-candidates" in offer:
+                break
+        time.sleep(0.05)
+    assert offer is not None, "オファーが生成されなかった"
+    pc2.set_remote_description(Description(offer))
+
+    answer = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        local = pc2.local_description()
+        if local is not None:
+            answer = str(local)
+            break
+        time.sleep(0.05)
+    assert answer is not None, "アンサーが生成されなかった"
+    pc1.set_remote_description(Description(answer))
+
+    # 接続確立とトラック / DataChannel のオープンを待つ。
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if dc1.is_open() and t1.is_open() and t2 is not None and t2.is_open():
+            break
+        time.sleep(0.05)
+
+    assert t1.is_open(), "送信側の Track が open しなかった"
+    assert t2 is not None, "受信側の Track が取得できなかった"
+    assert t2.is_open(), "受信側の Track が open しなかった"
+    assert dc1.is_open(), "DataChannel が open しなかった"
+
+    # SSRC の学習には RTP の受信が必要なため、 pc2 が受信するまで RTP を送る。
+    nalu = b"\x00\x00\x00\x01\x65" + b"\x88" * 32
+    deadline = time.monotonic() + 10
+    while t2.available_amount() == 0 and time.monotonic() < deadline:
+        t1.send(nalu)
+        time.sleep(0.05)
+    assert t2.available_amount() > 0, "受信側の Track が RTP を受信しなかった"
+
+    # pc2 から PLI を送り、 main thread は DataChannel.send() を連続実行する。
+    # 送信系 binding が GIL を解放していれば、 送信中でも PLI を処理する worker
+    # thread が GIL を取得できる。 200000 送信 / 10 秒は callback を観測できなかった
+    # 場合の上限で、 2000 送信ごとの PLI 再送は SSRC 学習前に落ちた PLI の
+    # 取りこぼし対策。
+    t2.request_keyframe()
+    deadline = time.monotonic() + 10
+    send_count = 0
+    while not callback_during_send and time.monotonic() < deadline and send_count < 200000:
+        sending = True
+        dc1.send(b"ping")
+        sending = False
+        send_count += 1
+        if send_count % 2000 == 0:
+            # SSRC 学習前に落とされた PLI や、 送信中に callback が実行されなかった
+            # 場合に備えて PLI を再送する。
+            t2.request_keyframe()
+
+    assert callback_during_send, (
+        f"DataChannel.send() の実行中に PLI の callback が実行されなかった (send_count={send_count})"
+    )
+
+    pc1.close()
+    pc2.close()
