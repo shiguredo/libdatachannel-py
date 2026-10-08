@@ -8,7 +8,7 @@
 
 ## 目的
 
-`WebSocket` を明示的に `close()` せずに destruct すると、 libdatachannel 本体の close 経路が GIL を保持したまま走り、 受信 callback を実行中の内部 thread との間でロック順逆転が起きて Python プロセス全体が hang する。 本 issue では `WebSocket` を対象に、 destruct 前に GIL 解放で同期 `close()` する仕組みを C++ binding に追加する。 ただし TLS/TCP の close handshake は別 thread が完了させる必要があるため、 `state == Closing` の場合は polling せず即 return する例外規則を入れる。
+`WebSocket.close()` / `WebSocket.force_close()` は GIL を保持したまま binding から呼ばれており、 受信 callback を実行中の内部 thread との間でロック順逆転が起きて Python プロセス全体が hang する。 本 issue では `WebSocket` を対象に、 これらの API と `__del__` の close 経路を GIL 解放下で実行する仕組みを C++ binding に追加する。 ただし TLS/TCP の close handshake は別 thread が完了させる必要があるため、 `close()` は `state == Closing` の場合に polling せず即 return する例外規則を入れる。 C++ destructor 自身 (`~WebSocket()` の `remoteClose()` / `resetCallbacks()`) は GIL を保持したまま走るため、 callback 実行中の窓では依然として恒停し得る (実測済み)。 そこは [[0005-bug-fix-destructor-callback-deadlock]] の範囲とする。
 
 ## 優先度根拠
 
@@ -38,15 +38,17 @@
   3. それ以外は `self.close()` を呼び、 `WebSocket::State::Closed` に達するまで polling する。 polling 定数 (`kPollInterval=10ms` / `kCloseTimeout=30s`) は関数内 `constexpr` として持ち、 timeout 時は GIL を再取得 (`nb::gil_scoped_acquire`) してから `RuntimeWarning` を出して return する (残処理は destructor に委ねる)。 `PyErr_WarnEx` が負を返した場合 (filterwarnings=error 等で警告が例外に昇格した場合) は `nb::python_error` を投げる。 0001 の `close_peer_connection` と同じ扱いにする
 - `force_close_websocket` も追加する。 `forceClose()` は同じ恒停点に入るため、 GIL 解放下で呼ぶ。 `forceClose()` は `closeTransports()` まで同期で進むため polling はしない
 - `.def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())` / `.def("force_close", &force_close_websocket, nb::call_guard<nb::gil_scoped_release>())` に差し替える
-- `.def("__del__", ...)` を追加し、 GIL release 下で `close_websocket` を呼ぶ。 `__del__` から投げた例外は呼び出し側で捕捉できないため `RuntimeWarning` として記録するだけで握り潰す (0001 の `PeerConnection` binding と同型)
+- `.def("__del__", ...)` を追加し、 GIL release 下で `close_websocket` を呼び、 続けて `self.resetCallbacks()` で callback を解除する。 `resetCallbacks()` も GIL 解放下で実行することで、 受信 callback を実行中の内部 thread が GIL を取得して処理を終えられる。 また `__del__` から投げた例外は呼び出し側で捕捉できないため `RuntimeWarning` として記録するだけで握り潰す (0001 の `PeerConnection` binding と同型)
 - `nb::class_<WebSocket, Channel>` に `nb::is_weak_referenceable()` を指定する (test で weakref により `__del__` 発火を検証するため)
 
 ### 2. テスト (tests/test_websocket.py)
 
-- **恒停し得る検証は pytest プロセス内で実行しない**。 `subprocess.run([sys.executable, "-c", <検証スクリプト>], timeout=60, capture_output=True)` で子プロセスに分離し、 `returncode` を検証する。 子プロセスが恒停した場合は親側で `subprocess.TimeoutExpired` になりテストが失敗するため、 CI の job timeout まで停止しない。 pytest-timeout は恒停時に発火しないため使わない (理由をテストのコメントに残す)
-- 子プロセス側では、 恒停の窓を作るために 1 ms 間隔で push するサーバーを立て、 callback 内で GIL を解放する処理 (短い sleep や一時ファイルへの書き込み) を行い、 destruct を 30 回反復する (未修正で 4 回中 3 回恒停した条件)。 callback が GIL を解放している間に destructor が GIL を取得して mutex 待ちに入ることで恒停するため、 callback 内に GIL 解放を伴う処理が要る。 この処理は恒停の窓を広げるために意図的に入れる (0001 の `test_destruct_without_explicit_close` が callback 内の I/O を避けているのとは逆の理由であることをコメントに残す)
-  - [[0025-test-remove-callback-prints]] が callback 内の `print` の除去を進めているため `print` は使わない。 短い `sleep` と一時ファイルへの書き込みのどちらで再現するかは実装時に実測して決める
-- 併せて weakref で `__del__` の発火を実検証し、 `close()` 後に `ready_state()` が `Closed` になること、 `close()` を 2 回呼んでも例外にならないこと (`test_close_is_idempotent`)、 `force_close()` でも恒停しないことを検証する
+- **恒停し得る検証は pytest プロセス内で実行しない**。 `subprocess.run([sys.executable, "-c", <検証スクリプト>], timeout=120, capture_output=True)` で子プロセスに分離し、 `returncode` を検証する。 子プロセスが恒停した場合は親側で `subprocess.TimeoutExpired` になりテストが失敗するため、 CI の job timeout まで停止しない。 pytest-timeout は恒停時に発火しないため使わない (理由をテストのコメントに残す)
+- 子プロセス側では、 恒停の窓を作るために 1 ms 間隔で push するサーバーを立て、 callback 内で `time.sleep` して GIL を解放し、 その最中に close 経路を呼ぶ。 callback が GIL を解放している間に GIL を保持した側が close 経路へ入ると恒停するため、 callback 内に GIL 解放を伴う処理が要る (意図的に入れている理由をコメントに残す)
+  - [[0025-test-remove-callback-prints]] が callback 内の `print` の除去を進めているため `print` は使わない (`sleep` で GIL を解放する)
+  - 検証するのは `close()` と `force_close()` の 2 経路。 `close()` は対向との close handshake を待つため 1 回あたり 10 秒程度かかるので 1 回、 `force_close()` は 5 回反復する
+  - 子プロセスは最後に `os._exit(0)` で終了する。 C++ destructor は GIL を保持したまま走り、 callback 実行中の窓では依然として恒停し得るため (スコープ外を参照)、 検証は close 経路に絞る
+- 併せて weakref で `__del__` の発火を実検証し、 `close()` 後に `ready_state()` が `Closed` になること、 `close()` を 2 回呼んでも例外にならないこと (`test_close_is_idempotent`) を検証する
 - `test_del_releases_native` を 0001 のテスト方式に合わせて追加する
 - 既存テストが PASS することを確認する
 
@@ -59,15 +61,15 @@
 
 - `prek run --all-files pytest` (prek.toml の pytest フック = `uv run pytest -v --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close`) が PASS する。 拡張モジュールを install 済みであること (`make develop` 相当)
 - CI (wheel.yml の 24 leg / prek.yml の `ty` ジョブ) の pytest が PASS する (恒停テストは CI でも `--deselect` で除外されている)
-- 追加した恒停再現テスト (子プロセス + timeout) が、 **修正前は timeout で失敗し、 修正後は完走する** こと (子プロセス単体で確認する)
-- `force_close()` でも恒停しないこと
+- `close()` と `force_close()` の恒停再現テスト (子プロセス + timeout) が、 **修正前は恒停して timeout で失敗し、 修正後は完走する** こと (実測済み: 未修正のビルドでは 2 テストとも timeout、 修正後は 6 テストすべて PASS)
 - 既知の恒停テスト ([[0005-bug-fix-destructor-callback-deadlock]]) は対象外とする。 `make test` は `make develop` (フルビルド) を実行し恒停テストを除外しないため、 完了条件には使わない
+- C++ destructor 自身の恒停 (callback 実行中に `~WebSocket()` が走る場合) は本 issue の対象外とする (スコープ外を参照)
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## スコープ外 (関連する未解決問題)
 
-- 本 issue は destruct 到達前に明示 `close()` で `Closed` まで進めて destructor 経路の負担を減らすアプローチであり、 完全には hang を防げない。 30 秒 timeout 後に `close_websocket` が return した場合も、 `Closing` で早期 return した場合も、 続く public `~WebSocket()` の `remoteClose()` 経路は依然 GIL 保持下で走る。 受信 callback が実行中の窓では引き続き hang し得るため、 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] に集約する
+- 本 issue は binding 側の close 経路 (`close()` / `force_close()` / `__del__` の close) から GIL 保持を取り除くアプローチである。 明示 `close()` が 30 秒で `Closed` に達しなかった場合も、 `Closing` で早期 return した場合も、 続く public `~WebSocket()` の `remoteClose()` / `resetCallbacks()` は GIL を保持したまま走る。 受信 callback が実行中の窓では引き続き hang し得る (実測済み)。 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] に集約する
 - 送信系 API の GIL 保持は [[0032-bug-fix-send-gil-deadlock]] で対応済み (`WebSocket.send()` も GIL 解放下で実行される)。 本 issue は destruct 経路 (`close()` / `force_close()` / `__del__`) のみを対象とする
 
 ## 参考

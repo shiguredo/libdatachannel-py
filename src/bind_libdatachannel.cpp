@@ -1529,8 +1529,60 @@ void bind_peerconnection(nb::module_& m) {
 
 // send が GIL を解放する理由は bind_channel 直前のコメントを参照。
 
+// WebSocket.close() のバインディング本体。 libdatachannel の close() は非同期で進むため、
+// ここで state==Closed まで待機し、 close() から戻った時点で破棄しても安全な状態を保証する。
+// 呼び出し側バインディングは nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提。
+void close_websocket(WebSocket& self) {
+  // ビジーループにならない値でのポーリング間隔。
+  constexpr auto kPollInterval = std::chrono::milliseconds(10);
+  // ポーリングの上限。 これを超えた場合はデストラクタ側に委ねる。
+  constexpr auto kCloseTimeout = std::chrono::seconds(30);
+
+  if (self.readyState() == WebSocket::State::Closed) {
+    return;
+  }
+  // WebSocket::close() は Connecting / Open のときしか動作せず、 Closing 以降は内部で
+  // 何もしない。 対向の応答遅延で polling が timeout まで待つのを避けるため、 Closing の
+  // ときは polling せず即 return し、 残りの状態遷移はデストラクタ側に委ねる。
+  if (self.readyState() == WebSocket::State::Closing) {
+    return;
+  }
+  self.close();
+  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+  while (self.readyState() != WebSocket::State::Closed) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      nb::gil_scoped_acquire gil;
+      // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
+      // 放置せず Python 例外として伝播させる。
+      if (PyErr_WarnEx(
+              PyExc_RuntimeWarning,
+              "WebSocket.close(): state did not reach Closed within timeout; "
+              "the remaining cleanup is delegated to the C++ destructor and "
+              "may block.",
+              1) < 0) {
+        throw nb::python_error();
+      }
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+}
+
+// WebSocket.force_close() のバインディング本体。 forceClose() は remoteClose() 経由で
+// closeTransports() まで同期で進むため polling はしない。 ただし GIL を保持したまま実行
+// すると、 受信 callback を実行中の内部 thread とのロック順逆転で hang し得るため、
+// 呼び出し側バインディングは GIL を解放する前提。
+void force_close_websocket(WebSocket& self) {
+  if (self.readyState() == WebSocket::State::Closed) {
+    return;
+  }
+  self.forceClose();
+}
+
 void bind_websocket(nb::module_& m) {
-  nb::class_<WebSocket, Channel> ws(m, "WebSocket");
+  // test 側で weakref.ref(ws) を使うために __weakref__ slot を有効化する。
+  nb::class_<WebSocket, Channel> ws(m, "WebSocket",
+                                    nb::is_weak_referenceable());
 
   // WebSocket::State
   nb::enum_<WebSocket::State>(ws, "State")
@@ -1547,13 +1599,38 @@ void bind_websocket(nb::module_& m) {
       .def("max_message_size", &WebSocket::maxMessageSize)
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
-      .def("close", &WebSocket::close)
+      .def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 close_websocket で
+      // state==Closed まで進め、 続けて callback を解除する。 どちらも GIL 解放下で実行する
+      // ため、 受信 callback を実行中の内部 thread が GIL を取得して処理を終えられる。
+      // これをしないと、 直後の public ~WebSocket() が GIL を保持したまま resetCallbacks()
+      // で callback mutex を待ち、 callback 側は GIL を待つため恒停する。
+      // __del__ から投げた例外は呼び出し側で捕捉できないため RuntimeWarning として
+      // 記録するだけで握り潰す。
+      .def(
+          "__del__",
+          [](WebSocket& self) {
+            try {
+              close_websocket(self);
+              self.resetCallbacks();
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "WebSocket.__del__: close() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格した場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       // (data, size) 版は削除した (DataChannel.send のコメントを参照)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("ready_state", &WebSocket::readyState)
       .def("open", &WebSocket::open, "url"_a)
-      .def("force_close", &WebSocket::forceClose)
+      .def("force_close", &force_close_websocket,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("remote_address", &WebSocket::remoteAddress)
       .def("path", &WebSocket::path);
 }
