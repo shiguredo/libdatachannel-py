@@ -24,6 +24,7 @@ tests/test_peerconnection.py の 2 つのテストが PeerConnection ペアの�
   - Description.Video 構築 (codec / bitrate / ssrc / SDP ラウンドトリップ assert)
   - 接続待機ループ
 - 待機失敗時の assert にメッセージがなく、失敗時に「接続が確立しなかったのかトラックが開かなかったのか」が分からない
+- [[0032-bug-fix-send-gil-deadlock]] で追加した `test_send_releases_gil_for_incoming_callback` も、 PeerConnection ペアの構築 / SDP と candidate の交換 / 接続待機ループを同様に複製している
 
 ## 設計方針
 
@@ -31,7 +32,7 @@ tests/test_peerconnection.py の 2 つのテストが PeerConnection ペアの�
 - _make_video_media(mid, ssrc) と接続待機ヘルパー (_wait_track_open 等) を切り出す
 - 各テストは目的 (renegotiation + close の検証 / recwarn + weakref 検証) に特化した形にする
 - 待機失敗時の assert に日本語メッセージを付ける
-- [[0026-test-add-missing-binding-tests]] で追加する Track 系テストからもヘルパーを再利用する
+- [[0026-test-add-missing-binding-tests]] で追加する Track 系テストと、 [[0032-bug-fix-send-gil-deadlock]] で追加した `test_send_releases_gil_for_incoming_callback` からもヘルパーを再利用する
 
 ## 完了条件
 
@@ -42,5 +43,5 @@ tests/test_peerconnection.py の 2 つのテストが PeerConnection ペアの�
 
 ## 参考
 
-- 対象シンボル: `test_track`、`test_destruct_without_explicit_close` (tests/test_peerconnection.py)
+- 対象シンボル: `test_track`、`test_destruct_without_explicit_close`、`test_send_releases_gil_for_incoming_callback` (tests/test_peerconnection.py)
 - 関連 issue: [[0025-test-remove-callback-prints]]、[[0026-test-add-missing-binding-tests]]
