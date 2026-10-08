@@ -15,19 +15,11 @@ import argparse
 import logging
 import threading
 import time
-from typing import Optional
 from urllib.parse import urljoin
 
 import httpx
 import numpy as np
 import structlog
-from whip import (
-    find_nal_units,
-    get_h265_nal_type_name,
-    get_nal_type_name,
-    handle_error,
-    parse_link_header,
-)
 
 # raw-player
 from raw_player import AudioPlayer, VideoPlayer
@@ -48,6 +40,13 @@ from webcodecs import (
     VideoDecoderConfig,
     VideoFrame,
     VideoPixelFormat,
+)
+from whip import (
+    find_nal_units,
+    get_h265_nal_type_name,
+    get_nal_type_name,
+    handle_error,
+    parse_link_header,
 )
 
 # libdatachannel-py
@@ -70,9 +69,9 @@ class WHEPClient:
     def __init__(
         self,
         whep_url: str,
-        bearer_token: Optional[str] = None,
+        bearer_token: str | None = None,
         display_video: bool = False,
-        preferred_codec: Optional[str] = None,
+        preferred_codec: str | None = None,
     ):
         self.whep_url = whep_url
         self.bearer_token = bearer_token
@@ -82,10 +81,10 @@ class WHEPClient:
         # 使用するコーデック
         self.video_codec: str = preferred_codec or "h264"
 
-        self.pc: Optional[PeerConnection] = None
-        self.video_track: Optional[Track] = None
-        self.audio_track: Optional[Track] = None
-        self.session_url: Optional[str] = None
+        self.pc: PeerConnection | None = None
+        self.video_track: Track | None = None
+        self.audio_track: Track | None = None
+        self.session_url: str | None = None
 
         # Track counters
         self.video_frame_count = 0
@@ -94,11 +93,11 @@ class WHEPClient:
         self.decoded_audio_count = 0
 
         # タイムスタンプ用（ローカル時間ベース）
-        self.playback_start_time: Optional[float] = None
+        self.playback_start_time: float | None = None
 
         # webcodecs Decoder
-        self.video_decoder: Optional[VideoDecoder] = None
-        self.audio_decoder: Optional[AudioDecoder] = None
+        self.video_decoder: VideoDecoder | None = None
+        self.audio_decoder: AudioDecoder | None = None
         self.video_decoder_configured = False
         self.audio_decoder_configured = False
 
@@ -111,8 +110,8 @@ class WHEPClient:
         self.audio_channels = 2  # Opus はステレオ
 
         # raw-player display
-        self.player: Optional[VideoPlayer] = None
-        self.audio_player: Optional[AudioPlayer] = None
+        self.player: VideoPlayer | None = None
+        self.audio_player: AudioPlayer | None = None
 
         # Running flag
         self.running = True
@@ -274,7 +273,7 @@ class WHEPClient:
                         # I420
                         y_data, u_data, v_data = frame.planes()
                         self.player.enqueue_video_i420(y_data, u_data, v_data, pts_us)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                     if self.decoded_video_count <= 5:
                         logger.error("Error enqueuing video frame", error=str(e))
 
@@ -319,7 +318,7 @@ class WHEPClient:
                     audio_data.copy_to(buffer, {"plane_index": 0, "format": AudioSampleFormat.F32})
 
                     self.audio_player.enqueue_audio(buffer, pts_us, sample_rate)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                     if self.decoded_audio_count <= 5:
                         logger.error("Error enqueuing audio frame", error=str(e))
 
@@ -398,7 +397,7 @@ class WHEPClient:
                     width=width,
                     height=height,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 logger.error("Failed to configure H.265 video decoder", error=str(e))
 
         elif self.video_codec == "h264" and h264_has_sps and h264_has_pps:
@@ -418,7 +417,7 @@ class WHEPClient:
                     width=width,
                     height=height,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 logger.error("Failed to configure H.264 video decoder", error=str(e))
 
     def _on_video_frame(self, data: bytes, frame_info) -> None:
@@ -443,9 +442,7 @@ class WHEPClient:
                 type_name = get_h265_nal_type_name(nal_type)
             else:
                 nal_type = nal_header & 0x1F
-                if nal_type == 5:  # IDR
-                    has_keyframe = True
-                elif nal_type in [7, 8]:  # SPS, PPS
+                if nal_type == 5 or nal_type in [7, 8]:  # IDR, SPS, PPS
                     has_keyframe = True
                 type_name = get_nal_type_name(nal_type)
 
@@ -469,7 +466,7 @@ class WHEPClient:
                 }
                 chunk = EncodedVideoChunk(init)
                 self.video_decoder.decode(chunk)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 if self.video_frame_count <= 5:
                     logger.error("Video decode error", error=str(e))
 
@@ -510,7 +507,7 @@ class WHEPClient:
                 }
                 chunk = EncodedAudioChunk(init)
                 self.audio_decoder.decode(chunk)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 if self.audio_frame_count <= 5:
                     logger.error("Audio decode error", error=str(e))
 
@@ -530,7 +527,7 @@ class WHEPClient:
             self.audio_track.set_media_handler(opus_depacketizer)
             logger.info("Opus depacketizer set for audio track")
 
-    def receive_frames(self, duration: Optional[int] = None) -> None:
+    def receive_frames(self, duration: int | None = None) -> None:
         """フレームを受信"""
         if not self.pc:
             raise RuntimeError("PeerConnection not initialized")
@@ -607,7 +604,7 @@ class WHEPClient:
                             "DELETE request returned unexpected status",
                             status=response.status_code,
                         )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("terminating WHEP session", e)
 
         time.sleep(0.5)
@@ -616,16 +613,16 @@ class WHEPClient:
         if self.video_decoder:
             try:
                 self.video_decoder.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
+                logger.debug("Failed to close the video decoder", error=str(e))
             finally:
                 self.video_decoder = None
 
         if self.audio_decoder:
             try:
                 self.audio_decoder.close()
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
+                logger.debug("Failed to close the audio decoder", error=str(e))
             finally:
                 self.audio_decoder = None
 
@@ -637,7 +634,7 @@ class WHEPClient:
         if self.pc:
             try:
                 self.pc.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                 handle_error("closing PeerConnection", e)
             finally:
                 self.pc = None
@@ -661,9 +658,7 @@ def display_frames(client: WHEPClient) -> bool:
 
     # キーコールバックを設定 (ESC または q で終了)
     def on_key(key: int) -> bool:
-        if key == 27 or key == 113:  # ESC or 'q'
-            return False
-        return True
+        return key not in (27, 113)
 
     client.player.set_key_callback(on_key)
     client.player.play()
@@ -749,7 +744,7 @@ def main():
             def receive_thread():
                 try:
                     client.receive_frames(args.duration)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外でも継続する)
                     handle_error("receiving frames", e)
                 finally:
                     client.running = False
@@ -771,12 +766,12 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user (Ctrl+C)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (サンプルは想定外の例外もエラー表示して終了する)
         handle_error("running WHEP client", e)
     finally:
         try:
             client.disconnect()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (終了処理なので失敗しても継続する)
             logger.error("Error during disconnect", error=str(e))
 
 

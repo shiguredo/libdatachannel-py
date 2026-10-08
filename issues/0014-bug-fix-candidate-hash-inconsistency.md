@@ -26,9 +26,9 @@ s = "candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host"
 c1 = Candidate(s)
 c2 = Candidate(s)
 
-assert c1 == c2          # True
+assert c1 == c2  # True
 assert hash(c1) == hash(c2)  # False → 規約違反
-assert len({c1, c2}) == 1    # 2 になる
+assert len({c1, c2}) == 1  # 2 になる
 ```
 
 - `bind_candidate` は `nb::self == nb::self` と `nb::self != nb::self` をバインドするが、__hash__ を定義していない

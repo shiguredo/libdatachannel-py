@@ -85,7 +85,7 @@ def test_concurrent_candidate_parsing():
             try:
                 c = Candidate(candidate_str)
                 candidates.append(c)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (ワーカースレッドの例外を収集してテストで検証するため)
                 with lock:
                     errors.append(e)
         with lock:
@@ -102,7 +102,7 @@ def test_concurrent_candidate_parsing():
 
     assert len(errors) == 0, f"Errors: {errors}"
     assert len(results) == 4
-    for thread_id, candidates in results.items():
+    for candidates in results.values():
         assert len(candidates) == 100
 
 
@@ -125,7 +125,7 @@ def test_concurrent_description_creation():
                 # パースし直してラウンドトリップを確認
                 reparsed = Description.Media(sdp)
                 assert str(reparsed) == sdp
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (ワーカースレッドの例外を収集してテストで検証するため)
                 with lock:
                     errors.append(e)
 
@@ -207,7 +207,7 @@ def test_concurrent_peerconnection_creation():
         t.join()
 
     assert len(results) == 4
-    for thread_id, count in results.items():
+    for count in results.values():
         assert count == 10
 
 
@@ -316,7 +316,7 @@ def test_concurrent_rtp_config_creation():
         t.join()
 
     assert len(results) == 4
-    for thread_id, configs in results.items():
+    for configs in results.values():
         assert len(configs) == 100
 
 
@@ -336,7 +336,7 @@ def test_concurrent_nalunit_operations():
                 assert nalu.unit_type() == 5
                 nalu.set_forbidden_bit(False)
                 assert nalu.forbidden_bit() is False
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 (ワーカースレッドの例外を収集してテストで検証するため)
                 with lock:
                     errors.append(e)
 
@@ -380,7 +380,7 @@ def test_multiple_peerconnections_parallel():
             f.result()
 
     assert len(results) == 4
-    for pc_id, success in results.items():
+    for success in results.values():
         assert success
 
 
@@ -410,7 +410,7 @@ def test_concurrent_ice_server_creation():
         t.join()
 
     assert len(results) == 4
-    for thread_id, servers in results.items():
+    for servers in results.values():
         assert len(servers) == 100
 
 

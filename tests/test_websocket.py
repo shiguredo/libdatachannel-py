@@ -15,6 +15,7 @@ def test_websocket(echo_websocket_server):
 
     def ws_on_open():
         print("WebSocket: Open")
+        assert ws is not None
         ws.send(my_message)
 
     def ws_on_error(error):

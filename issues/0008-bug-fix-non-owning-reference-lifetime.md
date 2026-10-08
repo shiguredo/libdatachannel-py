@@ -24,10 +24,12 @@ Description.media() / Description.application() / Media.rtp_map() / PeerConnecti
 ```python
 from libdatachannel import Description
 
+
 def make():
     desc = Description("v=0...")
     desc.add_audio("audio", Description.Direction.SendOnly)
     return desc.media(0)
+
 
 m = make()
 m.mid()  # 親の Description は破棄済み → use-after-free

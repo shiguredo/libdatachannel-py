@@ -19,7 +19,7 @@ AGENTS.md の「コメントは全て日本語」「テストメッセージは�
 - テストメッセージが英語: tests/test_free_threading.py の skipif reason と assert メッセージ (GIL should be disabled 等)。一方 test_peerconnection.py の assert メッセージは日本語で、ファイル間でも不統一
 - 英語コメント: tests/test_peerconnection.py (Test opening a track 等複数)、tests/test_description.py (Depending on implementation)、tests/test_packetizationconfig.py (static versions 等)、examples/whip.py (Parse Link header 等 14 箇所以上)、examples/whep.py (Running flag 等)
 - 全角半角間スペース違反: examples/whip.py (7セグメント風の数字を描画、多くのマイクは1ch、1秒ごとに出力 等 5 箇所)、tests/conftest.py (WebSocketエコー)
-- except Exception: pass 6 箇所: examples/whip.py (エンコーダの flush / close の握り潰し)、examples/whep.py (デコーダ close の握り潰し)
+- except Exception: pass 6 箇所: [[0027-fmt-fix-lint-typecheck-gate]] で debug ログを残す形に修正済み (examples/whip.py のエンコーダの flush / close、examples/whep.py のデコーダ close)
 - issue 番号がソースに残留: tests/test_peerconnection.py の test_destruct_without_explicit_close のコメント (issues/pending/0005 への言及)。issue 番号の許容される置き場所は issues/ 配下のファイルとコミットメッセージのみ
 
 ## 設計方針

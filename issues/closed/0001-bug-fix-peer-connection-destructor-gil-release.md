@@ -212,6 +212,7 @@ callback を一切登録しない最小ケースで、 wrapper の `__del__` が
 ```python
 import weakref
 
+
 def test_wrapper_del_releases_native():
     pc = PeerConnection()
     ref = weakref.ref(pc)
