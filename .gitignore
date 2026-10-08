@@ -8,6 +8,7 @@ wheels/
 *.egg-info
 *.pyi
 .venv/
+.venv-test/
 .pytest_cache/
 .ruff_cache/
 .hypothesis/

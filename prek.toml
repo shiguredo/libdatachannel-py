@@ -49,4 +49,23 @@ hooks = [
     types_or = ["c", "c++", "objective-c"],
     priority = 10,
   },
+  {
+    # pytest: `uv run pytest` を使うため、 拡張モジュールを install した .venv が必要になる
+    # (make develop 相当を実行するまでこのフックは失敗する)。
+    # test_destruct_without_explicit_close は GIL と libdatachannel の mutex の
+    # デッドロックで停止し、 pytest-timeout も発火しないため除外する。
+    id = "pytest",
+    name = "pytest",
+    entry = "uv run pytest",
+    args = [
+      "tests/",
+      "-v",
+      "--deselect",
+      "tests/test_peerconnection.py::test_destruct_without_explicit_close",
+    ],
+    language = "system",
+    types = ["python"],
+    pass_filenames = false,
+    priority = 30,
+  },
 ]

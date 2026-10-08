@@ -25,12 +25,14 @@ jobs:
       # clang-format は runner に入っていないため、 ローカルと同じバージョンを用意する
       - name: Install clang-format
         run: uv tool install clang-format==23.1.3
+      # pytest はビルドした wheel を install した環境が要るため、 このジョブでは実行しない
       - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
         with:
-          extra-args: "--all-files --skip ty"
+          extra-args: "--all-files --skip ty --skip pytest"
 
-  # ty は libdatachannel の生成スタブ (src/libdatachannel/__init__.pyi) を必要とする。
-  # *.pyi は git 管理外でビルド時に生成されるため、 wheel をビルドしてからフックを実行する。
+  # ty は libdatachannel の生成スタブ (src/libdatachannel/__init__.pyi) を必要とし、
+  # pytest は拡張モジュールを install した環境を必要とする。 どちらもビルド成果物が要るため、
+  # wheel をビルドしてからフックを実行する。
   # ubuntu-slim は 1 vCPU / 5 GB でジョブの実行時間が 15 分に制限されるため、
   # ビルドを伴うこのジョブでは ubuntu-24.04 を使う。
   ty:
@@ -63,6 +65,14 @@ jobs:
       - name: Copy stub
         run: cp _build/__init__.pyi src/libdatachannel/
 
+      # pytest フック (uv run pytest) が使う .venv にテスト依存と wheel を入れる。
+      # wheel を入れた後に uv sync を実行すると wheel が削除されるため順序を守る。
+      - name: Install test dependencies
+        run: uv sync
+
+      - name: Install wheel
+        run: uv pip install --python .venv/bin/python dist/*.whl
+
       - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
         with:
-          extra-args: "--all-files ty"
+          extra-args: "--all-files ty pytest"

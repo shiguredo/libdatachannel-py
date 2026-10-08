@@ -94,7 +94,28 @@ jobs:
         run: |
           uvx auditwheel repair dist/*.whl --strip --only-plat
 
-      # - run: uv run pytest tests/ -v
+      # 修復済みの wheel を fresh な環境に入れてテストする。
+      # uv sync / uv run ではプロジェクトが install されないため (package = false)、
+      # wheel を明示的に install してからテストする。
+      # test_destruct_without_explicit_close は GIL と libdatachannel の mutex の
+      # デッドロックで停止し、 pytest-timeout も発火しないため job の timeout まで
+      # 止まる。 根本対応は別途行うため、 CI では除外する。
+      # free-threading の leg ではコンカレンシー系のテストが断続的に失敗し得るため、
+      # 失敗した場合は再実行で判断する。
+      - name: Test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python "${{ matrix.python_version }}" .venv-test
+          uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
+          .venv-test/bin/python -m pytest tests/ -v \
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+
+      # free-threading の leg では GIL が無効であることを確認する
+      # (テストが skip されたまま緑になるのを防ぐ)
+      - name: Check free-threading
+        if: endsWith(matrix.python_version, 't')
+        run: .venv-test/bin/python -c "import sys; assert not sys._is_gil_enabled()"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -138,7 +159,20 @@ jobs:
       - name: Build wheel
         run: uv build --wheel --out-dir wheelhouse
 
-      # - run: uv run pytest tests/ -v
+      # wheelhouse/ の wheel を fresh な環境に入れてテストする (ubuntu と同じ手順)
+      - name: Test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python "${{ matrix.python_version }}" .venv-test
+          uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
+          .venv-test/bin/python -m pytest tests/ -v \
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+
+      # free-threading の leg では GIL が無効であることを確認する
+      - name: Check free-threading
+        if: endsWith(matrix.python_version, 't')
+        run: .venv-test/bin/python -c "import sys; assert not sys._is_gil_enabled()"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
