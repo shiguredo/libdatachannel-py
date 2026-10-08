@@ -94,7 +94,34 @@ jobs:
         run: |
           uvx auditwheel repair dist/*.whl --strip --only-plat
 
-      # - run: uv run pytest tests/ -v
+      # 断続的に失敗し得るテスト: free-threading の leg のコンカレンシー系、 callback 内
+      # print が残るテスト (恒停経路)、 WebSocketServer 系のテスト (稀に native crash する)。
+      # 除外はせず、 失敗した場合はテストスイート全体をもう 1 回だけ実行して判断する
+      # (2 回目も失敗した場合は step が失敗する)。 根本対応は別途行う。
+      - name: Test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python "${{ matrix.python_version }}" .venv-test
+          uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
+          # 除外するテスト: test_destruct_without_explicit_close は GIL と libdatachannel の
+          # mutex のデッドロックで停止し、 pytest-timeout も発火しないため job の timeout まで
+          # 止まる。 根本対応は別途行う。
+          run_pytest() {
+            .venv-test/bin/python -m pytest tests/ -v \
+              --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+          }
+          run_pytest || {
+            echo "::warning::pytest failed; retrying the test suite once"
+            run_pytest
+          }
+
+      # free-threading の leg では GIL が無効であることを確認する。
+      # モジュールを import した後で確認することで、 GIL を使うモジュールが静かに GIL を
+      # 有効化した場合も検出する (テストが skip されたまま緑になるのを防ぐ)
+      - name: Check free-threading
+        if: endsWith(matrix.python_version, 't')
+        run: .venv-test/bin/python -c "import sys, libdatachannel; assert not sys._is_gil_enabled()"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -138,7 +165,27 @@ jobs:
       - name: Build wheel
         run: uv build --wheel --out-dir wheelhouse
 
-      # - run: uv run pytest tests/ -v
+      # wheelhouse/ の wheel を fresh な環境に入れてテストする (ubuntu と同じ手順。
+      # 除外するテストと断続的に失敗し得るテストは ubuntu の Test wheel のコメントを参照)
+      - name: Test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python "${{ matrix.python_version }}" .venv-test
+          uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
+          run_pytest() {
+            .venv-test/bin/python -m pytest tests/ -v \
+              --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+          }
+          run_pytest || {
+            echo "::warning::pytest failed; retrying the test suite once"
+            run_pytest
+          }
+
+      # free-threading の leg ではモジュールを import した後で GIL が無効であることを確認する
+      - name: Check free-threading
+        if: endsWith(matrix.python_version, 't')
+        run: .venv-test/bin/python -c "import sys, libdatachannel; assert not sys._is_gil_enabled()"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

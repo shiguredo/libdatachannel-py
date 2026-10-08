@@ -55,6 +55,11 @@
 
 ### misc
 
+- [FIX] CI で pytest が実行されていなかったのを解消し、 ビルドした wheel を検証する
+  - build_ubuntu / build_macos で wheel を fresh な環境に install してテストする
+  - prek.toml に pytest のフックを追加し、 CI では wheel をビルドするジョブで実行する
+  - 動かない build_debug.yml と、 参照されていない composite action を削除する
+  - @voluntas
 - [FIX] CI で prek.toml のフック (ruff / ty / tombi / clang-format と組み込みフック) が実行されていなかったのを解消する
   - pull_request と develop への push で prek.toml のフックを実行する
   - ty はビルドで生成されるスタブを必要とするため、 wheel をビルドするジョブで実行する
