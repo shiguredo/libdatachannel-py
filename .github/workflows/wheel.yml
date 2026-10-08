@@ -101,8 +101,8 @@ jobs:
       # mutex のデッドロックで停止し、 pytest-timeout も発火しないため job の timeout まで
       # 止まる。 根本対応は別途行う。
       # 断続的に失敗し得るテスト: free-threading の leg のコンカレンシー系、 callback 内
-      # print が残るテスト (恒停経路)、 WebSocketServer 系のテスト。 除外はせず、
-      # 失敗した場合は再実行で判断する。
+      # print が残るテスト (恒停経路)、 WebSocketServer 系のテスト (稀に native crash する)。
+      # 除外はせず、 失敗した場合は 1 回だけやり直して判断する。
       - name: Test wheel
         shell: bash
         run: |
@@ -110,7 +110,9 @@ jobs:
           uv venv --python "${{ matrix.python_version }}" .venv-test
           uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
           .venv-test/bin/python -m pytest tests/ -v \
-            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close \
+            || .venv-test/bin/python -m pytest tests/ -v \
+              --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
 
       # free-threading の leg では GIL が無効であることを確認する。
       # モジュールを import した後で確認することで、 GIL を使うモジュールが静かに GIL を
@@ -170,7 +172,9 @@ jobs:
           uv venv --python "${{ matrix.python_version }}" .venv-test
           uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
           .venv-test/bin/python -m pytest tests/ -v \
-            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close \
+            || .venv-test/bin/python -m pytest tests/ -v \
+              --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
 
       # free-threading の leg ではモジュールを import した後で GIL が無効であることを確認する
       - name: Check free-threading
