@@ -1316,14 +1316,10 @@ void bind_datachannel(nb::module_& m) {
       // していた。 派生クラス側に binding して正しいポインタで呼ぶ。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &DataChannel::close)
+      // (data, size) 版は size が data の長さを超えると範囲外を読み、 その内容を
+      // 送信していた。 size は len(data) から導出できるため削除した
       .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
            "data"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "send",
-          [](DataChannel& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &DataChannel::stream)
       .def("id", &DataChannel::id)
       .def("label", &DataChannel::label)
@@ -1343,24 +1339,13 @@ void bind_track(nb::module_& m) {
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &Track::close)
+      // (data, size) 版は削除した (DataChannel.send のコメントを参照)
       .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a,
            nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "send",
-          [](Track& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
+      // (data, size, info) 版は削除した (DataChannel.send のコメントを参照)
       .def("send_frame",
            nb::overload_cast<binary, FrameInfo>(&Track::sendFrame), "data"_a,
            "info"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "send_frame",
-          [](Track& self, std::vector<byte> data, size_t size, FrameInfo info) {
-            return self.sendFrame(data.data(), size, info);
-          },
-          "data"_a, "size"_a, "info"_a,
-          nb::call_guard<nb::gil_scoped_release>())
       .def("mid", &Track::mid)
       .def("direction", &Track::direction)
       .def("description", &Track::description)
@@ -1563,14 +1548,9 @@ void bind_websocket(nb::module_& m) {
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &WebSocket::close)
+      // (data, size) 版は削除した (DataChannel.send のコメントを参照)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "send",
-          [](WebSocket& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("ready_state", &WebSocket::readyState)
       .def("open", &WebSocket::open, "url"_a)
       .def("force_close", &WebSocket::forceClose)

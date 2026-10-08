@@ -11,6 +11,11 @@
 
 ## develop
 
+- [CHANGE] `DataChannel.send()` / `Track.send()` / `WebSocket.send()` の `(data, size)` 版と、 `Track.send_frame()` の `(data, size, info)` 版を削除する
+  - `size` に `data` の長さを超える値を渡すとヒープの範囲外を読み、 その内容が対向に送信されていた (SIGBUS でプロセスが落ちることもあった)
+  - `size` は `len(data)` から導出できるため、 size を取らない版 (`send` は 1 引数、 `send_frame` は `data` と `info`) とスライス (`data[:size]`) で置き換えられる (`size` を渡して呼ぶと `TypeError` になる)
+  - `Channel` 側の同じ版は binding の削除 (develop の `[FIX]` エントリ) で既に対応済み
+  - @voluntas
 - [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
 - [UPDATE] scikit-build-core の最小バージョンを 1.0.3 にする
