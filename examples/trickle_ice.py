@@ -9,6 +9,28 @@ WHIP (RFC 9725) / WHEP (draft-ietf-wish-whep) の PATCH リクエストで使う
 - RFC 9725 Section 4.3.2: bundle ポリシーでは offerer-tagged の `m=` 行のみを含める
 """
 
+import time
+
+from libdatachannel import PeerConnection
+
+# trickle ICE の PATCH を送るまでに gathering の完了を待つ上限 (秒)
+TRICKLE_ICE_TIMEOUT = 5.0
+
+
+def wait_for_ice_gathering(pc: PeerConnection, timeout: float = TRICKLE_ICE_TIMEOUT) -> bool:
+    """ICE gathering が完了するまで待つ
+
+    candidate が 1 つ届いた時点で送ってしまうと、 後から届く srflx / relay の candidate が
+    送られないままになる。 上限を超えた場合は False を返し、 呼び出し側はその時点の
+    candidate で送る (その場合は `a=end-of-candidates` を付けない)。
+    """
+    deadline = time.monotonic() + timeout
+    while pc.gathering_state() is not PeerConnection.GatheringState.Complete:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
 
 def normalize_candidate(candidate: str) -> str:
     """candidate を SDP の属性行 (`a=candidate:...`) の形にする
@@ -21,9 +43,7 @@ def normalize_candidate(candidate: str) -> str:
     return f"a={candidate}"
 
 
-def build_sdp_fragment(
-    local_sdp: str, candidates: list[str], end_of_candidates: bool = True
-) -> str:
+def build_sdp_fragment(local_sdp: str, candidates: list[str], end_of_candidates: bool) -> str:
     """SDP fragment を組み立てる (RFC 9725 Section 4.3 / RFC 8840)
 
     local_sdp は libdatachannel が生成した SDP、 candidates は on_local_candidate で

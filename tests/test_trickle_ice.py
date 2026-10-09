@@ -96,10 +96,41 @@ def test_build_sdp_fragment_accepts_attribute_form() -> None:
 def test_build_sdp_fragment_requires_ice_credentials() -> None:
     """ICE 資格情報が無い SDP では ValueError になること"""
     with pytest.raises(ValueError):
-        build_sdp_fragment("v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\n", [])
+        build_sdp_fragment("v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\n", [], True)
 
 
 def test_build_sdp_fragment_requires_media_section() -> None:
     """m= 行が無い SDP では ValueError になること"""
     with pytest.raises(ValueError):
         build_sdp_fragment("v=0\r\na=ice-ufrag:x\r\na=ice-pwd:y\r\n", [], True)
+
+
+def test_wait_for_ice_gathering_returns_true_when_complete() -> None:
+    """gathering が完了していればすぐ真を返すこと
+
+    ICE server を設定しない場合、 host candidate の gathering は即座に完了する。
+    """
+    import libdatachannel
+
+    pc = libdatachannel.PeerConnection()
+    pc.create_data_channel("test")
+    pc.set_local_description()
+
+    assert trickle_ice.wait_for_ice_gathering(pc, 10.0) is True
+    assert pc.gathering_state() is libdatachannel.PeerConnection.GatheringState.Complete
+
+    pc.close()
+
+
+def test_wait_for_ice_gathering_times_out() -> None:
+    """gathering が完了しない場合は上限で偽を返すこと
+
+    ローカル description を設定していない PeerConnection は gathering が進まない。
+    """
+    import libdatachannel
+
+    pc = libdatachannel.PeerConnection()
+
+    assert trickle_ice.wait_for_ice_gathering(pc, 0.2) is False
+
+    pc.close()

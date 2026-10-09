@@ -41,7 +41,7 @@ import uvc
 from blend2d import CompOp, Context, Image, Path
 
 # libdatachannel-py
-from trickle_ice import build_sdp_fragment
+from trickle_ice import build_sdp_fragment, wait_for_ice_gathering
 
 # webcodecs-py
 from webcodecs import (
@@ -80,24 +80,6 @@ from libdatachannel import (
 )
 
 logger = structlog.get_logger(__name__)
-
-# trickle ICE の PATCH を送るまでに gathering の完了を待つ上限 (秒)
-TRICKLE_ICE_TIMEOUT = 5.0
-
-
-def wait_for_ice_gathering(pc: PeerConnection, timeout: float = TRICKLE_ICE_TIMEOUT) -> bool:
-    """ICE gathering が完了するまで待つ
-
-    candidate が 1 つ届いた時点で送ってしまうと、 後から届く srflx / relay の candidate が
-    送られないままになる。 上限を超えた場合は False を返し、 呼び出し側はその時点の
-    candidate で送る。
-    """
-    deadline = time.monotonic() + timeout
-    while pc.gathering_state() is not PeerConnection.GatheringState.Complete:
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
-    return True
 
 
 def send_trickle_ice_patch(

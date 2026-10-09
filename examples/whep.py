@@ -25,7 +25,7 @@ import structlog
 from raw_player import AudioPlayer, VideoPlayer
 
 # libdatachannel-py
-from trickle_ice import build_sdp_fragment
+from trickle_ice import build_sdp_fragment, wait_for_ice_gathering
 
 # webcodecs-py
 from webcodecs import (
@@ -51,7 +51,6 @@ from whip import (
     handle_error,
     parse_link_header,
     send_trickle_ice_patch,
-    wait_for_ice_gathering,
 )
 
 from libdatachannel import (
@@ -133,7 +132,7 @@ class WHEPClient:
         config.force_media_transport = True
         self.pc = PeerConnection(config)
 
-        # draft-ietf-wish-whep-03 Section 4.4.2 (RFC 9725 Section 4.3.2 と同旨): 201 Created を
+        # draft-ietf-wish-whep-03 Section 4.4.2 (Trickle ICE。 RFC 9725 Section 4.3.2 と同旨): 201 Created を
         # 受信するまで gathering した candidate は保持し、 受信後に 1 つの HTTP PATCH で
         # まとめて送る
         self.pending_candidates: list[str] = []
@@ -267,7 +266,7 @@ class WHEPClient:
     ) -> None:
         """gathering を実行し、 バッファした candidate を 1 つの PATCH で送る
 
-        draft-ietf-wish-whep-03 Section 4.4.2 (RFC 9725 Section 4.3.2 と同旨): 201 Created
+        draft-ietf-wish-whep-03 Section 4.4.2 (Trickle ICE。 RFC 9725 Section 4.3.2 と同旨): 201 Created
         (または 406 の counter-offer 交換) のあとに、 バッファした candidate をまとめて
         1 つの HTTP PATCH (Content-Type: application/trickle-ice-sdpfrag) で送る。
         PATCH body は RFC 8840 Section 4.4 に従う SDP fragment。
@@ -304,7 +303,7 @@ class WHEPClient:
         complete = pc.gathering_state() is PeerConnection.GatheringState.Complete
         fragment = build_sdp_fragment(str(local_sdp), self.pending_candidates, complete)
 
-        # 201 応答に ETag が無い場合 (draft-ietf-wish-whep-03 Section 4.4.1 では
+        # 201 応答に ETag が無い場合 (draft-ietf-wish-whep-03 Section 4.4.1 (HTTP PATCH request usage) では
         # ICE restart 非対応なら entity-tag の生成は OPTIONAL) は If-Match を付けない。
         # 406 の counter-offer 経路では 406 応答に ETag が無いため、 428 を返す
         # サーバーでは candidate が届かない (警告のみで接続は継続する)
