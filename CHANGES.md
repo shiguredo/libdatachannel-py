@@ -66,8 +66,9 @@
 ### misc
 
 - [FIX] CI の pytest リトライが job を救済できていなかったのを解消する
-  - 1 回目の失敗で job が失敗扱いになり、 リトライが成功しても赤くなっていた
-  - 断続的に失敗するテストのリトライが機能するようにする
+  - 1 回目のステップに continue-on-error を付け、 steps.pytest.outcome で失敗を検出して pytest を 1 回だけ再実行する
+  - 型検査 (ty) はリトライの対象から外し、 失敗した場合は job を失敗させる
+  - リトライが走ったことが分かるように ::warning:: の注記を出す
   - @voluntas
 - [FIX] CI で pytest が実行されていなかったのを解消し、 ビルドした wheel を検証する
   - build_ubuntu / build_macos で wheel を fresh な環境に install してテストする
