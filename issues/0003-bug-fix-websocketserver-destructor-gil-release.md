@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-05-18
-- Polished: 2026-08-30
+- Polished: 2026-10-09
 - Model: Opus 4.7
 - Branch: feature/fix-websocketserver-destructor-gil-release
 
@@ -41,8 +41,10 @@
 
 ### 3. テスト (tests/test_websocketserver.py)
 
-- `test_destruct_without_explicit_close` を新規追加する。 内容は「`WebSocketServer` を明示 `stop()` を呼ばずに destruct しても hang せず終了する」 ことを検証する。
-- 検証方法は 0001 / 0002 のテストに合わせ、 `weakref` で `__del__` 発火を実検証し、 `@pytest.mark.timeout` で hang 時の上限を指定する。 polling が無いため `RuntimeWarning` 経路は存在せず、 `recwarn` は使わない。
+- `tests/test_websocketserver.py` に以下を追加する。
+  - `test_stop_releases_gil`: `stop()` の呼び出し中に GIL を待つ thread が進行することで、 GIL 解放を実測する ([[0033-bug-fix-request-keyframe-gil-release]] と同じ方式。 free-threading ビルドでは skip)
+  - `test_destruct_without_explicit_close`: 明示 `stop()` を呼ばずに破棄しても恒停せず終了すること (weakref が死ぬこと) を検証する。 **`weakref` で `__del__` の発火は検証できない**: nanobind 3 の `tp_dealloc` は C++ destructor を直接呼び、 CPython の finalizer (`tp_finalize`) を呼ばないため、 基底クラスのインスタンス破棄時に `__del__` は実行されない ([[0002-bug-fix-websocket-destructor-gil-release]] の実装時に実測して判明済み)
+  - `test_del_calls_stop_on_python_subclass`: Python サブクラスでは破棄時に `__del__` が実行され、 その中から `super().__del__()` (= binding の stop) を呼べることを検証する
 - 既存テストが PASS することを確認する。
 
 ### 4. CHANGES.md
@@ -53,20 +55,21 @@
 
 ## 完了条件
 
-- `uv sync && make test` で全テストが PASS する。
-- `tests/test_websocketserver.py::test_destruct_without_explicit_close` が、 明示 `stop()` を呼ばずに `server` を destruct しても hang せず終了し、 weakref により `__del__` 発火が検証できる。
+- `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する。
+- `tests/test_websocketserver.py` の新規 3 テスト (`test_stop_releases_gil` / `test_destruct_without_explicit_close` / `test_del_calls_stop_on_python_subclass`) が PASS する。
+- `WebSocketServer.stop()` が GIL 解放下で実行されること (GIL を待つ thread が停止中に進行することで実測)。
 - `CHANGES.md` の `## develop` に 0001 / 0002 とは別の `[FIX]` エントリが追加されている。
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること。
 
 ## 解決方法
 
 - `src/bind_libdatachannel.cpp`
-  - `stop_websocket_server` を匿名 namespace に追加する (polling なし)。
+  - `stop_websocket_server` を匿名 namespace に追加する (polling なし)。 `WebSocketServer` には state API が無いため、 GIL 解放下で呼ぶだけにする。
   - `WebSocketServer` bindings の `.def("stop", ...)` を `&stop_websocket_server` + `nb::call_guard<nb::gil_scoped_release>()` に差し替え、 `.def("__del__", ...)` を追加し、 `nb::class_<WebSocketServer>` に `nb::is_weak_referenceable()` を指定する。
 - `src/libdatachannel/__init__.py`
   - 変更なし (Python wrapper は追加しない)。
 - `tests/test_websocketserver.py`
-  - `test_destruct_without_explicit_close` を追加する。
+  - `test_stop_releases_gil` / `test_destruct_without_explicit_close` / `test_del_calls_stop_on_python_subclass` を追加する。
 - `CHANGES.md`
   - `## develop` セクションに 0001 / 0002 とは別の `[FIX]` エントリを追加する。
 
@@ -78,6 +81,8 @@
 - libdatachannel 関連コード位置 (シンボル名で特定する):
   - `_deps/libdatachannel/v0.24.0/source/src/websocketserver.cpp` の public `~WebSocketServer()` (impl の `stop()` を呼ぶ) と public `WebSocketServer::stop()`
   - `_deps/libdatachannel/v0.24.0/source/src/impl/websocketserver.cpp` の `WebSocketServer::stop()` (`tcpServer->close()` + `mThread.join()`) と `WebSocketServer::~WebSocketServer()` (公開 destructor からも `stop()` を呼ぶ)
+
+- 既知の制約: nanobind 3 の `tp_dealloc` は CPython の finalizer を呼ばないため、 基底クラスのインスタンスを破棄する経路では `__del__` は実行されない。 破棄時に GIL を保持したまま走る C++ 側の公開デストラクタ (`stop()` 呼び出し) の恒停は binding 側では解消できず、 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] に集約する ([[0002-bug-fix-websocket-destructor-gil-release]] と同じ整理)。
 
 ## スコープ外 (関連する未解決問題)
 
