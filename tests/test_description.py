@@ -199,16 +199,19 @@ def test_as_audio_raises_for_media_in_description() -> None:
             media.as_video()
 
 
-def test_as_video_outlives_media() -> None:
-    """Media を破棄しても as_video() の戻り値が使えること
+def test_add_rtp_map_adds_codec_to_media() -> None:
+    """Description から取得した media に add_rtp_map() で codec を追加できること
 
-    戻り値は元の Media への参照のため、 親を生存させる必要がある。
+    as_audio() / as_video() が例外になる media へ codec を足す唯一の手段。
     """
-    video = Description.Video("video", Description.Direction.SendOnly)
-    video.add_h264_codec(96)
-    reference = video.as_video()
-    del video
-    gc.collect()
+    desc = Description("v=0...")
+    desc.add_video("video", Description.Direction.SendOnly)
+    media = desc.media(0)
+    assert isinstance(media, Description.Media)
 
-    assert reference.mid() == "video"
-    assert reference.has_payload_type(96)
+    rtpmap = Description.RtpMap("96 H264/90000")
+    rtpmap.add_feedback("nack")
+    media.add_rtp_map(rtpmap)
+
+    assert media.has_payload_type(96)
+    assert "a=rtpmap:96 H264/90000" in str(desc)
