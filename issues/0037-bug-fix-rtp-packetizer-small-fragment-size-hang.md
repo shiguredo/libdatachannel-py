@@ -66,7 +66,7 @@ AV1 は `outgoing` を上書きせず、 private の `AV1RtpPacketizer::fragment
 
 実際、 6 バイトの SequenceHeader をキャッシュさせた後は `max_fragment_size` 1 で `IndexError`、 2〜7 (`2 + SequenceHeader の長さ` 未満の全域) で `memcpy` の長さが巨大になって即時クラッシュする (実測で exit 138。 素の 6 バイト OBU なら 2 は正常)。 表の AV1 の値は **SequenceHeader を渡していない場合** のものである。
 
-H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組み合わせで決まる (例: H264 は 4 バイトの NAL で 3 を渡すとハングするが、 1000 バイトの NAL では 3 は正常)。 `size` 1〜4000 と `max_fragment_size` 0〜40 の全組み合わせを上記の式で再計算したところ、 **H264 は `max_fragment_size` 4 以上、 H265 は 6 以上でハングも範囲外アクセスも 1 件も発生しない** (H264 は 3 以下、 H265 は 5 以下で、 入力サイズによっては発生する)。 つまり「下限を検証しても防げない」のではなく、 「ヘッダサイズの 2 倍 (H264 は 4、 H265 は 6) 未満の下限では防げない」 のが正確である。
+H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組み合わせで決まる (例: H264 は 4 バイトの NAL で 3 を渡すとハングするが、 1000 バイトの NAL では 3 は正常)。 `size` 1〜4000 と `max_fragment_size` 0〜40 の全組み合わせを上記の式で再計算したところ、 **H264 は `max_fragment_size` 4〜65535、 H265 は 6〜65535 でハングも範囲外アクセスも 1 件も発生しない** (H264 は 3 以下、 H265 は 5 以下で、 入力サイズによっては発生する)。 65536 以上で壊れるのは、 フラグメント長を `uint16_t` に切り詰める処理 (`maxFragmentSize = uint16_t(int(ceil(size() / fragments_count)))`) があるためで、 実測でも `max_fragment_size` 65536 と 131071 バイトの NAL で `ValueError: vector` になる (65535 と 131072 バイトの NAL は正常)。 つまり「下限を検証しても防げない」のではなく、 「ヘッダサイズの 2 倍 (H264 は 4、 H265 は 6) 未満の下限では防げない」 のが正確である。
 
 さらに AV1 は事前に渡した SequenceHeader の長さにも依存するため、 `max_fragment_size` と入力サイズだけでは壊れる条件を決められない。 libdatachannel v0.24.0 では未修正で、 upstream の master でも同じ算術である。
 
@@ -79,20 +79,20 @@ H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組�
 ## 設計方針
 
 - binding 側で構築時に下限を検証し、 壊れる入力は `nb::value_error` で拒否する。 libdatachannel 本体は Release ビルドで `assert` が消えるため入力の防御が無い (`generateFragments` の `assert(size() > maxFragmentSize)` も同様)
-  - `H264RtpPacketizer`: `max_fragment_size < 4` を拒否する。 4 以上なら入力サイズによらずハングも範囲外アクセスも起きない (上記の全数確認)
-  - `H265RtpPacketizer`: `max_fragment_size < 6` を拒否する
-  - `AV1RtpPacketizer`: `max_fragment_size < 2` を拒否する (0 は `payload.at(0)` の範囲外、 1 は `payloadRemaining` が 0 になる)
+  - `H264RtpPacketizer`: `max_fragment_size` が 4 未満または 65535 超を拒否する。 4〜65535 なら入力サイズによらずハングも範囲外アクセスも起きない (上記の全数確認)
+  - `H265RtpPacketizer`: 同じく 6 未満または 65535 超を拒否する
+  - `AV1RtpPacketizer`: `max_fragment_size` が 2 未満を拒否する (0 は `payload.at(0)` の範囲外、 1 は `payloadRemaining` が 0 になる)。 上限は無い
 - AV1 の SequenceHeader キャッシュ経路 (`max_fragment_size < 2 + SequenceHeader の長さ`) は binding では判定できない。 `AV1RtpPacketizer` は `mPacketization` / `mMaxFragmentSize` を公開しておらず、 Python 側から構築時の値を参照する手段も無いためである。 この経路は binding のコメントと issue に記録し、 libdatachannel 側の修正を upstream へ報告することを前提とする (利用者は SequenceHeader より十分大きい `max_fragment_size` を使う)
 - `outgoing` の binding に `nb::call_guard<nb::gil_scoped_release>()` を付ける。 検証で防げない経路が残っても、 GIL を保持したまま無限ループに入ってプロセス全体が固まることを避ける
 - 例外メッセージは libdatachannel 内部のものではなく、 何が問題かを示す英語のメッセージにし、 期待値と実際の値を含める (例: `max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2`)
-- テストは構築時の拒否と `outgoing` の正常動作を確認する形にし、 ハングし得る入力は構築時に拒否されるためテスト内で `outgoing` に到達しない。 防御の本体はこの構築時の拒否である。 `@pytest.mark.timeout(10)` は保険として付ける (GIL を保持したままの native ループの中では SIGALRM が発火しないため、 timeout だけでは守れない)
+- テストは、 構築時の拒否を 1 プロセスで (`@pytest.mark.timeout(10)` を付けて)、 許可値で恒停しないことを子プロセス + timeout で確認する。 恒停し得るのは構築時に拒否されなかった値だけなので、 子プロセスで確認するのはその範囲になる。 なお `@pytest.mark.timeout(10)` は GIL を保持したままの native ループの中では発火しないため、 恒停の検出は子プロセスの timeout に頼る
 
 ## 完了条件
 
-- 下限未満の `max_fragment_size` を構築時に拒否すること。 例外は `ValueError` で、 メッセージに期待値と実際の値を含むこと (`max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` の形)
+- 範囲外の `max_fragment_size` を構築時に拒否すること。 例外は `ValueError` で、 メッセージに期待値と実際の値を含むこと (`max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` / `max_fragment_size must be at most 65535 to fragment an H264 NAL unit, got 65536` の形)
 - 次の境界値と正常値をテストで固定すること (拒否は構築時の例外なので `@pytest.mark.timeout(10)` を付けて 1 プロセスで確認できる)
-  - H264: `max_fragment_size` 1 / 2 / 3 (拒否) と 4 (許可)。 入力は 4 バイトの NAL (境界) と 1000 バイトの NAL (正常)
-  - H265: 1 / 2 / 3 / 4 / 5 (拒否) と 6 (許可)。 入力は 5 バイトの NAL と 1000 バイトの NAL
+  - H264: `max_fragment_size` 1 / 2 / 3 (拒否)、 65536 / 65537 (拒否)、 4 (許可)。 入力は 5 バイト (分割が起きる最小) / 9 バイト (2 * max_fragment_size + 1) / 1000 バイトの NAL、 上限は 65535 と 131072 バイトの NAL
+  - H265: 1 / 2 / 3 / 4 / 5 (拒否)、 65536 (拒否)、 6 (許可)。 入力は 7 バイト / 13 バイト / 1000 バイトの NAL、 上限は 65535 と 131072 バイトの NAL
   - AV1: 0 / 1 (拒否) と 2 (許可)。 入力は OBU 6 バイト (SequenceHeader を渡さない前提)
 - 許可した値で `outgoing` が恒停せず戻ること。 `outgoing` は引数のメッセージ列を RTP パケットに置き換えるだけで `send` を呼ばず、 引数は Python 側へ書き戻されないため結果を観測できない。 恒停しないことは子プロセスに分離して timeout で確認する
 - `outgoing` が GIL を解放すること (他スレッドが動くことを確認する)

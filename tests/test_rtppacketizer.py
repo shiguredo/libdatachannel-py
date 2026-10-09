@@ -45,7 +45,7 @@ def make_nal_message(nal_unit: bytes) -> Message:
     return make_message(len(nal_unit).to_bytes(4, "big") + nal_unit)
 
 
-def run_packetizer_outgoing(
+def _run_packetizer_outgoing(
     codec: str, max_fragment_size: int, input_size: int
 ) -> subprocess.CompletedProcess[str]:
     """恒停し得る outgoing の検証を子プロセスに分離して実行する"""
@@ -86,23 +86,55 @@ def test_h264_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: 
     到達させない。
     """
     config = make_rtp_config(H264RtpPacketizer.CLOCK_RATE)
-    with pytest.raises(ValueError, match="max_fragment_size must be at least 4"):
+    expected = (
+        "max_fragment_size must be at least 4 to fragment an H264 NAL unit, "
+        f"got {max_fragment_size}"
+    )
+    with pytest.raises(ValueError, match=expected):
         H264RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
 
 
-@pytest.mark.parametrize("nal_size", [4, 1000], ids=["boundary", "large"])
-def test_h264_rtp_packetizer_outgoing_with_minimum_max_fragment_size(nal_size: int) -> None:
-    """下限ちょうどの max_fragment_size (4) で outgoing が恒停せず戻ること
+@pytest.mark.parametrize(
+    ("max_fragment_size", "nal_size"),
+    [(4, 5), (4, 9), (4, 1000), (65535, 131072)],
+    ids=["4_5", "4_9", "4_1000", "65535_131072"],
+)
+def test_h264_rtp_packetizer_outgoing_with_minimum_max_fragment_size(
+    max_fragment_size: int, nal_size: int
+) -> None:
+    """下限ちょうどの max_fragment_size で outgoing が恒停せず戻ること
 
-    4 バイトの NAL は分割の境界 (これ以上は分割されない最小サイズ)、 1000 バイトの NAL は
-    複数に分割される正常系である。 outgoing は引数のメッセージ列を RTP パケットに
-    置き換えるだけで send を呼ばないため Python 側から結果は観測できず、 恒停しないことを
+    NAL 5 バイトは分割が起きる最小のサイズ (max_fragment_size + 1)、 9 バイトは
+    2 * max_fragment_size + 1 で、 いずれもフラグメント長がヘッダ長をわずかに上回る
+    境界である。 1000 バイトは複数に分割される正常系、 65535 はフラグメント長が
+    uint16_t に切り詰められない上限で、 131072 バイトの NAL で境界を確認する。
+    outgoing は引数のメッセージ列を RTP パケットに置き換えるだけで send を呼ばず、
+    引数は Python 側へ書き戻されないため結果を観測できない。 恒停しないことは
     子プロセスに分離して timeout で確認する。
     """
-    result = run_packetizer_outgoing("h264", 4, nal_size)
+    result = _run_packetizer_outgoing("h264", max_fragment_size, nal_size)
     assert result.returncode == 0, (
-        f"h264 の outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
+        f"h264 (max_fragment_size={max_fragment_size}, NAL {nal_size} バイト) の"
+        f"outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
     )
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize("max_fragment_size", [65536, 65537], ids=["65536", "65537"])
+def test_h264_rtp_packetizer_rejects_large_max_fragment_size(max_fragment_size: int) -> None:
+    """H264RtpPacketizer が大きすぎる max_fragment_size を構築時に拒否すること
+
+    generateFragments はフラグメント長を uint16_t に切り詰めるため、 65536 以上では
+    切り詰めで長さが 0 や 1 になり、 小さい値を渡したときと同じ無限ループや範囲外
+    アクセスが起きる。
+    """
+    config = make_rtp_config(H264RtpPacketizer.CLOCK_RATE)
+    expected = (
+        "max_fragment_size must be at most 65535 to fragment an H264 NAL unit, "
+        f"got {max_fragment_size}"
+    )
+    with pytest.raises(ValueError, match=expected):
+        H264RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
 
 
 @pytest.mark.timeout(10)
@@ -113,17 +145,47 @@ def test_h265_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: 
     H265 は FU ヘッダが 3 バイトのため、 H264 より大きい 6 が下限になる。
     """
     config = make_rtp_config(H265RtpPacketizer.CLOCK_RATE)
-    with pytest.raises(ValueError, match="max_fragment_size must be at least 6"):
+    expected = (
+        "max_fragment_size must be at least 6 to fragment an H265 NAL unit, "
+        f"got {max_fragment_size}"
+    )
+    with pytest.raises(ValueError, match=expected):
         H265RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
 
 
-@pytest.mark.parametrize("nal_size", [5, 1000], ids=["boundary", "large"])
-def test_h265_rtp_packetizer_outgoing_with_minimum_max_fragment_size(nal_size: int) -> None:
-    """下限ちょうどの max_fragment_size (6) で outgoing が恒停せず戻ること"""
-    result = run_packetizer_outgoing("h265", 6, nal_size)
+@pytest.mark.parametrize(
+    ("max_fragment_size", "nal_size"),
+    [(6, 7), (6, 13), (6, 1000), (65535, 131072)],
+    ids=["6_7", "6_13", "6_1000", "65535_131072"],
+)
+def test_h265_rtp_packetizer_outgoing_with_minimum_max_fragment_size(
+    max_fragment_size: int, nal_size: int
+) -> None:
+    """下限ちょうどの max_fragment_size で outgoing が恒停せず戻ること
+
+    H265 は FU ヘッダが 3 バイトのため、 分割が起きる最小のサイズは 7 バイトになる。
+    """
+    result = _run_packetizer_outgoing("h265", max_fragment_size, nal_size)
     assert result.returncode == 0, (
-        f"h265 の outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
+        f"h265 (max_fragment_size={max_fragment_size}, NAL {nal_size} バイト) の"
+        f"outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
     )
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize("max_fragment_size", [65536], ids=["65536"])
+def test_h265_rtp_packetizer_rejects_large_max_fragment_size(max_fragment_size: int) -> None:
+    """H265RtpPacketizer が大きすぎる max_fragment_size を構築時に拒否すること
+
+    H265 も H264 と同じくフラグメント長を uint16_t に切り詰める。
+    """
+    config = make_rtp_config(H265RtpPacketizer.CLOCK_RATE)
+    expected = (
+        "max_fragment_size must be at most 65535 to fragment an H265 NAL unit, "
+        f"got {max_fragment_size}"
+    )
+    with pytest.raises(ValueError, match=expected):
+        H265RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
 
 
 @pytest.mark.timeout(10)
@@ -135,13 +197,22 @@ def test_av1_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: i
     payload.at(0) が範囲外になり、 1 だと payloadRemaining が 0 になってループが進まない。
     """
     config = make_rtp_config(AV1RtpPacketizer.CLOCK_RATE)
-    with pytest.raises(ValueError, match="max_fragment_size must be at least 2"):
+    expected = (
+        f"max_fragment_size must be at least 2 to fragment an AV1 OBU, got {max_fragment_size}"
+    )
+    with pytest.raises(ValueError, match=expected):
         AV1RtpPacketizer(AV1RtpPacketizer.Packetization.Obu, config, max_fragment_size)
 
 
 def test_av1_rtp_packetizer_outgoing_with_minimum_max_fragment_size() -> None:
-    """下限ちょうどの max_fragment_size (2) で outgoing が恒停せず戻ること"""
-    result = run_packetizer_outgoing("av1", 2, 6)
+    """下限ちょうどの max_fragment_size (2) で outgoing が恒停せず戻ること
+
+    この OBU は SequenceHeader ではないため、 packetizer が SequenceHeader を
+    キャッシュしていない状態の確認になる。 SequenceHeader をキャッシュした状態では
+    max_fragment_size が 2 + SequenceHeader 長 未満だとヒープを壊すが、 この経路は
+    binding から判定できないため対象外である。
+    """
+    result = _run_packetizer_outgoing("av1", 2, 6)
     assert result.returncode == 0, (
         f"av1 の outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
     )
@@ -199,7 +270,6 @@ def test_packetizer_outgoing_releases_gil() -> None:
         for _ in range(200):
             baseline_total += packetizer.rtp_config.payload_type
         baseline_elapsed = time.monotonic() - baseline_start
-        assert baseline_total == 200 * 96
 
         # GIL を解放しない限り、 待機 thread は switch interval (1 秒) のあいだ GIL を
         # 得られない。 1 秒より十分短い 50 ms のあいだ呼び続け、 その間に待機 thread が

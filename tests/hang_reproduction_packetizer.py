@@ -43,16 +43,16 @@ def main() -> int:
     elif codec == "h265":
         config = RtpPacketizationConfig(1234, "stream1", 96, H265RtpPacketizer.CLOCK_RATE)
         packetizer = H265RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
-        # 0x42 0x01 は H265 の NAL ヘッダ (unit type 32 = VPS)
+        # 0x42 0x01 の unit type は (_first & 0b01111110) >> 1 で 33 (SPS)
         message = make_nal_message(bytes([0x42, 0x01]) + bytes(input_size - 2))
     elif codec == "av1":
         config = RtpPacketizationConfig(1234, "stream1", 96, AV1RtpPacketizer.CLOCK_RATE)
         packetizer = AV1RtpPacketizer(AV1RtpPacketizer.Packetization.Obu, config, max_fragment_size)
         # 先頭バイト 0x32 は OBU ヘッダ (type 6 = OBU_FRAME)。 SequenceHeader (type 1) では
         # ないため、 この呼び出しで SequenceHeader はキャッシュされない
-        message = make_message(bytes([0x32, 0x00, 0x01, 0x02, 0x03, 0x04]))
+        message = make_message(bytes([0x32]) + bytes(input_size - 1))
     else:
-        print(f"unknown codec: {codec}", file=sys.stderr)
+        print(f"未知の codec です: {codec}", file=sys.stderr)
         return 2
 
     # outgoing は引数のメッセージ列を RTP パケットに置き換えるだけで send を呼ばないため、
