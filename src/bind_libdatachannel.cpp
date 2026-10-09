@@ -1382,7 +1382,7 @@ void close_peer_connection(PeerConnection& self) {
     if (std::chrono::steady_clock::now() >= deadline) {
       nb::gil_scoped_acquire gil;
       // Python 3.15 以降は interpreter 停止中に GIL を取得できない。 その場合は
-      // Python API を触らずに終了する (nanobind 3 の gil_scoped_acquire::is_valid)
+      // Python API を触らずに終了する
       if (!gil.is_valid()) {
         return;
       }

@@ -3,7 +3,7 @@
 - Priority: Medium
 - Created: 2026-10-09
 - Completed: {YYYY-MM-DD}
-- Branch: feature/nanobind-split-mode
+- Branch: feature/update-nanobind-split-mode
 - Polished: {YYYY-MM-DD}
 
 ## 目的
@@ -14,7 +14,7 @@ nanobind 3 で追加された分割モード (split mode) を採用し、 Python
 
 - 分割モードは frontend が Python 3.10 の stable ABI を対象にするため、 1 プラットフォーム 1 ホイールで 3.10 以降のすべての CPython をカバーできる
 - 現在の CI は wheel.yml で 24 leg (ubuntu 4 platform × 4 python + macos 2 platform × 4 python) を回しており、 削減効果が大きい
-- nanobind 3 系への更新 ([[0040-update-build-deps]]) が完了しており、 前提が整っている
+- nanobind 3 系への更新 ([[0040-update-build-deps]]) を進めており、 マージ後に前提が整う
 
 ## 現状
 
@@ -41,10 +41,10 @@ nanobind 3 で追加された分割モード (split mode) を採用し、 Python
 
 ## スコープ外 (関連する未解決問題)
 
-- `.freeze()` による型の不変化は、 Python 3.15 未満では効果がない (かつ 3.14 では性能が下がるため nanobind が無視する) うえ、 利用者が型を変更できなくなる挙動変更のため、 本 issue では扱わない
 - 恒停問題の根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] の範囲とする
 
 ## 参考
 
-- nanobind 3.0.0 の分割モード: https://nanobind.readthedocs.io/en/latest/changelog.html (Version 3.0.0 の Split mode 節)
+- nanobind の分割モード: https://nanobind.readthedocs.io/en/latest/split_mode.html
+- nanobind 3.0.0 の変更点: https://nanobind.readthedocs.io/en/latest/changelog.html
 - 関連 issue: [[0040-update-build-deps]]

@@ -38,7 +38,7 @@
   - 独自型 caster の `from_python()` の `flags` を `uint32_t` に広げる
   - `nb::gil_scoped_acquire` の 3 箇所 (`close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐) に `is_valid()` ガードを入れる
   - その他、 ビルドエラー・警告が出た箇所を修正する
-- ビルドは `make develop` で確認し、 警告の有無は `uv build --wheel --verbose` の出力で確認する (`verbose = false` のため既定ではコンパイラ出力が抑制される)
+- ビルドは `make develop` で確認し、 警告の有無は `uv build --wheel -Cbuild.verbose=true` の出力で確認する (`uv build` の `--verbose` は scikit-build-core に伝わらないため、 設定で有効化する)
 
 ## 完了条件
 
@@ -52,6 +52,7 @@
 ## スコープ外 (関連する未解決問題)
 
 - nanobind 3 の分割モード (split mode / `BACKEND_MODULE`) の採用は行わない (ホイール配布戦略の変更になるため [[0041-update-nanobind-split-mode]] に分離する)
+- `.freeze()` による型の不変化は、 Python 3.15 未満では効果がなく、 利用者が型を変更できなくなる挙動変更のため対象外とする
 - 恒停問題の根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] の範囲とする
 - libdatachannel 本体や他の依存の更新は対象外
 
