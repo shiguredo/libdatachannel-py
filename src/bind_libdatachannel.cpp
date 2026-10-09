@@ -1601,9 +1601,11 @@ void bind_websocket(nb::module_& m) {
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 GIL 解放下で close_websocket
-      // を呼び、 続けて callback を解除する。 この区間は GIL を解放しているため、 受信
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 GIL 解放下で callback を
+      // 解除してから close_websocket を呼ぶ。 この区間は GIL を解放しているため、 受信
       // callback を実行中の内部 thread が GIL を取得して処理を進められる。
+      // 解除を先に行うのは、 close_websocket が timeout で例外を投げた場合でも callback の
+      // 解除が残るようにするため。
       // ただし Python の object 破棄に続く C++ 側の public ~WebSocket()
       // (rtc::WebSocket のデストラクタ) は GIL を保持したまま remoteClose() /
       // resetCallbacks() を実行するため、 その時点で callback が実行中だと恒停し得る。
@@ -1615,8 +1617,8 @@ void bind_websocket(nb::module_& m) {
           "__del__",
           [](WebSocket& self) {
             try {
-              close_websocket(self);
               self.resetCallbacks();
+              close_websocket(self);
             } catch (...) {
               nb::gil_scoped_acquire gil;
               PyErr_WarnEx(PyExc_RuntimeWarning,
