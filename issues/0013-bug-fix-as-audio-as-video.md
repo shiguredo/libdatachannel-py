@@ -4,7 +4,7 @@
 - Created: 2026-08-30
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-as-audio-as-video
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-09
 
 ## 目的
 
@@ -33,8 +33,14 @@ audio = media.as_audio()  # 動的型は Video → static_cast の未定義動�
 media = Description.Video("video", Description.Direction.SendOnly)
 media.add_video_codec(96, "h264")
 media.as_video().add_video_codec(97, "h265")
-media.has_payload_type(97)  # False → 加工が消失している
+assert media.has_payload_type(97)  # False → 加工が消失している
 ```
+
+さらに、 修正の前提として重要な制約がある。 libdatachannel v0.24.0 は `Description` に
+`add_audio()` / `add_video()` / `add_media()` で追加した media も、 SDP を parse した media も、
+常に base の `Description::Media` として保持する (`createEntry` は `make_shared<Media>`、
+`addMedia(Media)` は値渡しでスライスする)。 つまり `Description` から取得した media の動的型は
+常に `Media` であり、 `as_audio()` / `as_video()` が動的型の一致で成功する経路は存在しない。
 
 - `bind_description` の as_audio / as_video は `*static_cast<Description::Audio*>(p)` のように値を返す
 - libdatachannel の Description::Audio / Description::Video は Description::Media を継承する (`include/rtc/description.hpp`)。Media そのもののインスタンスを兄弟クラスに static_cast するのは未定義動作
@@ -42,17 +48,26 @@ media.has_payload_type(97)  # False → 加工が消失している
 
 ## 設計方針
 
-- 値返しをやめる。動的型を dynamic_cast で検証し、正しい型であれば参照を返す (keep_alive 付き)。動的型が異なる場合は `nb::type_error` を投げる
-- 修正後、tests/test_description.py の as_audio 経路を「元の media に反映される」ことを検証する形に更新する
+- 値返しをやめる。 `dynamic_cast` で動的型を検証し、 一致した場合は元のオブジェクトへの参照 (`nb::rv_policy::reference_internal`) を返す。 動的型が異なる場合は `nb::type_error` を投げる (static_cast の未定義動作に到達させない)
+- ただし `Description` から取得した media の動的型は常に `Media` のため、 この経路は必ず例外になる。 代替を issue と CHANGES に明記する
+  - `Description.Audio` / `Description.Video` を直接作って codec を追加し、 その後 `add_media()` する (codec は Media 側に保持されるため引き継がれる)
+  - 既に追加済みの media へ codec を足す場合は `add_rtp_map()` に `RtpMap` を渡す
+- テストは 2 本立てにする
+  - `Description` から取得した media の `as_audio()` / `as_video()` が `TypeError` になること
+  - 動的型が `Audio` / `Video` のオブジェクトでは `as_audio()` / `as_video()` が同じオブジェクトを返し、 加工が反映されること
 
 ## 完了条件
 
-- 動的型と異なる as_audio / as_video の呼び出しが例外になること (未定義動作に到達しないこと)
-- as_audio / as_video の戻り値への加工が元の Media に反映されること (テストで検証)
-- `uv sync && make test` で全テストが PASS すること
+- 動的型と異なる as_audio / as_video の呼び出しが `TypeError` になること (未定義動作に到達しないこと)
+- 動的型が一致する場合は同じオブジェクト (参照) が返り、 加工が元の Media に反映されること
+- `Description` から取得した media では例外になること (スライシングの帰結として issue と CHANGES に明記)
+- `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する
+- CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
+- `CHANGES.md` の `## develop` に変更内容 (`[CHANGE]`) が記録されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
 
 - 対象シンボル: `bind_description` 内の as_audio / as_video (src/bind_libdatachannel.cpp)
-- libdatachannel v0.24.0: `include/rtc/description.hpp` (`Description::Audio`、`Description::Video`)
+- libdatachannel v0.24.0: `include/rtc/description.hpp` (`Description::Audio`、`Description::Video`)、 `source/src/description.cpp` (`createEntry` は `make_shared<Media>`、 `addMedia(Media)` は値渡しでスライスする)
+- 値コピーを返す他の binding: `reciprocate()` は `Media` を値で返す (新しい Media を作る意図的な仕様のため対象外)
