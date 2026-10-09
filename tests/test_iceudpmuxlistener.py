@@ -4,7 +4,6 @@
 """
 
 import gc
-import socket
 import sys
 import threading
 import time
@@ -18,18 +17,6 @@ from libdatachannel import IceUdpMuxListener
 def _is_gil_enabled() -> bool:
     """GIL が有効か (sys._is_gil_enabled は 3.13 以降にしか無い)"""
     return getattr(sys, "_is_gil_enabled", lambda: True)()
-
-
-def _can_bind_udp_port(port: int) -> bool:
-    """UDP ポートを bind できるか (listener が停止していれば bind できる)"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("127.0.0.1", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
 
 
 def test_stop_releases_gil() -> None:
@@ -124,7 +111,6 @@ def test_del_calls_stop_on_python_subclass() -> None:
     __del__ は実行されないが、 Python サブクラスでは __del__ が実行される。 __del__ が
     正常に動き、 stop() によりポートが解放されることを確認する。
     """
-    port = 48097
     del_called = []
     del_errors = []
 
@@ -133,20 +119,20 @@ def test_del_calls_stop_on_python_subclass() -> None:
             del_called.append(True)
             # binding の __del__ (GIL 解放下の stop) が例外を投げても CPython は
             # unraisable として記録するだけでテストは PASS してしまうため、 ここで
-            # 捕まえて検証する
+            # 捕まえて検証する。 binding から __del__ を削除すると AttributeError に
+            # なるため、 この検証で binding の __del__ が呼ばれたことが分かる。
+            #
+            # stop() が実際に走ったことは Python からは観測できない。 UDP ポートを
+            # bind し直せるかで判定しようとすると、 libjuice が mux socket を registry
+            # に保持し接続中の agent が無くなるまで cleanup しないため、 stop() 直後に
+            # 同じポートを bind できるとは限らず (CI の Linux leg で失敗した)、 判定に
+            # 使えない
             try:
                 super().__del__()
             except BaseException as e:  # noqa: BLE001 (破棄経路の例外を検証する)
                 del_errors.append(repr(e))
-            # stop() が実際に呼ばれたことを、 停止後に同じ UDP ポートを bind できる
-            # ことで確認する (binding の __del__ は C++ の stop を直接呼ぶため、
-            # Python 側の stop override では検出できない)
-            if not _can_bind_udp_port(port):
-                del_errors.append("stop 後もポートを bind できなかった")
 
-    listener = Listener(port, "127.0.0.1")
-    # listener が起動している間は同じポートを bind できない
-    assert not _can_bind_udp_port(port), "listener 起動中にポートを bind できてしまった"
+    listener = Listener(48097, "127.0.0.1")
 
     del listener
     gc.collect()

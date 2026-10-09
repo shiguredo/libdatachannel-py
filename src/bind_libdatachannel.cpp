@@ -1823,8 +1823,8 @@ void bind_websocket(nb::module_& m) {
 // ---- iceudpmuxlistener.hpp ----
 
 // IceUdpMuxListener を停止する。 GIL を解放した状態で呼ぶ前提で、 polling は行わない
-// (IceUdpMuxListener には state API が無い。 stop() の戻り時点で impl 側の
-// 後始末 (libjuice への登録解除と内部 thread の join) が完了している)
+// (IceUdpMuxListener には state API が無い。 stop() の戻り時点で libjuice への登録解除は
+// 完了し、 内部 thread の join は接続中の agent が残っていない場合に完了している)
 void stop_ice_udp_mux_listener(IceUdpMuxListener& self) {
   self.stop();
 }
