@@ -618,29 +618,41 @@ def test_request_media_control_releases_gil(operation: str) -> None:
             time.sleep(0)
         assert counter > 0, "GIL を待つ thread が動き始めなかった"
 
-        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする。
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
         sys.setswitchinterval(1.0)
-        # GIL を解放しない呼び出し (description()) の所要時間を比較対象として測る。
+        # 待機 thread に新しい switch interval で GIL を待たせ直す。 ここで一度 GIL を
+        # 手放し、 待機 thread が GIL を取って slice (1 秒) を終えるまで待つ。 これを
+        # しないと、 待機 thread は変更前の短い interval (既定 5 ms) で待ち続けている
+        # ため、 計測中に周期的な受け渡しが起きて、 GIL を解放しない呼び出しでも進行が
+        # 観測されてしまう
+        time.sleep(0)
+        # GIL を解放しない呼び出し (description()) は待機 thread に GIL を渡さない
         baseline_start = time.monotonic()
         for _ in range(200):
             t2.description()
         baseline_elapsed = time.monotonic() - baseline_start
 
-        # 対象が GIL を解放すると、 待機 thread が switch interval (1 秒) の間 GIL を
-        # 握るため、 呼び出しは GIL の再取得待ちで 1 秒近くかかる。 GIL を解放しなければ
-        # 即座に戻る。 (進行カウンタ方式は、 解放窓が µs のときに待機 thread が走り出せず
-        # 偽陰性になった。 CI の macOS / arm64 leg で複数回発生している)
-        target_start = time.monotonic()
-        assert call_media_control(), f"{operation}() が送信経路を通らなかった"
-        released_elapsed = time.monotonic() - target_start
+        # GIL を解放しない限り、 待機 thread は switch interval (1 秒) のあいだ GIL を
+        # 得られない。 1 秒より十分短い 50 ms のあいだ呼び続け、 その間に待機 thread が
+        # 進行すれば解放されていると判定する。 50 ms では周期的な受け渡しが起きないため、
+        # 進行があれば解放によるものだと断定できる。 (1 回だけの計測は、 解放窓が µs の
+        # ときに待機 thread がその窓で走り出せず偽陰性になる)
+        released = 0
+        released_start = counter
+        deadline = time.monotonic() + 0.05
+        while time.monotonic() < deadline:
+            assert call_media_control(), f"{operation}() が送信経路を通らなかった"
+            released = counter - released_start
+            if released:
+                break
     finally:
         stop = True
         sys.setswitchinterval(original_interval)
         thread.join(timeout=10)
 
-    assert released_elapsed > 0.1, (
+    assert released > 0, (
         f"{operation}() が GIL を解放しなかった "
-        f"(elapsed={released_elapsed:.3f}, baseline_elapsed={baseline_elapsed:.6f})"
+        f"(released={released}, baseline_elapsed={baseline_elapsed:.6f})"
     )
 
     pc1.close()
