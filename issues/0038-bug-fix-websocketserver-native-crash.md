@@ -45,6 +45,29 @@ tests/test_websocketserver.py::test_websocketserver を実行したとき、 稀
 - テストから `time.sleep` によるポーリングが無くなっていること。 例外は (a) `time.sleep(0)` の測定用 yield、 (b) 恒停する既知テスト (`test_destruct_without_explicit_close`) 内の待ち (実行検証ができないため差分を作らない)、 (c) RTP の再送間隔 (受信通知 callback が無くイベント待ちにできない) の 3 つで、 いずれも理由コメントを付ける
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
+## 解決方法
+
+- `CMakeLists.txt`
+  - mbedTLS のビルドに `MBEDTLS_THREADING_C` と `MBEDTLS_THREADING_PTHREAD` を追加した。 libdatachannel は複数の thread から `psa_crypto_init()` を呼ぶため、 これが無いと mbedTLS 内部の PSA / entropy の状態が壊れて TLS の初期化中にヒープ破壊を起こす (Windows には pthread が無いため `if(NOT WIN32)` で対象外にした)
+  - `MBEDTLS_THREADING_C` は mbedTLS の構造体レイアウトを変えるため、 libdatachannel も同じ設定でビルドし直す必要がある
+  - 設定が古いままのビルド済み `_deps` を検出したら mbedTLS と libdatachannel を作り直すようにした (CI のキャッシュに古い `_deps` が復元され、 修正が無言で効かなくなっていたため)
+- `tests/test_websocketserver.py` / `tests/test_websocket.py` / `tests/test_peerconnection.py`
+  - `time.sleep` によるポーリングを `threading.Event` の待ちに置き換えた。 例外は (a) 測定用の `time.sleep(0)`、 (b) 恒停する既知テスト (`test_destruct_without_explicit_close`) 内の待ち、 (c) RTP の再送間隔の 3 つで、 いずれも理由コメントを付けた
+  - WebSocketServer のテストは `port = 0` で動的確保し、 実際のポートを `server.port()` から取るようにした (固定ポートによる bind 衝突を排除)
+  - 待ち時間は従来のポーリングと同等以上 (15〜20 秒) にした
+- `tests/test_websocketserver.py` の破棄経路で `reset_callbacks()` は使わない。 accept / processor thread が libdatachannel の mutex を保持したまま Python callback の GIL を待つ状況では相互待ちになり恒停するため
+- `.github/workflows/prek.yml` / `wheel.yml`
+  - pytest のリトライ (continue-on-error + Warn/Retry) を削除し、 失敗をそのまま job の失敗として扱うようにした
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+- 検証
+  - クラッシュのスタック (crash report) が `psa_crypto_init` → `mbedtls_ctr_drbg_seed` → `mbedtls_entropy_func` の経路で malloc の freelist 検査に落ちていることを確認した
+  - スイート (121 passed / 12 skipped / 1 deselected) を直列で 10 回連続実行し、 すべて成功 (15〜19 秒/回)
+  - TLS を使うサーバー + クライアントを 98 ラウンド (逐次 60 + 8 並列 × 40) 作る probe でクラッシュ 0 件
+  - `libmbedcrypto.a` に `mbedtls_threading_psa_globaldata_mutex` / `psa_rngdata_mutex` / `key_slot_mutex` が組み込まれたことを `nm` で確認
+  - CI (retry なし) で全 leg が成功した
+- クラッシュ率は修正前で「22 回中 1 回の観測」であり、 率の推定はできない。 修正後の 0/N (N = 安定性 10 回 + probe 98 ラウンド) から言える 95% 上側限界は rule of three で約 3% 以下である (クラッシュ率 0 を主張するものではない)
+- 残件: Python と C++ をまたぐ参照サイクル (callback のクロージャ ↔ C++ の WebSocket) による nanobind のリーク警告は残る。 nanobind は `fprintf(stderr, ...)` で報告するだけで exit code を変えないため CI は落ちない。 別 issue として扱う
+
 ## 参考
 
 - 対象: tests/test_websocketserver.py、 src/bind_libdatachannel.cpp の `bind_websocketserver`
