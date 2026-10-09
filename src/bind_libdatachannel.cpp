@@ -193,9 +193,9 @@ void bind_configuration(nb::module_& m) {
 
 nb::object get_media(Description& desc, int index) {
   auto var = desc.media(index);
-  // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる。
-  // nanobind の reference_internal + parent が keep_alive 相当になる。
-  // desc は Python から渡されたインスタンスなので nb::find は必ず見つかる
+  // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる
+  // (nanobind の reference_internal + parent が keep_alive 相当になる)。
+  // desc は Python から渡されたインスタンスのため、 nb::find で Python 側の実体を取得できる
   nb::object parent = nb::find(desc);
   if (std::holds_alternative<Description::Media*>(var)) {
     if (auto* media = std::get<Description::Media*>(var)) {
@@ -430,7 +430,7 @@ void bind_description(nb::module_& m) {
       .def("media", &get_media)
       .def("media_count", &Description::mediaCount)
       // 戻り値は Description 内部への参照のため、 reference_internal で親を生存させる。
-      // application() は const / 非 const の overload があるため明示的に選ぶ
+      // application() は const / 非 const の overload があり、 Application* を返す非 const 版を使う
       .def("application", nb::overload_cast<>(&Description::application),
            nb::rv_policy::reference_internal);
 }

@@ -29,9 +29,13 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
-- [FIX] Description.media() / Description.application() / Media.rtp_map() / PeerConnection.config() が親の寿命に紐付かない参照を返す問題を修正する
-  - `media()` / `application()` / `config()` の戻り値が親を生存させるようにする (親を先に破棄すると use-after-free で落ちていた)
-  - `rtp_map()` は内部への参照ではなく値 (コピー) を返すようにする (`remove_rtp_map()` で無効になっていた)
+- [CHANGE] `Media.rtp_map()` が値 (コピー) を返すようにする
+  - 内部の `RtpMap` への参照は `remove_rtp_map()` / `remove_format()` で無効になっていた
+  - 戻り値を書き換えても `Media` に反映されなくなる (書き換えは `add_rtp_map()` を使う)
+  - @voluntas
+- [FIX] Description.media() / Description.application() / PeerConnection.config() の戻り値が親の寿命に紐付かない問題を修正する
+  - 親を先に破棄してから戻り値を使うと use-after-free で落ちていた (実測: exit 139)
+  - 戻り値が親を生存させるようにする
   - @voluntas
 - [FIX] MediaHandler の chain に cycle を作ると SEGV する問題を修正する
   - `add_to_chain` / `set_next` / `Track.chain_media_handler` で cycle を検出し、 連結する前に例外にする

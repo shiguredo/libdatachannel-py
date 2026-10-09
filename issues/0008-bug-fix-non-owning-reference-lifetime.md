@@ -63,7 +63,7 @@ m.mid()  # 親の Description は破棄済み → use-after-free
 ## スコープ外 (関連する未解決問題)
 
 - **`clear_media()` を呼ぶと、 それ以前に取得した `media()` / `application()` の戻り値は無効になる** (`Description::clearMedia()` が `mEntries.clear()` / `mApplication.reset()` で実体を解放するため)。 親を生存させるだけでは防げず、 binding 側で対処するには `media()` を値返しにする (内部を書き換える既存の使い方を壊す) などの設計変更が要る。 実測では修正後も `desc.media(0)` → `desc.clear_media()` → `m.mid()` で exit 139 (SIGSEGV) になる。 恒久対応は [[0043-bug-fix-clear-media-invalidates-references]] で扱う
-- `remove_format` は内部で `remove_rtp_map` を呼ぶため、 取得済みの `rtp_map()` の戻り値は無効になる (本 issue の値返しで `rtp_map()` 側は解消済み)
+- `remove_format` / `remove_rtp_map` による `rtp_map()` の無効化は、 値 (コピー) を返すようにしたことで解消済み
 
 ## 参考
 

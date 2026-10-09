@@ -39,7 +39,7 @@ m.mid()  # 解放済みの Media を参照 → SIGSEGV (exit 139)
 ## 設計方針
 
 - 対処の候補を実測して決める:
-  - 案 A: `media()` / `application()` を値 (コピー) で返す。 安全だが、 戻り値を書き換えると `Description` に反映される既存の使い方 (`desc.media(0).as_audio().add_opus_codec(111)` 等) が壊れる
+  - 案 A: `media()` / `application()` を値 (コピー) で返す。 安全だが、 戻り値を書き換えると `Description` に反映される既存の使い方 (`desc.media(0).set_bitrate(64000)` / `desc.application().set_sctp_port(5000)` 等) が壊れる
   - 案 B: `Description` 側で解放を遅延させる (取得済みの `Entry` への `shared_ptr` を Python 側が保持する) 方法。 公開 API に `shared_ptr` を返す経路が無いため、 libdatachannel 側の変更か、 binding 側で `Entry` を複製保持する仕組みが要る
   - 案 C: 仕様として明記する (`clear_media()` は取得済み参照を無効にする)。 変更が小さく、 C++ の `std::vector` の `clear()` と同じ意味論になる
 - どの案を採るかは、 既存の example / テスト / whip 実装での `clear_media()` の使われ方と、 API 互換性への影響を実測してから決める
@@ -48,7 +48,7 @@ m.mid()  # 解放済みの Media を参照 → SIGSEGV (exit 139)
 ## 完了条件
 
 - 取得済みの `media()` / `application()` 参照を無効にする操作を一覧化する (`clear_media()` / `add_media(Application)` / `add_application()`)
-- 採用した案に応じて、 これらの操作の後の取得済み参照の扱いが確定し、 テストまたはドキュメントで検証できる
+- 採用した案ごとに検証方法を定めて確認する: 案 A は `clear_media()` 後の取得済み参照が有効なコピーであること、 案 B は取得済み参照が `clear_media()` 後も同じオブジェクトを指すこと、 案 C は無効化される操作と無効化後の扱いが docstring と CHANGES に明記されていること
 - 案 A / B を採る場合は、 既存の `media()` 経由の書き換えが引き続き動くことをテストで確認する
 - `prek run --all-files pytest` が PASS する
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する

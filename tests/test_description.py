@@ -49,6 +49,9 @@ def test_rtpmap_add_remove():
 
     media.remove_rtp_map(codec_id)
     assert not media.has_payload_type(codec_id)
+    # erase 後は再取得できない (取得済みのコピーは値なので影響を受けない)
+    with pytest.raises(ValueError):
+        media.rtp_map(codec_id)
 
 
 def test_extmap_operations():
@@ -76,52 +79,61 @@ def test_certificate_fingerprint_operations():
     assert isinstance(size, int)
 
 
-# media() / application() の戻り値は Description 内部への参照のため、 親を生存させないと
-# use-after-free で SEGV する。 回帰した場合はこのテストの実行中にプロセスが落ちる
-def test_media_outlives_description():
-    """Description を破棄しても media() の戻り値が使えること"""
+def test_media_outlives_description() -> None:
+    """Description を破棄しても media() の戻り値が使えること
 
-    def make_media():
-        desc = Description("v=0...")
-        desc.add_audio("audio", Description.Direction.SendOnly)
-        return desc.media(0)
+    media() の戻り値は Description 内部への参照のため、 親を生存させないと
+    use-after-free になる。 値を読むときに C++ オブジェクトを参照するため、
+    回帰した場合はこのテストの実行中にプロセスが落ちる。
+    """
 
-    media = make_media()
+    desc = Description("v=0...")
+    desc.add_audio("audio", Description.Direction.SendOnly)
+    media = desc.media(0)
+    assert isinstance(media, Description.Media)
+    del desc
     gc.collect()
     assert media.mid() == "audio"
 
 
-def test_application_outlives_description():
-    """Description を破棄しても application() の戻り値が使えること"""
+def test_application_outlives_description() -> None:
+    """Description を破棄しても application() の戻り値が使えること
 
-    def make_application():
-        desc = Description("v=0...")
-        desc.add_application("data")
-        return desc.application()
+    application() の戻り値は Description 内部への参照のため、 親を生存させないと
+    use-after-free になる。 isinstance だけでなく内部の値を読んで検証する。
+    """
 
-    application = make_application()
-    gc.collect()
+    desc = Description("v=0...")
+    desc.add_application("data")
+    application = desc.application()
     assert isinstance(application, Description.Application)
+    del desc
+    gc.collect()
+    assert application.mid() == "data"
 
 
-def test_rtp_map_is_valid_after_remove():
-    """remove_rtp_map の後も rtp_map() の戻り値が有効なこと
+def test_rtp_map_returns_copy() -> None:
+    """rtp_map() が値 (コピー) を返すこと
 
-    内部の RtpMap への参照ではなく値 (コピー) を返すため、 erase の影響を受けない。
+    内部の RtpMap への参照を返すと remove_rtp_map / remove_format の erase で
+    無効になるため、 値 (コピー) を返す。 書き換えが Media に反映されないことと、
+    呼ぶたびに別のオブジェクトが返ることで参照返しとの違いを検証する。
     """
     media = Description.Audio()
     media.add_audio_codec(96, "opus", "useinbandfec=1")
+
     rtpmap = media.rtp_map(96)
-    assert rtpmap is not None
-    media.remove_rtp_map(96)
+    rtpmap.format = "MUTATED"
 
-    assert rtpmap.payload_type == 96
-    assert "opus" in rtpmap.format.lower()
-    assert not media.has_payload_type(96)
+    assert media.rtp_map(96).format == "opus"
+    assert media.rtp_map(96) is not rtpmap
 
 
-def test_rtp_map_raises_for_unknown_payload_type():
-    """存在しない payload type では ValueError になること (libdatachannel の挙動)"""
+def test_rtp_map_raises_for_unknown_payload_type() -> None:
+    """存在しない payload type では ValueError になること
+
+    libdatachannel の rtpMap() が例外を投げ、 nanobind が ValueError に変換する。
+    """
     media = Description.Audio()
     with pytest.raises(ValueError):
         media.rtp_map(123)
