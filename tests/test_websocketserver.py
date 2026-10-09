@@ -1,4 +1,10 @@
+import gc
+import sys
+import threading
 import time
+import weakref
+
+import pytest
 
 from libdatachannel import (
     WebSocket,
@@ -113,3 +119,109 @@ def test_websocketserver():
     client = None
 
     print("Success")
+
+
+def test_stop_releases_gil() -> None:
+    """WebSocketServer.stop() が GIL を解放して実行されること
+
+    受け入れ thread が Python callback の GIL を待っている間に stop() が GIL を
+    保持したまま走ると、 Python プロセス全体が恒停し得る。 stop() の呼び出し中に
+    GIL を待つ thread が進行するかで判定する。
+    """
+    # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
+    # (sys._is_gil_enabled は 3.13 以降にしか無い)
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", lambda: True)
+    if not is_gil_enabled():
+        pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
+
+    config = WebSocketServerConfiguration()
+    config.port = 48090
+    config.bind_address = "127.0.0.1"
+    server = WebSocketServer(config)
+
+    counter = 0
+    stopping = threading.Event()
+
+    def spin() -> None:
+        nonlocal counter
+        while not stopping.is_set():
+            counter += 1
+
+    original_interval = sys.getswitchinterval()
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        # 待機 thread が実際に動き始めるまで待つ (起動前に測ると 0 のままになる)
+        deadline = time.monotonic() + 5
+        while counter == 0 and time.monotonic() < deadline:
+            time.sleep(0)
+        assert counter > 0, "GIL を待つ thread が動き始めなかった"
+
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
+        sys.setswitchinterval(1.0)
+
+        # GIL を解放しない呼び出し (port()) で待機 thread が進まないことを確認する
+        baseline_start = counter
+        for _ in range(20):
+            server.port()
+        baseline = counter - baseline_start
+
+        # stop() は GIL を解放するため、 待機 thread が進行する
+        stop_start = counter
+        server.stop()
+        stopped = counter - stop_start
+
+        assert stopped > baseline, (
+            f"stop() が GIL を解放しなかった (stopped={stopped}, baseline={baseline})"
+        )
+    finally:
+        sys.setswitchinterval(original_interval)
+        stopping.set()
+        thread.join(timeout=5)
+
+
+def test_destruct_without_explicit_close() -> None:
+    """明示 stop() を呼ばずに破棄しても恒停せず終了すること
+
+    破棄経路では libdatachannel 本体の公開デストラクタが stop() を呼ぶ。 ここでは
+    クライアントを接続しない状態で破棄し、 破棄が完了すること (Python オブジェクトが
+    解放され weakref が死ぬこと) を確認する。
+    """
+    config = WebSocketServerConfiguration()
+    config.port = 48091
+    config.bind_address = "127.0.0.1"
+    server = WebSocketServer(config)
+    ref = weakref.ref(server)
+
+    assert ref() is not None
+
+    # 明示 stop() を呼ばずに破棄する
+    del server
+    gc.collect()
+
+    assert ref() is None, "WebSocketServer が破棄されなかった"
+
+
+def test_del_calls_stop_on_python_subclass() -> None:
+    """Python サブクラスでは __del__ から binding の stop が呼ばれること
+
+    nanobind の tp_dealloc は C++ destructor を直接呼ぶため基底クラスのインスタンスでは
+    __del__ は実行されないが、 Python サブクラスでは __del__ が実行される。 __del__ が
+    正常に動くこと (GIL 解放下の stop を呼べること) を確認する。
+    """
+    del_called = []
+
+    class Server(WebSocketServer):
+        def __del__(self) -> None:
+            del_called.append(True)
+            super().__del__()
+
+    config = WebSocketServerConfiguration()
+    config.port = 48092
+    config.bind_address = "127.0.0.1"
+    server = Server(config)
+
+    del server
+    gc.collect()
+
+    assert del_called == [True]

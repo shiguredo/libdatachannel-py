@@ -1841,11 +1841,49 @@ void bind_iceudpmuxlistener(nb::module_& m) {
 
 // ---- websocketserver.hpp ----
 
+// WebSocketServer を停止する。 GIL を解放した状態で呼ぶ前提で、 polling は行わない
+// (WebSocketServer には state API が無い。 stop() の戻り時点で impl 側の
+// tcpServer->close() と mThread.join() が完了している)
+void stop_websocket_server(WebSocketServer& self) {
+  self.stop();
+}
+
 void bind_websocketserver(nb::module_& m) {
-  nb::class_<WebSocketServer>(m, "WebSocketServer")
-      .def(nb::init<>())
+  // test 側で weakref.ref(server) を使うために __weakref__ slot を有効化する
+  nb::class_<WebSocketServer> server(m, "WebSocketServer",
+                                     nb::is_weak_referenceable());
+  server.def(nb::init<>())
       .def(nb::init<WebSocketServer::Configuration>(), "config"_a)
-      .def("stop", &WebSocketServer::stop)
+      // 受け入れ thread が Python callback の GIL を待つ間に恒停しないよう、 GIL を
+      // 解放して停止する (close_websocket と同じ理由)
+      .def("stop", &stop_websocket_server,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 stop() を呼ばずに破棄した場合のセーフティネット。 __del__ から投げた例外は
+      // 呼び出し側で捕捉できないため RuntimeWarning として記録するだけで握り潰す。
+      // nanobind の tp_dealloc は C++ destructor を直接呼び CPython の finalizer を
+      // 呼ばないため、 基底クラスのインスタンスを破棄する経路ではこの __del__ は実行
+      // されない (Python サブクラスでは実行される)。 破棄時の恒停の根本対応は
+      // 別 issue で扱う
+      .def(
+          "__del__",
+          [](WebSocketServer& self) {
+            try {
+              stop_websocket_server(self);
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              // interpreter 停止中は Python API を触らずに握り潰す
+              if (!gil.is_valid()) {
+                return;
+              }
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "WebSocketServer.__del__: stop() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格された場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("port", &WebSocketServer::port)
       .def("on_client", &WebSocketServer::onClient, "callback"_a);
 }
