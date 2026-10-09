@@ -3,6 +3,7 @@
 - Priority: Medium
 - Created: 2026-05-18
 - Polished: 2026-10-09
+- Completed: 2026-10-09
 - Model: Opus 4.7
 - Branch: feature/fix-websocketserver-destructor-gil-release
 
@@ -51,7 +52,7 @@
 
 - 0001 / 0002 の実装手順により後続 issue は別 PR で着手するため、 `## develop` に 0001 / 0002 のエントリとは別の `[FIX]` エントリを追加する。
   - 「`WebSocketServer` を明示的に `stop()` せずに destruct した場合の GIL 保持 hang を修正する」
-  - 「`WebSocketServer.__del__` で `stop()` が自動的に呼ばれる」
+  - 「`WebSocketServer.__del__` から GIL 解放下で `stop()` が呼ばれる (Python サブクラスでは破棄時に実行される)」
 
 ## 完了条件
 
@@ -70,6 +71,8 @@
   - 変更なし (Python wrapper は追加しない)。
 - `tests/test_websocketserver.py`
   - `test_stop_releases_gil` / `test_destruct_without_explicit_close` / `test_del_calls_stop_on_python_subclass` を追加する。
+- `tests/test_peerconnection.py`
+  - GIL 計測テスト (`test_request_media_control_releases_gil`) の判定方式を修正した。 1 回の呼び出しは µs で終わるため、 固定回数のバーストでは CI の arm64 leg で GIL 解放の窓が短すぎて待機 thread が走り出せず偽陰性 (`released=0`) になった。 一方で長いループにすると、 GIL を解放しなくても周期的な受け渡し (0.5〜1 秒) で待機 thread が走り出し、 解放の有無を判定できなくなる (レビューで実測)。 そのため「GIL の受け渡し周期より十分短いバーストを複数回試行し、 いずれかで進行すれば解放されている」方式にした
 - `CHANGES.md`
   - `## develop` セクションに 0001 / 0002 とは別の `[FIX]` エントリを追加する。
 
@@ -78,6 +81,9 @@
 - 既存ブランチ (試行錯誤の履歴): `feature/fix-destructor-gil-release`
   - `85b144a` (`stop()` を GIL release で実行) / `6736371` (Python wrapper 追加) / `f4a1703` (test 追加) / `5869135` (`on_client` 仕様の明記) / `7f8112d` (test コメントを wrapper 実装と整合) は wrapper 方式に基づく試行錯誤であり、 0001 の解決方法で撤回された。 cherry-pick せず、 develop に取り込まれた 0001 の実装 (`close_peer_connection` / `.def("__del__")` / `nb::is_weak_referenceable()`) を踏襲すること。
 - 関連 issue: [[0001-bug-fix-peer-connection-destructor-gil-release]] (`close_peer_connection` / `__del__` / `is_weak_referenceable` の実装元) / [[0002-bug-fix-websocket-destructor-gil-release]] (`on_client` 経由の `WebSocket` の自動 `close()` の実装元) / [[0004-bug-fix-ice-udp-mux-listener-destructor-gil-release]] / [[0005-bug-fix-destructor-callback-deadlock]]
+- 検証 (レビュー): `test_stop_releases_gil` は、 GIL を解放しない呼び出しの代理実測 (`port()` を同形で回すと進行 0) と、 `stop()` の実時間 (最悪でも 50 回で 1 ms 未満) が GIL の受け渡し周期 (1 秒) を 3 桁以上下回ることから、 GIL を解放しなければ失敗する。 `WebSocketServer.__del__` を削除した場合は `super().__del__()` の `AttributeError` を、 `stop()` を呼ばない場合は停止後の接続成功を検出して失敗する (どちらもレビューで実測)
+- `prek.toml` の pytest フックの `--deselect` は `tests/test_peerconnection.py::test_destruct_without_explicit_close` (0001 のコードで恒停する既知のテスト) のみを対象にしている。 本 issue で追加した `tests/test_websocketserver.py` の同名テストは除外対象ではない (コメントで明記した)
+- 破棄経路の恒停の検出限界: `tests/test_websocketserver.py::test_destruct_without_explicit_close` はクライアント未接続で破棄するため、 破棄経路の恒停を検出しない (恒停すればテスト自体が停止する)。 恒停の検出には GIL を待つ callback を動かす必要があり、 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] で扱う
 - libdatachannel 関連コード位置 (シンボル名で特定する):
   - `_deps/libdatachannel/v0.24.0/source/src/websocketserver.cpp` の public `~WebSocketServer()` (impl の `stop()` を呼ぶ) と public `WebSocketServer::stop()`
   - `_deps/libdatachannel/v0.24.0/source/src/impl/websocketserver.cpp` の `WebSocketServer::stop()` (`tcpServer->close()` + `mThread.join()`) と `WebSocketServer::~WebSocketServer()` (公開 destructor からも `stop()` を呼ぶ)

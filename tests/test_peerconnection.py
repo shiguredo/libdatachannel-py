@@ -627,12 +627,19 @@ def test_request_media_control_releases_gil(operation: str) -> None:
         baseline = counter - baseline_start
 
         # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
-        # 1 呼び出しあたり switch interval (1 秒) 分の GIL 再取得待ちが入るため、
-        # 回数を増やすと所要時間が線形に伸びる。
-        target_start = counter
-        for _ in range(5):
-            assert call_media_control(), f"{operation}() が送信経路を通らなかった"
-        released = counter - target_start
+        # 1 回の呼び出しは µs で終わるため、 バーストは GIL の受け渡し周期 (0.5〜1 秒)
+        # より十分短く保つ。 長いループにすると、 GIL を解放しなくても周期的な受け渡しで
+        # 待機 thread が走り出し、 解放の有無を判定できなくなる。
+        # 短いバーストでは待機 thread が走り出せないことがあるため (CI の arm64 leg で
+        # released=0 を観測)、 複数回試行していずれかで進行すれば解放されていると判定する。
+        released = 0
+        for _ in range(50):
+            target_start = counter
+            for _ in range(5):
+                assert call_media_control(), f"{operation}() が送信経路を通らなかった"
+            released = counter - target_start
+            if released > baseline:
+                break
     finally:
         stop = True
         sys.setswitchinterval(original_interval)
