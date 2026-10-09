@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/update-build-deps
 - Polished: {YYYY-MM-DD}
 
@@ -48,6 +48,19 @@
 - CI (wheel.yml の 24 leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` の既存 `[UPDATE]` エントリ (scikit-build-core / nanobind) が新しい最小バージョンに更新され、 ソース修正の内容が反映されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `pyproject.toml`
+  - `requires` を `nanobind>=3.1.0` と `scikit-build-core>=1.1.1` に更新した (scikit-build-core は `minimum-version = "build-system.requires"` で同期する)
+  - `tool.scikit-build.metadata` の標準記法 `[[tool.dynamic-metadata]]` への移行は、 tombi が schemastore の pyproject スキーマで `tool.*` を一律 Table として扱うため Array を拒否することから見送り、 現行記法を維持して理由と deprecation warning が出ることをコメントに残した
+- `src/bind_libdatachannel.cpp`
+  - `NB_TRAMPOLINE(PyMediaHandler, 5)` を `NB_TRAMPOLINE(PyMediaHandler)` にした (nanobind 3 で size 引数が廃止され deprecation warning が出ていた)
+  - 独自型 caster の `from_python()` の `flags` を `uint32_t` に広げ、 `from_python()` / `from_cpp()` に `noexcept` を付けた (nanobind 3 の caster インタフェースに合わせる)
+  - `nb::gil_scoped_acquire::is_valid()` ガードを 3 箇所 (`close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐) に追加した。 Python 3.15 以降は interpreter 停止中に GIL を取得できないため、 その場合は Python API を触らずに終了する
+- `CHANGES.md` の `## develop` の既存 `[UPDATE]` エントリ (scikit-build-core / nanobind) を新しい最小バージョンに更新し、 ソース修正の内容を反映した
+- 実測: `make develop` が成功し、 コンパイル警告は出ない (deprecation warning は上記の理由で残る)。 `uv build --wheel` で生成したホイールを別 venv に install して 84 passed / 12 skipped / 1 deselected。 `prek run --all-files` の全フックが Passed
+- 分割モードの採用は [[0041-update-nanobind-split-mode]] に分離した
 
 ## スコープ外 (関連する未解決問題)
 
