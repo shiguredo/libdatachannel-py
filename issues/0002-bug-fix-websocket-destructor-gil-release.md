@@ -21,7 +21,7 @@
 - `src/bind_libdatachannel.cpp` の `WebSocket` bindings は `.def("close", &WebSocket::close)` と直接バインドしており、 GIL を保持したまま `close()` が実行される。 `force_close` も同様に `.def("force_close", &WebSocket::forceClose)` と直接バインドされている
 - `WebSocket` には state API があり (`Connecting / Open / Closing / Closed`)、 `ready_state()` で close の完了を polling で待てる構造である。 ただし libdatachannel の `WebSocket::close()` は `Connecting/Open` のときしか動作せず、 `Closing` 以降は内部で何もしない。 `Closed` へ進むには TLS/TCP close handshake (別 thread) の完了を待つ必要があるため、 polling を盲目的に行うと対向応答遅延で timeout までブロックする
 - **恒停の機構 (実測)**: 受信 callback が rtc の poll thread で実行されている窓で destruct すると、 poll thread は callback mutex を保持したまま GIL を待ち、 destructor (GIL 保持) は同じ mutex を待つためロック順逆転で恒停する。 恒停時のスタックは main thread が `~WebSocket()` → `closeTransports()` → `Transport::onRecv()` → `std::recursive_mutex::lock()`、 poll thread が `Channel::flushPendingMessages()` → `PyGILState_Ensure` → `take_gil` である
-- **再現条件 (実測)**: サーバーが継続的に push している状態で、 callback が I/O (print) を行い、 その最中に destruct する。 1 ms 間隔で push するサーバー + callback 内 print + destruct 30 回の反復で、 4 回中 3 回恒停した。 echo サーバーに接続して destruct するだけでは恒停しない (未修正でも 1.09 秒で PASS する) ため、 修正の判別には恒停の窓を広げた条件が要る
+- **再現条件 (実測)**: サーバーが 1 ms 間隔で push し続け、 内部 thread が受信 callback を実行している最中に close 経路を呼ぶ (または破棄する)。 callback 内の I/O の有無は恒停に影響しない (callback が何もしない場合も恒停する)。 echo サーバーに接続して destruct するだけでは恒停しないため、 修正の判別には push し続けるサーバーが要る
 - 恒停時は main thread が native の mutex 待ちになるため pytest-timeout の SIGALRM handler が走らない (実測: `@pytest.mark.timeout(15)` を付けても発火せず 25 秒以上停止し、 外部から kill する必要があった)。 CI ([[0022-test-enable-ci-tests]] で追加) では job の `timeout-minutes` まで停止する
 - `force_close()` も同じ恒停点 (`closeTransports()`) に入る (実測: 2 回とも恒停)
 - `src/libdatachannel/__init__.py` には Python wrapper class が無い ([[0001-bug-fix-peer-connection-destructor-gil-release]] の解決方法で wrapper 方式は撤回され、 binding 側に `__del__` を生やす方式に統一された)
@@ -38,17 +38,17 @@
   3. それ以外は `self.close()` を呼び、 `WebSocket::State::Closed` に達するまで polling する。 polling 定数 (`kPollInterval=10ms` / `kCloseTimeout=30s`) は関数内 `constexpr` として持ち、 timeout 時は GIL を再取得 (`nb::gil_scoped_acquire`) してから `RuntimeWarning` を出して return する (残処理は destructor に委ねる)。 `PyErr_WarnEx` が負を返した場合 (filterwarnings=error 等で警告が例外に昇格した場合) は `nb::python_error` を投げる。 0001 の `close_peer_connection` と同じ扱いにする
 - `force_close_websocket` も追加する。 `forceClose()` は同じ恒停点に入るため、 GIL 解放下で呼ぶ。 `forceClose()` は `closeTransports()` まで同期で進むため polling はしない
 - `.def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())` / `.def("force_close", &force_close_websocket, nb::call_guard<nb::gil_scoped_release>())` に差し替える
-- `.def("__del__", ...)` を追加し、 GIL release 下で `close_websocket` を呼び、 続けて `self.resetCallbacks()` で callback を解除する。 `resetCallbacks()` も GIL 解放下で実行することで、 受信 callback を実行中の内部 thread が GIL を取得して処理を終えられる。 また `__del__` から投げた例外は呼び出し側で捕捉できないため `RuntimeWarning` として記録するだけで握り潰す (0001 の `PeerConnection` binding と同型)
+- `.def("__del__", ...)` を追加し、 GIL release 下で `self.resetCallbacks()` で callback を解除してから `close_websocket` を呼ぶ (解除を先に行い、 close が timeout で例外を投げても解除が残るようにする)。 `resetCallbacks()` も GIL 解放下で実行することで、 受信 callback を実行中の内部 thread が GIL を取得して処理を終えられる。 また `__del__` から投げた例外は呼び出し側で捕捉できないため `RuntimeWarning` として記録するだけで握り潰す (0001 の `PeerConnection` binding と同型)
 - `nb::class_<WebSocket, Channel>` に `nb::is_weak_referenceable()` を指定する (test で weakref により `__del__` 発火を検証するため)
 
 ### 2. テスト (tests/test_websocket.py)
 
-- **恒停し得る検証は pytest プロセス内で実行しない**。 `subprocess.run([sys.executable, "-c", <検証スクリプト>], timeout=120, capture_output=True)` で子プロセスに分離し、 `returncode` を検証する。 子プロセスが恒停した場合は親側で `subprocess.TimeoutExpired` になりテストが失敗するため、 CI の job timeout まで停止しない。 pytest-timeout は恒停時に発火しないため使わない (理由をテストのコメントに残す)
+- **恒停し得る検証は pytest プロセス内で実行しない**。 検証スクリプトは `tests/hang_reproduction_websocket.py` (pytest が collect しない名前) に置き、 `subprocess.run([sys.executable, <スクリプト>, mode, iterations], timeout=180, capture_output=True)` で子プロセスとして実行して `returncode` を検証する。 子プロセスが恒停した場合は親側で `subprocess.TimeoutExpired` になりテストが失敗するため、 CI の job timeout まで停止しない。 pytest-timeout は恒停時に発火しないため使わない (理由をテストのコメントに残す)
 - 子プロセス側では、 恒停の窓を作るために 1 ms 間隔で push し続けるサーバーを立て、 受信 callback の実行中に close 経路を呼ぶ。 callback が実行中であることは `threading.Event` で同期する (`Event.wait()` は GIL を解放するため callback 側の進行を妨げない)。 恒停に必要なのは「内部 thread が callback mutex を保持したまま GIL を待ち続ける状態」であり、 callback 内の I/O の有無ではない
   - [[0025-test-remove-callback-prints]] が callback 内の `print` の除去を進めているため `print` は使わない
   - 検証するのは `close()` と `force_close()` の 2 経路。 どちらも呼び出し後に `ready_state()` が `Closed` であることを検証する。 `close()` は対向との close handshake を待つため 1 回あたり 10 秒程度かかるので 1 回、 `force_close()` は 5 回反復する
   - 子プロセスは最後に `os._exit(0)` で終了する。 C++ destructor は GIL を保持したまま走り、 callback 実行中の窓では依然として恒停し得るため (スコープ外を参照)、 検証は close 経路に絞る
-- 併せて weakref で `__del__` の発火を実検証し、 接続を開いた状態から `close()` を 2 回呼んでも 2 回目が即時完了すること (`test_close_is_idempotent`) を検証する (未接続の WebSocket は初期状態が `Closed` で早期 return しか通らないため、 実接続してから検証する)
+- 併せて weakref で破棄が完了することを検証し (`__del__` の呼び出しそのものは nanobind の dealloc 経由で観測できないため、 破棄の完了に留める)、 接続を開いた状態から `close()` を 2 回呼んでも 2 回目が即時完了すること (`test_close_is_idempotent`) を検証する (未接続の WebSocket は初期状態が `Closed` で早期 return しか通らないため、 実接続してから検証する)
 - `test_del_releases_native` を 0001 のテスト方式に合わせて追加する
 - 既存テストが PASS することを確認する
 
