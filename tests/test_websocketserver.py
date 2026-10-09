@@ -160,26 +160,35 @@ def test_stop_releases_gil() -> None:
 
         # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
         sys.setswitchinterval(1.0)
+        # 待機 thread に新しい switch interval で GIL を待たせ直す。 ここで一度 GIL を
+        # 手放して保留中の受け渡しを解消する。 これをしないと、 待機 thread は変更前の
+        # 短い interval (既定 5 ms) で待ち続けているため、 計測中に周期的な受け渡しが
+        # 起きて、 GIL を解放しない呼び出しでも進行が観測されてしまう
+        time.sleep(0)
 
-        # GIL を解放しない呼び出し (port()) で待機 thread が進まないことを確認する
-        baseline_start = counter
+        # GIL を解放しない呼び出し (port()) は待機 thread に GIL を渡さない。
+        # この baseline は失敗時の診断用で、 判定には使わない (待機 thread の待ち直しが
+        # 効かない環境では baseline 中にも受け渡しが起き得るため)
+        baseline_start = time.monotonic()
         for _ in range(20):
             server.port()
-        baseline = counter - baseline_start
+        baseline_elapsed = time.monotonic() - baseline_start
 
-        # stop() は GIL を解放するため、 待機 thread が進行する。 バーストは GIL の
-        # 受け渡し周期より十分短く保ち、 短いバーストでは待機 thread が走り出せない
-        # ことがあるため複数回試行する (stop は冪等)
+        # GIL を解放しない限り、 待機 thread は switch interval (1 秒) のあいだ GIL を
+        # 得られない。 1 秒より十分短い 50 ms のあいだ呼び続け、 その間に待機 thread が
+        # 進行すれば解放されていると判定する (stop は冪等)
         stopped = 0
-        for _ in range(50):
-            stop_start = counter
+        stopped_start = counter
+        deadline = time.monotonic() + 0.05
+        while time.monotonic() < deadline:
             server.stop()
-            stopped = counter - stop_start
-            if stopped > baseline:
+            stopped = counter - stopped_start
+            if stopped:
                 break
 
-        assert stopped > baseline, (
-            f"stop() が GIL を解放しなかった (stopped={stopped}, baseline={baseline})"
+        assert stopped > 0, (
+            f"stop() が GIL を解放しなかった "
+            f"(stopped={stopped}, baseline_elapsed={baseline_elapsed:.6f})"
         )
     finally:
         sys.setswitchinterval(original_interval)

@@ -618,35 +618,42 @@ def test_request_media_control_releases_gil(operation: str) -> None:
             time.sleep(0)
         assert counter > 0, "GIL を待つ thread が動き始めなかった"
 
-        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする。
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
         sys.setswitchinterval(1.0)
-        # 呼び出し前の進行を測る (GIL を解放しない呼び出しの比較対象)。
-        baseline_start = counter
+        # 待機 thread に新しい switch interval で GIL を待たせ直す。 ここで一度 GIL を
+        # 手放して保留中の受け渡しを解消する。 これをしないと、 待機 thread は変更前の
+        # 短い interval (既定 5 ms) で待ち続けているため、 計測中に周期的な受け渡しが
+        # 起きて、 GIL を解放しない呼び出しでも進行が観測されてしまう
+        time.sleep(0)
+        # GIL を解放しない呼び出し (description()) は待機 thread に GIL を渡さない。
+        # この baseline は失敗時の診断用で、 判定には使わない (待機 thread の待ち直しが
+        # 効かない環境では baseline 中にも受け渡しが起き得るため)
+        baseline_start = time.monotonic()
         for _ in range(200):
             t2.description()
-        baseline = counter - baseline_start
+        baseline_elapsed = time.monotonic() - baseline_start
 
-        # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
-        # 1 回の呼び出しは µs で終わるため、 バーストは GIL の受け渡し周期 (0.5〜1 秒)
-        # より十分短く保つ。 長いループにすると、 GIL を解放しなくても周期的な受け渡しで
-        # 待機 thread が走り出し、 解放の有無を判定できなくなる。
-        # 短いバーストでは待機 thread が走り出せないことがあるため (CI の arm64 leg で
-        # released=0 を観測)、 複数回試行していずれかで進行すれば解放されていると判定する。
+        # GIL を解放しない限り、 待機 thread は switch interval (1 秒) のあいだ GIL を
+        # 得られない。 1 秒より十分短い 50 ms のあいだ呼び続け、 その間に待機 thread が
+        # 進行すれば解放されていると判定する。 50 ms では周期的な受け渡しが起きないため、
+        # 進行があれば解放によるものだと断定できる。 (1 回だけの計測は、 解放窓が µs の
+        # ときに待機 thread がその窓で走り出せず偽陰性になる)
         released = 0
-        for _ in range(50):
-            target_start = counter
-            for _ in range(5):
-                assert call_media_control(), f"{operation}() が送信経路を通らなかった"
-            released = counter - target_start
-            if released > baseline:
+        released_start = counter
+        deadline = time.monotonic() + 0.05
+        while time.monotonic() < deadline:
+            assert call_media_control(), f"{operation}() が送信経路を通らなかった"
+            released = counter - released_start
+            if released:
                 break
     finally:
         stop = True
         sys.setswitchinterval(original_interval)
         thread.join(timeout=10)
 
-    assert released > baseline, (
-        f"{operation}() が GIL を解放しなかった (released={released}, baseline={baseline})"
+    assert released > 0, (
+        f"{operation}() が GIL を解放しなかった "
+        f"(released={released}, baseline_elapsed={baseline_elapsed:.6f})"
     )
 
     pc1.close()

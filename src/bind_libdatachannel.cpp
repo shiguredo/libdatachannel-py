@@ -1822,6 +1822,13 @@ void bind_websocket(nb::module_& m) {
 
 // ---- iceudpmuxlistener.hpp ----
 
+// IceUdpMuxListener を停止する。 GIL を解放した状態で呼ぶ前提で、 polling は行わない
+// (IceUdpMuxListener には state API が無い。 stop() の戻り時点で libjuice への登録解除は
+// 完了し、 内部 thread の join は接続中の agent が残っていない場合に完了している)
+void stop_ice_udp_mux_listener(IceUdpMuxListener& self) {
+  self.stop();
+}
+
 void bind_iceudpmuxlistener(nb::module_& m) {
   // IceUdpMuxRequest struct
   nb::class_<IceUdpMuxRequest>(m, "IceUdpMuxRequest")
@@ -1831,10 +1838,44 @@ void bind_iceudpmuxlistener(nb::module_& m) {
       .def_ro("remote_port", &IceUdpMuxRequest::remotePort);
 
   // IceUdpMuxListener class
-  nb::class_<IceUdpMuxListener>(m, "IceUdpMuxListener")
+  //
+  // test 側で weakref.ref(listener) を使うために __weakref__ slot を有効化する
+  nb::class_<IceUdpMuxListener> listener(m, "IceUdpMuxListener",
+                                         nb::is_weak_referenceable());
+  listener
       .def(nb::init<uint16_t, optional<string>>(), "port"_a,
            "bind_address"_a = std::nullopt)
-      .def("stop", &IceUdpMuxListener::stop)
+      // 内部 thread の thread_join が Python callback の GIL 待ちと噛み合って恒停
+      // しないよう、 GIL を解放して停止する (IceUdpMuxListener には state API が無い
+      // ため polling はせず、 stop() の戻り時点で join が完了している前提に乗る)
+      .def("stop", &stop_ice_udp_mux_listener,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 stop() を呼ばずに破棄した場合のセーフティネット。 __del__ から投げた例外は
+      // 呼び出し側で捕捉できないため RuntimeWarning として記録するだけで握り潰す。
+      // nanobind の tp_dealloc は C++ destructor を直接呼び CPython の finalizer を
+      // 呼ばないため、 基底クラスのインスタンスを破棄する経路ではこの __del__ は実行
+      // されない (Python サブクラスでは実行される)。 破棄時の恒停の根本対応は
+      // 別 issue で扱う
+      .def(
+          "__del__",
+          [](IceUdpMuxListener& self) {
+            try {
+              stop_ice_udp_mux_listener(self);
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              // interpreter 停止中は Python API を触らずに握り潰す
+              if (!gil.is_valid()) {
+                return;
+              }
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "IceUdpMuxListener.__del__: stop() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格された場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("port", &IceUdpMuxListener::port)
       .def("on_unhandled_stun_request",
            &IceUdpMuxListener::OnUnhandledStunRequest, "callback"_a);
