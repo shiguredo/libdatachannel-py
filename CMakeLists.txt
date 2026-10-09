@@ -74,6 +74,23 @@ if(NOT WIN32)
   )
 endif()
 
+# 設定が古いビルド済みライブラリを使わないようにする。
+# スレッド対応 (MBEDTLS_THREADING_C) は mbedTLS の構造体レイアウトを変えるため、
+# 対応前にビルドした _deps が残っていると、 そのまま使われてクラッシュが再発する。
+# (libdatachannel も同じ設定でコンパイルされている必要があるため、 併せて捨てる)
+if(NOT WIN32 AND EXISTS ${MBEDTLS_LIB})
+  file(READ ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h MBEDTLS_CONFIG_CONTENT)
+  if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "#define MBEDTLS_THREADING_C")
+    message(STATUS "MbedTLS was built without threading support; rebuilding MbedTLS and libdatachannel")
+    file(REMOVE_RECURSE ${MBEDTLS_BUILD_DIR} ${MBEDTLS_INSTALL_DIR})
+    # libdatachannel はこの時点ではパス変数が未定義のため、 タグから直接組み立てる
+    file(REMOVE_RECURSE
+      ${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/build
+      ${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/install
+    )
+  endif()
+endif()
+
 # ビルド済みかチェック
 if(EXISTS ${MBEDTLS_LIB})
   message(STATUS "MbedTLS already built: ${MBEDTLS_LIB}")
