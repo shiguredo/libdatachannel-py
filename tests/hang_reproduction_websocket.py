@@ -79,7 +79,11 @@ callback_running = threading.Event()
 
 
 def on_message(message: str | bytes) -> None:
+    # 恒停の窓を確実に作るため、 callback 内で GIL を解放する。
+    # callback が即座に return する場合、 内部 thread が callback mutex を保持したまま
+    # GIL を待つ状態がほぼ発生せず、 修正前でも恒停しない (回帰を検出できない)。
     callback_running.set()
+    time.sleep(0.001)
 
 
 for i in range(ITERATIONS):
