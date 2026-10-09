@@ -119,7 +119,8 @@ def test_websocket_send_slice(echo_websocket_server) -> None:
 # 恒停した場合、 main thread が native の mutex 待ちになり pytest-timeout の SIGALRM は
 # 発火しないため、 pytest プロセス内では実行せず subprocess.run の timeout で打ち切る。
 #
-# close() は対向の close handshake を待つため 1 回あたり 10 秒程度かかる。
+# close() は対向の close handshake の完了を待つため、 push し続けるサーバー相手の実測では
+# 1 回あたり 10 秒程度かかる。
 _CLOSE_ITERATIONS = 1
 _FORCE_CLOSE_ITERATIONS = 5
 # 子プロセスの正当な待ち時間の最悪値 (接続待ち + callback 待ち) より十分大きい値にする。
@@ -167,7 +168,7 @@ def test_del_releases_native() -> None:
     """callback 未登録の最小ケースで WebSocket が破棄されることを検証する
 
     Free Threading 環境では refcount=0 の即時 destruct 保証が弱いので、 gc.collect() を
-    介して確実に破棄させる (0001 の PeerConnection の同名テストと同じ理由)。
+    介して確実に破棄させる (PeerConnection の同名テストと同じ理由)。
     なお nanobind は dealloc で必ず C++ オブジェクトを破棄するため、 この検証は
     __del__ の呼び出しそのものではなく破棄が完了することを確かめるもの。
     """

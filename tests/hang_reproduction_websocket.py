@@ -17,7 +17,7 @@ callback 内では print を使わない (callback 内 print の除去を進め�
 
 最後は os._exit(0) で終了する。 C++ 側の public ~WebSocket() (rtc::WebSocket の
 デストラクタ) は GIL を保持したまま走るため、 callback 実行中の窓では依然として
-恒停し得る (根本対応は別 issue)。 ここでは close 経路の検証に絞る。
+恒停し得る (根本対応は別途行う)。 ここでは close 経路の検証に絞る。
 """
 
 import asyncio
@@ -53,7 +53,7 @@ async def handler(request: web.Request) -> web.WebSocketResponse:
         while not ws.closed:
             await ws.send_str("x")
             await asyncio.sleep(0.001)
-    except (ConnectionResetError, asyncio.CancelledError, RuntimeError):
+    except (ConnectionResetError, RuntimeError):
         # 対向が close したときの送信失敗は無視する (push を続けることだけが目的)
         pass
     return ws
@@ -72,7 +72,6 @@ loop = asyncio.new_event_loop()
 loop.run_until_complete(start_server())
 threading.Thread(target=loop.run_forever, daemon=True).start()
 
-received = 0
 # callback が実行中であることを main thread に伝えるためのイベント。
 # callback 先頭で set し、 main thread は wait() で同期してから close 経路を呼ぶ。
 # Event.wait() は GIL を解放するため callback 側の進行を妨げない。
@@ -80,8 +79,6 @@ callback_running = threading.Event()
 
 
 def on_message(message: str | bytes) -> None:
-    global received
-    received += 1
     callback_running.set()
 
 

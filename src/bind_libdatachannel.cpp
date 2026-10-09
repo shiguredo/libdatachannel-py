@@ -1609,7 +1609,7 @@ void bind_websocket(nb::module_& m) {
       // ただし Python の object 破棄に続く C++ 側の public ~WebSocket()
       // (rtc::WebSocket のデストラクタ) は GIL を保持したまま remoteClose() /
       // resetCallbacks() を実行するため、 その時点で callback が実行中だと恒停し得る。
-      // そこは本修正の範囲外 (根本対応は別 issue)。
+      // そこは本修正の範囲外 (根本対応は別途行う)。
       // なお close_websocket は Closed に到達するまで最大 30 秒待つため、 GC 中に最大 30 秒
       // ブロックし得る。 __del__ から投げた例外は呼び出し側で捕捉できないため
       // RuntimeWarning として記録するだけで握り潰す。
