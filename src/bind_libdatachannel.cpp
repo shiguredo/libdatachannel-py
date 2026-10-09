@@ -26,8 +26,10 @@
 #include <rtc/rtc.hpp>
 
 // 標準ライブラリ
+#include <algorithm>
 #include <chrono>
 #include <limits>
+#include <stdexcept>
 #include <thread>
 
 namespace nb = nanobind;
@@ -853,6 +855,100 @@ class PyMediaHandlerImpl : public PyMediaHandler {
   }
 };
 
+// MediaHandler のチェーンに cycle を作らせないための検査。
+// libdatachannel の MediaHandler::last() は next() を再帰でたどるため、 cycle があると
+// 戻らずにスタックオーバーフローで SEGV する。 Python から到達できる連結操作の時点で
+// 検出して例外にする。
+// 走査の上限。 libdatachannel 側に長さ制限は無いため、 入力チェーンの走査がこの値までに
+// 終端へ到達しなかった場合は長さ超過として拒否する (検査自体が無限再帰しないようにする
+// ため。 既に cycle がある場合もここで止まる)
+constexpr size_t kMaxMediaHandlerChainLength = 1024;
+
+enum class MediaHandlerChainCheck {
+  kOk,
+  kCycle,
+  kTooLong,
+};
+
+// handler から next() をたどって到達できるノードを集める。
+// 上限を超えた場合 (cycle の可能性がある場合) は kTooLong を返す
+MediaHandlerChainCheck collect_media_handler_chain(
+    const std::shared_ptr<MediaHandler>& handler,
+    std::vector<MediaHandler*>& nodes) {
+  auto current = handler;
+  for (size_t i = 0; i < kMaxMediaHandlerChainLength; ++i) {
+    if (!current) {
+      return MediaHandlerChainCheck::kOk;
+    }
+    nodes.push_back(current.get());
+    current = current->next();
+  }
+  // 上限までたどっても終端に到達しなかった
+  return current ? MediaHandlerChainCheck::kTooLong
+                 : MediaHandlerChainCheck::kOk;
+}
+
+// handler が self のチェーンへ戻る場合 (add_to_chain で cycle になる場合) を判定する。
+// add_to_chain は last(self) -> handler の辺を張るため、 両チェーンのノードが交われば cycle。
+// 検査と addToChain の間は非原子のため、 free-threading 環境で同じチェーンを並行して
+// 連結する用途は想定しない (GIL 下では安全)
+MediaHandlerChainCheck media_handler_add_to_chain_check(
+    const std::shared_ptr<MediaHandler>& self,
+    const std::shared_ptr<MediaHandler>& handler) {
+  std::vector<MediaHandler*> own;
+  if (auto check = collect_media_handler_chain(self, own);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
+  }
+  std::vector<MediaHandler*> added;
+  if (auto check = collect_media_handler_chain(handler, added);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
+  }
+  const bool has_cycle =
+      std::any_of(added.begin(), added.end(), [&own](MediaHandler* node) {
+        return std::find(own.begin(), own.end(), node) != own.end();
+      });
+  return has_cycle ? MediaHandlerChainCheck::kCycle
+                   : MediaHandlerChainCheck::kOk;
+}
+
+// handler が self 自身へ戻る場合 (set_next で cycle になる場合) を判定する。
+// set_next は置換なので、 handler のチェーンに self が含まれれば cycle
+MediaHandlerChainCheck media_handler_set_next_check(
+    const std::shared_ptr<MediaHandler>& self,
+    const std::shared_ptr<MediaHandler>& handler) {
+  std::vector<MediaHandler*> added;
+  if (auto check = collect_media_handler_chain(handler, added);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
+  }
+  const bool has_cycle =
+      std::find(added.begin(), added.end(), self.get()) != added.end();
+  return has_cycle ? MediaHandlerChainCheck::kCycle
+                   : MediaHandlerChainCheck::kOk;
+}
+
+// 検査結果を Python の例外にして返す。 cycle でなければ何もしない
+void throw_media_handler_chain_error(MediaHandlerChainCheck check,
+                                     const char* operation) {
+  switch (check) {
+    case MediaHandlerChainCheck::kCycle:
+      throw std::invalid_argument(std::string(operation) +
+                                  " would create a cycle in the MediaHandler "
+                                  "chain");
+    case MediaHandlerChainCheck::kTooLong:
+      // 終端までの長さは分からないため、 分かっている事実だけを伝える
+      throw std::invalid_argument(
+          std::string(operation) +
+          ": the MediaHandler chain did not reach its end within " +
+          std::to_string(kMaxMediaHandlerChainLength) +
+          " nodes (too long, or already contains a cycle)");
+    case MediaHandlerChainCheck::kOk:
+      return;
+  }
+}
+
 void bind_mediahandler(nb::module_& m) {
   nb::class_<MediaHandler>(m, "MediaHandler")
       .def(nb::init<>())
@@ -888,10 +984,23 @@ void bind_mediahandler(nb::module_& m) {
           "add_to_chain",
           [](std::shared_ptr<MediaHandler> self,
              std::shared_ptr<MediaHandler> handler) {
+            // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
+            throw_media_handler_chain_error(
+                media_handler_add_to_chain_check(self, handler),
+                "add_to_chain");
             self->addToChain(handler);
           },
           "handler"_a)
-      .def("set_next", &MediaHandler::setNext, "next"_a)
+      .def(
+          "set_next",
+          [](std::shared_ptr<MediaHandler> self,
+             std::shared_ptr<MediaHandler> handler) {
+            // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
+            throw_media_handler_chain_error(
+                media_handler_set_next_check(self, handler), "set_next");
+            self->setNext(handler);
+          },
+          "next"_a)
       .def("next",
            [](std::shared_ptr<MediaHandler> self) { return self->next(); })
       .def("last",
@@ -1357,7 +1466,19 @@ void bind_track(nb::module_& m) {
       .def("request_keyframe", &Track::requestKeyframe)
       .def("request_bitrate", &Track::requestBitrate, "bitrate"_a)
       .def("set_media_handler", &Track::setMediaHandler, "handler"_a.none())
-      .def("chain_media_handler", &Track::chainMediaHandler, "handler"_a)
+      .def(
+          "chain_media_handler",
+          [](Track& self, std::shared_ptr<MediaHandler> handler) {
+            // media handler が設定済みの場合はそのチェーンの末尾に連結されるため、
+            // binding 側と同じ cycle 検査を行う (未設定の場合は置換のみ)
+            if (auto first = self.getMediaHandler()) {
+              throw_media_handler_chain_error(
+                  media_handler_add_to_chain_check(first, handler),
+                  "chain_media_handler");
+            }
+            self.chainMediaHandler(std::move(handler));
+          },
+          "handler"_a)
       .def("get_media_handler", &Track::getMediaHandler);
 }
 
