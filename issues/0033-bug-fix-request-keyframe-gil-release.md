@@ -27,14 +27,16 @@
 - `request_keyframe` / `request_bitrate` に `nb::call_guard<nb::gil_scoped_release>()` を付与する
 - 理由コメントは `bind_channel` 直前の既存コメントを参照できるようにする
 - [[0032-bug-fix-send-gil-deadlock]] で追加したループバック構成を `tests/test_peerconnection.py` の共通ヘルパー (`make_loopback_with_pli`) に切り出し、 `request_keyframe()` の実行中に PLI の callback が実行されることを検証するテストを追加する
-  - `Track.request_keyframe()` は media handler chain の `PliHandler` 経由で送信経路に入る。 受信した PLI は worker thread が GIL を取得して処理するため、 送信中に GIL を保持し続けると callback が実行されない
-  - タイミング依存のため、 送信中フラグで「実行区間中に callback が動いたか」を判定する ([[0032-bug-fix-send-gil-deadlock]] と同じ方式)
+  - `Track.request_keyframe()` は media handler chain の `RtcpReceivingSession` などの handler が `send` callback (= `impl()->transportSend`) を呼ぶことで送信経路に入る (`PliHandler` は PLI の受信側で、 送信は行わない)
+  - 送った PLI は送信側 (pc1) の `PliHandler` が受信し、 worker thread が GIL を取得して callback を実行する。 タイミング依存のため、 送信中フラグで「実行区間中に callback が動いたか」を判定する ([[0032-bug-fix-send-gil-deadlock]] と同じ方式)
+  - 測定区間で呼ぶのは `RtcpReceivingSession` を持つ受信側トラックの `request_keyframe()` で、 真が返ることが送信経路を通った証拠になる (送信側トラックの chain には `requestKeyframe` を実装する handler が無く、 既定実装は false を返すだけである)
+- GIL 解放が効くのは C++ の handler が送信経路に入る場合に限る。 Python の `MediaHandler` サブクラスの trampoline から `send()` を呼ぶ経路は、 GIL を保持したまま送信経路に入るため [[0044-bug-fix-python-mediahandler-send-gil]] で扱う
 
 ## 完了条件
 
 - `Track.request_keyframe()` / `Track.request_bitrate()` が GIL 解放下で実行されること
-- ループバック構成で、 `request_keyframe()` の実行中に受信側の callback が実行されることを検証するテストを追加し PASS すること
-- `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する
+- ループバック構成で、 `request_keyframe()` の実行中に PLI を受信した pc1 の `PliHandler` callback が実行されることを検証するテストを追加し PASS すること
+- `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
