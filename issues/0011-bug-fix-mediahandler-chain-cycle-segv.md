@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-mediahandler-chain-cycle-segv
 - Polished: 2026-10-09
 
@@ -58,6 +58,21 @@ h2.last()  # 無限再帰 → SIGSEGV (exit 139)
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp` に MediaHandler のチェーン検査を追加した
+  - `collect_media_handler_chain` で `next()` を最大 1024 ノードたどり、 終端に到達しない場合は長さ超過として扱う (検査自体が無限再帰しないようにするため)
+  - `add_to_chain` は `last(self) -> handler` の辺を張るため、 両チェーンのノードが交われば cycle
+  - `set_next` は置換のため、 handler のチェーンに self が含まれれば cycle
+  - `throw_media_handler_chain_error` で cycle と長さ超過を区別した `std::invalid_argument` (Python の `ValueError`) を投げる
+  - `add_to_chain` / `set_next` / `Track.chain_media_handler` の binding で、 連結する前に検査する
+- テスト
+  - `tests/test_mediahandler.py` に issue の再現手順 (相互参照)、 Track 経路、 上限ちょうどの成功と上限超過の例外を追加した
+  - `tests/prop_mediahandler.py` を追加し、 ランダムな連結操作列に対して「cycle になる操作だけが拒否され、 チェーンがモデルと一致する」ことを検証する (hypothesis)
+  - `pyproject.toml` の `python_files` に `prop_*.py` を追加した
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+- 実測: 修正前は cycle を作った後の `last()` で exit 139 (SIGSEGV)。 修正後は mediahandler の 7 テストが PASS、 全体で 89 passed / 12 skipped / 1 deselected
 
 ## 参考
 

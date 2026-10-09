@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <stdexcept>
 #include <thread>
 
 namespace nb = nanobind;

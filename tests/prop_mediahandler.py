@@ -14,9 +14,9 @@ from hypothesis import strategies as st
 from libdatachannel import MediaHandler
 
 # 同時に扱う handler の数。 組み合わせを網羅しやすい小さな値にする
-_HANDLER_COUNT = 4
+_HANDLER_COUNT: int = 4
 # 1 つの例で実行する操作数
-_MAX_OPERATIONS = 8
+_MAX_OPERATIONS: int = 8
 
 
 def _chain_indices(model: dict[int, int | None], start: int) -> list[int]:
