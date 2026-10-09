@@ -1,7 +1,9 @@
 import gc
 import sys
+import threading
 import time
 import weakref
+from collections.abc import Callable
 
 import pytest
 
@@ -20,6 +22,7 @@ from libdatachannel import (
     RtcpReceivingSession,
     RtcpSrReporter,
     RtpPacketizationConfig,
+    Track,
 )
 
 
@@ -360,23 +363,15 @@ def test_close_is_idempotent():
     assert pc.state() is PeerConnection.State.Closed
 
 
-@pytest.mark.timeout(120)
-def test_send_releases_gil_for_incoming_callback():
-    """DataChannel.send() を連続実行している間に受信経路の PLI callback が実行されること
+def make_loopback_with_pli(
+    on_pli: Callable[[], None],
+) -> tuple[PeerConnection, PeerConnection, Track, Track, DataChannel]:
+    """映像トラックに PliHandler を chain したループバック接続を作る
 
-    映像トラックの media handler chain に PliHandler を登録し、 受信側から PLI を
-    送ったあと、 送信側の DataChannel.send() を連続実行する。 送信系 binding が GIL を
-    保持したまま送信経路に入ると、 PLI を処理する worker thread は GIL を取得できず
-    恒久デッドロックする。 callback が DataChannel.send() の実行区間で実行された
-    かどうかを送信中フラグで確認する。
-
-    恒久デッドロックはタイミング依存で発生するため、 このテストは callback 経路の
-    regression 検証であり、 修正前のコードではデッドロックして停止するか、 送信中の
-    callback が観測できない。 停止した場合は main thread が GIL を保持したまま
-    native lock で待つため pytest-timeout では中断できず、 外部からの kill が必要に
-    なる。 接続確立と PLI の往復を見込んで 120 秒を上限とする。 なお callback を
-    観測できないまま 200000 送信まで到達すると、 受信側が受信キューを消費しない
-    ため送信側のメモリが数十 MB 増加し、 close() にも時間がかかる。
+    送信側 (pc1) で映像トラックと DataChannel を開き、 受信側 (pc2) のトラックには
+    RtcpReceivingSession を設定して PLI を送れるようにする。 受信した PLI は送信側の
+    PliHandler の callback (on_pli) が worker thread で処理する。 返り値は
+    (pc1, pc2, t1, t2, dc1)。
     """
     config1 = Configuration()
     pc1 = PeerConnection(config1)
@@ -385,17 +380,6 @@ def test_send_releases_gil_for_incoming_callback():
     config2.port_range_begin = 5000
     config2.port_range_end = 6000
     pc2 = PeerConnection(config2)
-
-    # callback 内では print を行わない (pytest の stdout capture と組み合わせると
-    # callback の I/O block で hang し得るため)。
-    sending = False
-    callback_during_send = False
-
-    def on_pli():
-        nonlocal callback_during_send
-        # DataChannel.send() の実行中に callback が実行されたかどうかを記録する。
-        if sending:
-            callback_during_send = True
 
     video_ssrc = 1234
     media = Description.Video("video", Description.Direction.SendOnly)
@@ -487,6 +471,41 @@ def test_send_releases_gil_for_incoming_callback():
         time.sleep(0.05)
     assert t2.available_amount() > 0, "受信側の Track が RTP を受信しなかった"
 
+    return pc1, pc2, t1, t2, dc1
+
+
+@pytest.mark.timeout(120)
+def test_send_releases_gil_for_incoming_callback():
+    """DataChannel.send() を連続実行している間に受信経路の PLI callback が実行されること
+
+    映像トラックの media handler chain に PliHandler を登録し、 受信側から PLI を
+    送ったあと、 送信側の DataChannel.send() を連続実行する。 送信系 binding が GIL を
+    保持したまま送信経路に入ると、 PLI を処理する worker thread は GIL を取得できず
+    恒久デッドロックする。 callback が DataChannel.send() の実行区間で実行された
+    かどうかを送信中フラグで確認する。
+
+    恒久デッドロックはタイミング依存で発生するため、 このテストは callback 経路の
+    regression 検証であり、 修正前のコードではデッドロックして停止するか、 送信中の
+    callback が観測できない。 停止した場合は main thread が GIL を保持したまま
+    native lock で待つため pytest-timeout では中断できず、 外部からの kill が必要に
+    なる。 接続確立と PLI の往復を見込んで 120 秒を上限とする。 なお callback を
+    観測できないまま 200000 送信まで到達すると、 受信側が受信キューを消費しない
+    ため送信側のメモリが数十 MB 増加し、 close() にも時間がかかる。
+    """
+
+    # callback 内では print を行わない (pytest の stdout capture と組み合わせると
+    # callback の I/O block で hang し得るため)。
+    sending = False
+    callback_during_send = False
+
+    def on_pli() -> None:
+        nonlocal callback_during_send
+        # DataChannel.send() の実行中に callback が実行されたかどうかを記録する。
+        if sending:
+            callback_during_send = True
+
+    pc1, pc2, _t1, t2, dc1 = make_loopback_with_pli(on_pli)
+
     # pc2 から PLI を送り、 main thread は DataChannel.send() を連続実行する。
     # 送信系 binding が GIL を解放していれば、 送信中でも PLI を処理する worker
     # thread が GIL を取得できる。 200000 送信 / 10 秒は callback を観測できなかった
@@ -507,6 +526,113 @@ def test_send_releases_gil_for_incoming_callback():
 
     assert callback_during_send, (
         f"DataChannel.send() の実行中に PLI の callback が実行されなかった (send_count={send_count})"
+    )
+
+    pc1.close()
+    pc2.close()
+
+
+@pytest.mark.timeout(120)
+def test_request_keyframe_releases_gil_for_incoming_callback() -> None:
+    """Track.request_keyframe() が送信経路を通り PLI callback が動くこと
+
+    RtcpReceivingSession が send callback (= impl()->transportSend) を呼ぶことで送信
+    経路に入る。 戻り値が真であることが送信経路を通った証拠になる。 送った PLI は
+    pc1 の PliHandler が受信し、 worker thread が Python callback を実行する (実行
+    区間中かどうかは送信中フラグで見るが、 通常の GIL 切替でも成立し得るため GIL 解放の
+    証拠にはならない。 GIL 解放そのものは test_request_media_control_releases_gil で
+    測る)。 request_bitrate() は PLI ではなく REMB を送るため、 このテストの対象外。
+
+    接続確立と PLI の往復を見込んで 120 秒を上限とする。
+    """
+    sending = False
+    callback_during_send = False
+
+    def on_pli() -> None:
+        nonlocal callback_during_send
+        # request_keyframe() の実行中に callback が動いたか記録する。
+        if sending:
+            callback_during_send = True
+
+    pc1, pc2, _t1, t2, _dc1 = make_loopback_with_pli(on_pli)
+
+    deadline = time.monotonic() + 10
+    call_count = 0
+    while not callback_during_send and time.monotonic() < deadline and call_count < 20000:
+        sending = True
+        sent = t2.request_keyframe()
+        sending = False
+        assert sent, "RtcpReceivingSession.request_keyframe() が PLI を送らなかった"
+        call_count += 1
+
+    assert callback_during_send, (
+        f"Track.request_keyframe() の実行中に PLI の callback が実行されなかった (call_count={call_count})"
+    )
+
+    pc1.close()
+    pc2.close()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["request_keyframe", "request_bitrate"],
+    ids=["request_keyframe", "request_bitrate"],
+)
+@pytest.mark.timeout(120)
+def test_request_media_control_releases_gil(operation: str) -> None:
+    """Track の request_keyframe() / request_bitrate() が GIL を解放して実行されること
+
+    sys.setswitchinterval を大きくして Python 側の定期切替を止め、 GIL を待つ thread が
+    呼び出し中に進行するかで判定する。 GIL を解放しない呼び出しでは、 待機 thread は
+    進行できない。 呼び出しは送信経路を通るため RtcpReceivingSession を持つ受信側
+    トラックを使う (戻り値が真であることが送信経路を通った証拠)。
+    """
+    # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
+    # (call_guard の gil_scoped_release も no-op になる)。
+    if not getattr(sys, "_is_gil_enabled", lambda: True)():
+        pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
+
+    pc1, pc2, _t1, t2, _dc1 = make_loopback_with_pli(lambda: None)
+
+    def call_media_control() -> bool:
+        if operation == "request_keyframe":
+            return t2.request_keyframe()
+        return t2.request_bitrate(500000)
+
+    counter = 0
+    stop = False
+
+    def spin() -> None:
+        nonlocal counter
+        while not stop:
+            counter += 1
+
+    original_interval = sys.getswitchinterval()
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする。
+        sys.setswitchinterval(1.0)
+        # 呼び出し前の進行を測る (GIL を解放しない呼び出しの比較対象)。
+        baseline_start = counter
+        for _ in range(200):
+            t2.description()
+        baseline = counter - baseline_start
+
+        # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
+        # 1 呼び出しあたり switch interval (1 秒) 分の GIL 再取得待ちが入るため、
+        # 回数を増やすと所要時間が線形に伸びる。
+        target_start = counter
+        for _ in range(5):
+            assert call_media_control(), f"{operation}() が送信経路を通らなかった"
+        released = counter - target_start
+    finally:
+        stop = True
+        sys.setswitchinterval(original_interval)
+        thread.join(timeout=10)
+
+    assert released > baseline, (
+        f"{operation}() が GIL を解放しなかった (released={released}, baseline={baseline})"
     )
 
     pc1.close()

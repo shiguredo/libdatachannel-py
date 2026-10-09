@@ -39,6 +39,10 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] Track.request_keyframe() / Track.request_bitrate() が GIL を保持したまま送信経路に入る問題を修正する
+  - 送信経路の内部ロックを保持したまま GIL 待ちに入ると、 受信経路の Python callback と循環待ちになって復帰不能になる (`send` 系と同じ構造)
+  - `send` 系と同じく GIL を解放して実行する
+  - @voluntas
 - [FIX] DependencyDescriptorWriter が context の破棄後に壊れた値を読む問題を修正する
   - writer は context 自体ではなく context のメンバ (structure / descriptor) への参照を保持するため、 context を生存させるようにする
   - 実測: 一時的な context を渡すと、 context の破棄後に `get_size_bits()` が `RuntimeError` になっていた (use-after-free のため結果は不定)

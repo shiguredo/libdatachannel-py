@@ -1519,8 +1519,13 @@ void bind_track(nb::module_& m) {
       .def("description", &Track::description)
       .def("set_description", &Track::setDescription, "description"_a)
       .def("on_frame", &Track::onFrame, "callback"_a)
-      .def("request_keyframe", &Track::requestKeyframe)
-      .def("request_bitrate", &Track::requestBitrate, "bitrate"_a)
+      // request_keyframe は RtcpReceivingSession などの handler が送信経路
+      // (send callback = transportSend) に入るため、 send と同じく GIL を解放する
+      // (理由は bind_channel 直前のコメント)
+      .def("request_keyframe", &Track::requestKeyframe,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("request_bitrate", &Track::requestBitrate, "bitrate"_a,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("set_media_handler", &Track::setMediaHandler, "handler"_a.none())
       .def(
           "chain_media_handler",
