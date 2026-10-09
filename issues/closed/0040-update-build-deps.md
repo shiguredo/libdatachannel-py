@@ -1,0 +1,77 @@
+# nanobind を 3 系に、 scikit-build-core を 1.1.1 に更新する
+
+- Priority: High
+- Created: 2026-10-09
+- Completed: 2026-10-09
+- Branch: feature/update-build-deps
+- Polished: {YYYY-MM-DD}
+
+## 目的
+
+ビルド依存の `nanobind` を 3 系 (最新 3.1.0) に、 `scikit-build-core` を 1.1.1 に更新する。 nanobind 3 系は内部 ABI と API に破壊的変更を含むため、 影響箇所を修正したうえでビルド・テスト・ホイール生成が通ることを確認する。
+
+## 優先度根拠
+
+- nanobind 2 系のままだと 3 系で入った性能改善 (interned string keys / 不要な参照カウント削除 / シーケンス構築の高速化 / 分割モード) を取り込めない
+- nanobind 3 系は Python 3.15 以降での interpreter finalization 対応 (PEP 788) を含み、 恒停問題 ([[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]]) の調査にも影響する
+- scikit-build-core 1.1.1 は `minimum-version = "build-system.requires"` で最小バージョンを同期しているため、 更新するとビルド時の検証も最新になる
+
+## 現状
+
+- `pyproject.toml`: `requires = ["nanobind>=2.13.0", "scikit-build-core>=1.0.3"]`、 `[tool.scikit-build] minimum-version = "build-system.requires"`、 `requires-python = ">=3.12"`
+- CI の Python は 3.12 / 3.13 / 3.14 / 3.14t (wheel.yml) で、 nanobind 3 の `>=3.10` 要件は満たしている
+- nanobind 3.0 の破壊的変更のうち、 本リポジトリに関係するもの:
+  - `NB_TRAMPOLINE(Base, Size)` の `Size` が不要になり、 指定すると deprecation warning が出る (`src/bind_libdatachannel.cpp` の `PyMediaHandlerImpl` で `NB_TRAMPOLINE(PyMediaHandler, 5)` を使用)
+  - 型 caster の `from_python()` の `flags` が `uint8_t` から `uint32_t` に拡張された (`src/bind_libdatachannel.cpp` の独自 caster で `uint8_t flags` を使用。 旧シグネチャでも動作するが警告が出る可能性がある)
+  - `nb::gil_scoped_acquire` が interpreter 停止中に失敗し得るようになり、 `is_valid()` でのガードが推奨される (該当箇所は `close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐の 3 箇所。 Python 3.15 未満では従来どおり `is_valid()` は常に true)。 本 issue でガードを実装する (`__del__` と GC の経路は interpreter 終了局面で走り得るため)
+  - `nb::none` が wrapper class になり、 条件式で他の wrapper 型と混在できなくなった (本リポジトリの使用箇所は `return nb::none()` とデフォルト引数のみで、 `class none : public object` のため実害なし)
+  - `rv_policy` は compile-time tag になり、 実行時に計算した値を渡せなくなった (本リポジトリの使用箇所はすべてリテラルのためソース修正不要)
+  - ビルド依存のバージョン固定は `pyproject.toml` の `requires` のみ (確認済み: `uv.lock` に nanobind / scikit-build-core は入らず、 CI にも固定なし)
+- 参考: nanobind 3.0.0 は Python 3.9 互換を誤って宣言していたため yank され、 3.0.1 が後継。 最新は 3.1.0
+
+## 設計方針
+
+- `pyproject.toml` の `requires` を `nanobind>=3.1.0` と `scikit-build-core>=1.1.1` に更新する (`minimum-version = "build-system.requires"` により scikit-build-core の最小バージョンも同期する)
+- `tool.scikit-build.metadata` を scikit-build-core 1.0 以降の標準記法である `[[tool.dynamic-metadata]]` へ移行するかどうかを判断する。 移行形は scikit-build-core 1.1.1 の実装と一致する (`field = "version"` が必要) が、 **tombi は schemastore の pyproject スキーマで `tool.*` を一律 Table として扱うため Array を拒否するため移行しない** (tombi 1.7.3 で再現。 無関係な `[[tool.*]]` でも同じエラーになる)。 tombi が対応した時点で切り替える。 移行しない場合はビルド時に deprecation warning が出るため、 その旨を pyproject.toml のコメントに残す
+- nanobind 3 で必要なソース修正を行う:
+  - `NB_TRAMPOLINE(PyMediaHandler, 5)` を `NB_TRAMPOLINE(PyMediaHandler)` にする
+  - 独自型 caster の `from_python()` の `flags` を `uint32_t` に広げる
+  - `nb::gil_scoped_acquire` の 3 箇所 (`close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐) に `is_valid()` ガードを入れる
+  - その他、 ビルドエラー・警告が出た箇所を修正する
+- ビルドは `make develop` で確認し、 警告の有無は `uv build --wheel -Cbuild.verbose=true` の出力で確認する (`uv build` の `--verbose` は scikit-build-core に伝わらないため、 設定で有効化する)
+
+## 完了条件
+
+- `make develop` が通り、 `uv build --wheel -Cbuild.verbose=true` の出力にコンパイル警告が出ない (`uv build` の `--verbose` は scikit-build-core に伝わらないため、 設定で有効化する)
+- 生成したホイールを CI と同じ手順で検証する: `rm -rf dist .venv-wheel` → `uv build --wheel` → `uv venv --python 3.12 .venv-wheel` → `uv pip install --python .venv-wheel/bin/python --group test dist/*.whl` → `.venv-wheel/bin/python -m pytest tests/ -v --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close` が PASS する
+- `prek run --all-files pytest` (prek.toml の pytest フック) が PASS する
+- CI (wheel.yml の 24 leg / prek.yml の `ty` ジョブ) が PASS する
+- `CHANGES.md` の `## develop` の既存 `[UPDATE]` エントリ (scikit-build-core / nanobind) が新しい最小バージョンに更新され、 ソース修正の内容が反映されている
+- `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `pyproject.toml`
+  - `requires` を `nanobind>=3.1.0` と `scikit-build-core>=1.1.1` に更新した (scikit-build-core は `minimum-version = "build-system.requires"` で同期する)
+  - `tool.scikit-build.metadata` の標準記法 `[[tool.dynamic-metadata]]` への移行は、 tombi が schemastore の pyproject スキーマで `tool.*` を一律 Table として扱うため Array を拒否することから見送り、 現行記法を維持して理由と deprecation warning が出ることをコメントに残した
+- `src/bind_libdatachannel.cpp`
+  - `NB_TRAMPOLINE(PyMediaHandler, 5)` を `NB_TRAMPOLINE(PyMediaHandler)` にした (nanobind 3 で size 引数が廃止され deprecation warning が出ていた)
+  - 独自型 caster の `from_python()` の `flags` を `uint32_t` に広げ、 `from_python()` / `from_cpp()` に `noexcept` を付けた (nanobind 3 の caster インタフェースに合わせる)
+  - `nb::gil_scoped_acquire::is_valid()` ガードを 3 箇所 (`close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐) に追加した。 Python 3.15 以降は interpreter 停止中に GIL を取得できないため、 その場合は Python API を触らずに終了する
+- `CHANGES.md` の `## develop` の既存 `[UPDATE]` エントリ (scikit-build-core / nanobind) を新しい最小バージョンに更新し、 ソース修正の内容を反映した
+- 実測: `make develop` が成功し、 コンパイル警告は出ない (deprecation warning は上記の理由で残る)。 `uv build --wheel` で生成したホイールを別 venv に install して 84 passed / 12 skipped / 1 deselected。 `prek run --all-files` の全フックが Passed
+- 分割モードの採用は [[0041-update-nanobind-split-mode]] に分離した
+
+## スコープ外 (関連する未解決問題)
+
+- nanobind 3 の分割モード (split mode / `BACKEND_MODULE`) の採用は行わない (ホイール配布戦略の変更になるため [[0041-update-nanobind-split-mode]] に分離する)
+- `.freeze()` による型の不変化は、 Python 3.15 未満では効果がなく、 利用者が型を変更できなくなる挙動変更のため対象外とする
+- 恒停問題の根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] の範囲とする
+- libdatachannel 本体や他の依存の更新は対象外
+
+## 参考
+
+- nanobind changelog: https://nanobind.readthedocs.io/en/latest/changelog.html
+- nanobind 3.0.0 の API break: `NB_TRAMPOLINE` の Size 廃止 / `rv_policy` の tag 化 / `nb::none` の wrapper 化 / 型 caster の `flags` 拡張 / `nb::gil_scoped_acquire::is_valid()` / Python 3.10 以上必須 / `nb::ndarray_traits` 削除
+- scikit-build-core 1.1.1: https://github.com/scikit-build/scikit-build-core/releases
+- 関連 issue: [[0039-bug-fix-nanobind-del-not-called]] / [[0005-bug-fix-destructor-callback-deadlock]]
