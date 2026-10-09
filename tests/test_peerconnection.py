@@ -126,6 +126,13 @@ def test_track():
     t2 = None
     new_track_mid = ""
 
+    # Track の open / close はポーリングせず、 callback の通知をイベントで待つ。
+    # callback が呼ばれなければ wait() が timeout で False を返し、 assert で失敗する。
+    t1_opened = threading.Event()
+    t1_closed = threading.Event()
+    t2_opened = threading.Event()
+    t2_closed = threading.Event()
+
     def pc2_on_track(t):
         nonlocal t2
         mid = t.mid()
@@ -136,9 +143,11 @@ def test_track():
 
         def t_on_open():
             print(f'Track 2: Track with mid "{mid}" is open')
+            t2_opened.set()
 
         def t_on_closed():
             print(f'Track 2: Track with mid "{mid}" is closed')
+            t2_closed.set()
 
         t.on_open(t_on_open)
         t.on_closed(t_on_closed)
@@ -159,13 +168,15 @@ def test_track():
     assert media_sdp1 == media_sdp2
 
     t1 = pc1.add_track(media)
+    t1.on_open(t1_opened.set)
+    t1.on_closed(t1_closed.set)
 
     pc1.set_local_description()
 
-    attempts = 10
-    while (not t1.is_open() or t2 is None or not t2.is_open()) and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    # callback から通知されるまで待つ (ポーリングしない)。 旧実装は 1 秒 × 10 回の
+    # ポーリングだったため、 待ち時間の上限はそれより余裕を持たせた 20 秒とする。
+    assert t1_opened.wait(timeout=20), "送信側の Track が open しなかった"
+    assert t2_opened.wait(timeout=20), "受信側の Track が open しなかった"
 
     assert pc1.state() == PeerConnection.State.Connected
     assert pc2.state() == PeerConnection.State.Connected
@@ -182,27 +193,35 @@ def test_track():
     media2.set_bitrate(3000)
     media2.add_ssrc(2468, "video-send")
 
-    # NOTE: Overwriting the old shared_ptr for t1 will cause it's respective
-    #       track to be dropped (so it's SSRCs won't be on the description next time)
+    # t2 側の callback は外側の Event をセル参照で捕捉するため、 再ネゴシエーションで
+    # イベントを作り直すと 1 本目の Track の通知でも新しい Event が set される。
+    # 偽陽性を避けるため、 1 本目の open は直前の assert で確認し、 最後に
+    # t2.is_closed() で閉じていることを担保する。
+    t1_opened = threading.Event()
+    t1_closed = threading.Event()
+    t2_opened = threading.Event()
+    t2_closed = threading.Event()
+
     t1 = pc1.add_track(media2)
+    t1.on_open(t1_opened.set)
+    t1.on_closed(t1_closed.set)
 
     t2 = None
     pc1.set_local_description()
 
-    attempts = 10
-    while (not t1.is_open() or t2 is None or not t2.is_open()) and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    assert t1_opened.wait(timeout=20), "再ネゴシエーション後の送信側の Track が open しなかった"
+    assert t2_opened.wait(timeout=20), "再ネゴシエーション後の受信側の Track が open しなかった"
 
     assert t1.is_open()
     assert t2 is not None
     assert t2.is_open()
 
-    # Delay close of peer 2 to check closing works properly
+    # pc2 の close を遅らせて、 先に pc1 を閉じても正常に閉じられることを確認する。
+    # 遅延は固定時間ではなく、 pc1 側の Track が閉じた通知 (on_closed) で待つ。
     pc1.close()
-    time.sleep(1)
+    assert t1_closed.wait(timeout=20), "送信側の Track が閉じなかった"
     pc2.close()
-    time.sleep(1)
+    assert t2_closed.wait(timeout=20), "受信側の Track が閉じなかった"
 
     assert t1.is_closed()
     assert t2.is_closed()
@@ -304,6 +323,9 @@ def test_destruct_without_explicit_close(recwarn):
 
     pc1.set_local_description()
 
+    # このテストは callback 経由の恒停 (destructor 経路の同期 callback) が既知で、
+    # 実行して検証できない。 イベント待ちに置き換えると未検証の差分になるため、
+    # 接続確立待ちは既存のポーリングのまま残す。 根本対応時にまとめて直す。
     attempts = 10
     while (not t1.is_open() or t2 is None or not t2.is_open()) and attempts > 0:
         attempts -= 1
@@ -388,6 +410,24 @@ def make_loopback_with_pli(
     media.add_ssrc(video_ssrc, "video-send")
     t1 = pc1.add_track(media)
 
+    # 接続完了は callback の通知をイベントで待つ (ポーリングしない)。 callback が
+    # 呼ばれなければ wait() が timeout で False を返し、 assert で失敗する。
+    t1_opened = threading.Event()
+    t2_opened = threading.Event()
+    dc1_opened = threading.Event()
+    gathering_completed = threading.Event()
+
+    # ICE 候補の収集完了を通知する。 libdatachannel は収集完了時に
+    # endLocalCandidates() で SDP に a=end-of-candidates を入れてから gathering
+    # state を Complete に変えるため、 この通知が来た時点の local_description() には
+    # a=end-of-candidates が含まれる。
+    def pc1_on_gathering_state_change(state) -> None:
+        if state == PeerConnection.GatheringState.Complete:
+            gathering_completed.set()
+
+    pc1.on_gathering_state_change(pc1_on_gathering_state_change)
+    t1.on_open(t1_opened.set)
+
     # 送信側の media handler chain に PliHandler を登録する (whip.py と同様に
     # PliHandler を chain する構成)。 RtpPacketizationConfig の SSRC は Description
     # の SSRC と一致させる。
@@ -403,6 +443,7 @@ def make_loopback_with_pli(
     # 自動ネゴシエーションでオファーを生成するため、 先にトラックを追加しておく
     # (DataChannel を先に作るとオファーに映像の m= 行が入らない)。
     dc1 = pc1.create_data_channel("send-gil-test")
+    dc1.on_open(dc1_opened.set)
 
     def pc1_on_local_candidate(candidate):
         pc2.add_remote_candidate(Candidate(str(candidate)))
@@ -420,43 +461,40 @@ def make_loopback_with_pli(
         # 受信側のトラックから PLI を送れるようにする。 RtcpReceivingSession は
         # 受信した RTP の SSRC を PLI の送信元に使う。
         track.set_media_handler(RtcpReceivingSession())
+        track.on_open(t2_opened.set)
         t2 = track
 
     pc2.on_track(pc2_on_track)
 
+    # pc2 側のアンサー生成も callback の通知をイベントで待つ。
+    answer_generated = threading.Event()
+
+    def pc2_on_local_description(desc) -> None:
+        answer_generated.set()
+
+    pc2.on_local_description(pc2_on_local_description)
+
     # オファーは create_data_channel() 内の自動ネゴシエーションで生成されるため、
-    # その通知に依存せず local_description() をポーリングして相互に SDP を交換する
-    # (whip.py と同じく local_description() からオファーを取得する)。 候補が
-    # 揃うまで待つ。
-    offer = None
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        local = pc1.local_description()
-        if local is not None:
-            offer = str(local)
-            if "a=end-of-candidates" in offer:
-                break
-        time.sleep(0.05)
-    assert offer is not None, "オファーが生成されなかった"
+    # その通知に依存せず、 ICE 候補の収集完了を待ってから local_description() で
+    # オファーを取得する (whip.py と同じく local_description() から取得する)。
+    assert gathering_completed.wait(timeout=20), "ICE 候補の収集が完了しなかった"
+    local = pc1.local_description()
+    assert local is not None, "オファーが生成されなかった"
+    offer = str(local)
+    assert "a=end-of-candidates" in offer, "オファーに a=end-of-candidates が含まれなかった"
     pc2.set_remote_description(Description(offer))
 
-    answer = None
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        local = pc2.local_description()
-        if local is not None:
-            answer = str(local)
-            break
-        time.sleep(0.05)
-    assert answer is not None, "アンサーが生成されなかった"
+    # アンサーは pc2 の on_local_description の通知で待つ。
+    assert answer_generated.wait(timeout=20), "アンサーが生成されなかった"
+    local = pc2.local_description()
+    assert local is not None, "アンサーが生成されなかった"
+    answer = str(local)
     pc1.set_remote_description(Description(answer))
 
-    # 接続確立とトラック / DataChannel のオープンを待つ。
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        if dc1.is_open() and t1.is_open() and t2 is not None and t2.is_open():
-            break
-        time.sleep(0.05)
+    # 接続確立とトラック / DataChannel のオープンを callback で待つ。
+    assert t1_opened.wait(timeout=20), "送信側の Track が open しなかった"
+    assert t2_opened.wait(timeout=20), "受信側の Track が open しなかった"
+    assert dc1_opened.wait(timeout=20), "DataChannel が open しなかった"
 
     assert t1.is_open(), "送信側の Track が open しなかった"
     assert t2 is not None, "受信側の Track が取得できなかった"
@@ -464,6 +502,9 @@ def make_loopback_with_pli(
     assert dc1.is_open(), "DataChannel が open しなかった"
 
     # SSRC の学習には RTP の受信が必要なため、 pc2 が受信するまで RTP を送る。
+    # 受信側の Track は media handler (RtcpReceivingSession) が受信フレームを消費し、
+    # 受信を通知する callback が無いため、 available_amount() を条件に送信を繰り返す
+    # 必要がある。 この待ちは「次の再送までの間隔」であり、 イベント待ちにはできない。
     nalu = b"\x00\x00\x00\x01\x65" + b"\x88" * 32
     deadline = time.monotonic() + 10
     while t2.available_amount() == 0 and time.monotonic() < deadline:

@@ -111,12 +111,15 @@
   - コンストラクタ (size 版 / bytes 版) でヘッダサイズ以上のバッファが確保されるかを検証し、 範囲外と桁あふれは `ValueError` にする
   - @voluntas
 
+- [FIX] mbedTLS をスレッドセーフにビルドする
+  - スレッド対応が無い設定でビルドしていたため、 複数の thread から TLS を初期化したときに mbedTLS 内部 (PSA / entropy) の状態が壊れ、 TLS の初期化中に SIGTRAP (malloc の freelist 検査) や SIGSEGV でプロセスが落ちていた
+  - WebSocketServer / WebSocket の TLS 接続が稀にプロセスごと落ちる問題を修正する (mbedTLS のビルドを再現可能にするため、 libdatachannel も同じ設定で再ビルドが必要)
+  - @voluntas
+
 ### misc
 
-- [FIX] CI の pytest リトライが job を救済できていなかったのを解消する
-  - 1 回目の pytest ステップに `continue-on-error` を付け、 `steps.pytest.outcome` で失敗を検出して pytest を 1 回だけ再実行する
-  - 型検査 (ty) はリトライの対象から外し、 失敗した場合は job を失敗させる
-  - リトライが走ったことが分かるように `::warning::` の注記を出す
+- [FIX] CI の pytest リトライを削除する
+  - リトライに頼らず、 pytest の失敗をそのまま job の失敗として扱う (mbedTLS のスレッド対応で不安定要因を解消したため)
   - @voluntas
 - [FIX] CI で pytest が実行されていなかったのを解消し、 ビルドした wheel を検証する
   - build_ubuntu / build_macos で wheel を fresh な環境に install してテストする

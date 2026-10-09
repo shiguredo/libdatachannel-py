@@ -1,6 +1,7 @@
 import gc
 import subprocess
 import sys
+import threading
 import time
 import weakref
 from pathlib import Path
@@ -17,17 +18,22 @@ def test_websocket(echo_websocket_server) -> None:
     ws = WebSocket(config)
 
     received = False
+    opened = threading.Event()
+    received_event = threading.Event()
+    closed = threading.Event()
 
     def ws_on_open() -> None:
         print("WebSocket: Open")
         assert ws is not None
         ws.send(my_message)
+        opened.set()
 
     def ws_on_error(error: str) -> None:
         print(f"WebSocket: Error: {error}")
 
     def ws_on_closed() -> None:
         print("WebSocket: Closed")
+        closed.set()
 
     def ws_on_message(message: str | bytes) -> None:
         nonlocal received
@@ -35,6 +41,7 @@ def test_websocket(echo_websocket_server) -> None:
             received = message == my_message
             if received:
                 print("WebSocket: Received expected")
+                received_event.set()
             else:
                 print("WebSocket: Received UNEXPECTED message")
 
@@ -45,16 +52,15 @@ def test_websocket(echo_websocket_server) -> None:
 
     ws.open(echo_websocket_server)
 
-    attempts = 20
-    while (not ws.is_open() or not received) and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    # callback から通知されるまで待つ (ポーリングしない)
+    assert opened.wait(timeout=20), "WebSocket が open にならなかった"
+    assert received_event.wait(timeout=20), "メッセージを受信しなかった"
 
     assert ws.is_open()
     assert received
 
     ws.close()
-    time.sleep(1)
+    assert closed.wait(timeout=20), "WebSocket が close にならなかった"
 
     # これが無いとリークする
     ws = None
@@ -77,39 +83,47 @@ def test_websocket_send_slice(echo_websocket_server) -> None:
     received = bytearray()
     unexpected: list[str] = []
     errors: list[str] = []
+    opened = threading.Event()
+    closed = threading.Event()
+    received_event = threading.Event()
 
     def ws_on_open() -> None:
         assert ws is not None
         # 先頭 3 バイトだけ送る (旧 (data, size) 版の size=3 と等価)
         ws.send(my_message[:3])
+        opened.set()
 
     def ws_on_error(error: str) -> None:
         errors.append(error)
 
+    def ws_on_closed() -> None:
+        closed.set()
+
     def ws_on_message(message: str | bytes) -> None:
         if isinstance(message, bytes):
             received.extend(message)
+            received_event.set()
         else:
             # エコーがバイナリで返らない場合はテストを失敗させる
             unexpected.append(message)
 
     ws.on_open(ws_on_open)
     ws.on_error(ws_on_error)
+    ws.on_closed(ws_on_closed)
     ws.on_message(ws_on_message)
 
     ws.open(echo_websocket_server)
 
-    attempts = 20
-    while (not ws.is_open() or len(received) < 3) and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    # callback から通知されるまで待つ (ポーリングしない)
+    assert opened.wait(timeout=20), "WebSocket が open にならなかった"
+    assert received_event.wait(timeout=20), "メッセージを受信しなかった"
 
     assert not errors
     assert not unexpected
     assert received == b"012"
 
     ws.close()
-    time.sleep(1)
+    assert closed.wait(timeout=20), "WebSocket が close にならなかった"
 
     # これが無いとリークする
     ws = None
@@ -184,12 +198,12 @@ def test_close_is_idempotent(echo_websocket_server) -> None:
     実際に接続して state が Closed 以外の状態から close() を呼ぶ。
     """
     ws = WebSocket()
+    opened = threading.Event()
+    ws.on_open(opened.set)
     ws.open(echo_websocket_server)
 
-    attempts = 20
-    while not ws.is_open() and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    # callback から通知されるまで待つ (ポーリングしない)
+    assert opened.wait(timeout=20), "WebSocket が open にならなかった"
     assert ws.is_open()
 
     ws.close()

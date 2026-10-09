@@ -61,6 +61,36 @@ else()
   set(MBEDTLS_LIB ${MBEDTLS_INSTALL_DIR}/lib/libmbedtls.a)
 endif()
 
+# mbedTLS をスレッドセーフにする設定コマンド。
+# libdatachannel は複数の thread から psa_crypto_init() を呼ぶため、 MBEDTLS_THREADING_C が
+# 無いと mbedTLS 内部の状態が壊れてヒープ破壊 (SIGTRAP / SIGSEGV) を起こす。
+# Windows には pthread が無いため対象外にする (スレッド対応が必要になったら
+# MBEDTLS_THREADING_ALT を使う)。
+set(MBEDTLS_THREADING_CONFIG_COMMANDS "")
+if(NOT WIN32)
+  set(MBEDTLS_THREADING_CONFIG_COMMANDS
+    COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_THREADING_C
+    COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_THREADING_PTHREAD
+  )
+endif()
+
+# 設定が古いビルド済みライブラリを使わないようにする。
+# スレッド対応 (MBEDTLS_THREADING_C) は mbedTLS の構造体レイアウトを変えるため、
+# 対応前にビルドした _deps が残っていると、 そのまま使われてクラッシュが再発する。
+# (libdatachannel も同じ設定でコンパイルされている必要があるため、 併せて捨てる)
+if(NOT WIN32 AND EXISTS ${MBEDTLS_LIB})
+  file(READ ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h MBEDTLS_CONFIG_CONTENT)
+  if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "#define MBEDTLS_THREADING_C")
+    message(STATUS "MbedTLS was built without threading support; rebuilding MbedTLS and libdatachannel")
+    file(REMOVE_RECURSE ${MBEDTLS_BUILD_DIR} ${MBEDTLS_INSTALL_DIR})
+    # libdatachannel はこの時点ではパス変数が未定義のため、 タグから直接組み立てる
+    file(REMOVE_RECURSE
+      ${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/build
+      ${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/install
+    )
+  endif()
+endif()
+
 # ビルド済みかチェック
 if(EXISTS ${MBEDTLS_LIB})
   message(STATUS "MbedTLS already built: ${MBEDTLS_LIB}")
@@ -79,6 +109,7 @@ else()
     UPDATE_COMMAND ""
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_SSL_DTLS_SRTP
+      ${MBEDTLS_THREADING_CONFIG_COMMANDS}
       COMMAND ${CMAKE_COMMAND}
         -S ${MBEDTLS_SOURCE_DIR}
         -B ${MBEDTLS_BUILD_DIR}
