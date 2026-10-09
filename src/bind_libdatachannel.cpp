@@ -1259,7 +1259,7 @@ void bind_rtppacketizer(nb::module_& m) {
 // 上限は m1 が uint16_t に切り詰められない 65535 になる
 constexpr size_t kMinH264MaxFragmentSize = 4;
 constexpr size_t kMinH265MaxFragmentSize = 6;
-constexpr size_t kMaxMaxFragmentSize = 65535;
+constexpr size_t kMaxFragmentSizeUpperBound = 65535;
 
 // AV1RtpPacketizer::fragmentObu は payload を
 // min(max_fragment_size, remaining + metadataSize) で確保するため、
@@ -1337,8 +1337,8 @@ void bind_h264rtppacketizer(nb::module_& m) {
              std::shared_ptr<RtpPacketizationConfig> rtp_config,
              size_t max_fragment_size) {
             check_max_fragment_size(max_fragment_size, kMinH264MaxFragmentSize,
-                                    kMaxMaxFragmentSize, "an H264 NAL unit",
-                                    "H264RtpPacketizer");
+                                    kMaxFragmentSizeUpperBound,
+                                    "an H264 NAL unit", "H264RtpPacketizer");
             new (self) H264RtpPacketizer(separator, std::move(rtp_config),
                                          max_fragment_size);
           },
@@ -1363,8 +1363,8 @@ void bind_h265rtppacketizer(nb::module_& m) {
              std::shared_ptr<RtpPacketizationConfig> rtp_config,
              size_t max_fragment_size) {
             check_max_fragment_size(max_fragment_size, kMinH265MaxFragmentSize,
-                                    kMaxMaxFragmentSize, "an H265 NAL unit",
-                                    "H265RtpPacketizer");
+                                    kMaxFragmentSizeUpperBound,
+                                    "an H265 NAL unit", "H265RtpPacketizer");
             new (self) H265RtpPacketizer(separator, std::move(rtp_config),
                                          max_fragment_size);
           },

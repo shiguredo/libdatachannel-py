@@ -36,17 +36,23 @@ def main() -> int:
     input_size = int(sys.argv[3])
 
     if codec == "h264":
-        config = RtpPacketizationConfig(1234, "stream1", 96, H264RtpPacketizer.CLOCK_RATE)
+        config = RtpPacketizationConfig(
+            ssrc=1234, cname="stream1", payload_type=96, clock_rate=H264RtpPacketizer.CLOCK_RATE
+        )
         packetizer = H264RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
         # 0x65 は NAL ヘッダ (forbidden_zero_bit 0 / nal_ref_idc 3 / unit type 5)
         message = make_nal_message(bytes([0x65]) + bytes(input_size - 1))
     elif codec == "h265":
-        config = RtpPacketizationConfig(1234, "stream1", 96, H265RtpPacketizer.CLOCK_RATE)
+        config = RtpPacketizationConfig(
+            ssrc=1234, cname="stream1", payload_type=96, clock_rate=H265RtpPacketizer.CLOCK_RATE
+        )
         packetizer = H265RtpPacketizer(NalUnit.Separator.Length, config, max_fragment_size)
         # 0x42 0x01 の unit type は (_first & 0b01111110) >> 1 で 33 (SPS)
         message = make_nal_message(bytes([0x42, 0x01]) + bytes(input_size - 2))
     elif codec == "av1":
-        config = RtpPacketizationConfig(1234, "stream1", 96, AV1RtpPacketizer.CLOCK_RATE)
+        config = RtpPacketizationConfig(
+            ssrc=1234, cname="stream1", payload_type=96, clock_rate=AV1RtpPacketizer.CLOCK_RATE
+        )
         packetizer = AV1RtpPacketizer(AV1RtpPacketizer.Packetization.Obu, config, max_fragment_size)
         # 先頭バイト 0x32 は OBU ヘッダ (type 6 = OBU_FRAME)。 SequenceHeader (type 1) では
         # ないため、 この呼び出しで SequenceHeader はキャッシュされない

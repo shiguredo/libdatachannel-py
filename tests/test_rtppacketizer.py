@@ -96,8 +96,8 @@ def test_h264_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: 
 
 @pytest.mark.parametrize(
     ("max_fragment_size", "nal_size"),
-    [(4, 5), (4, 9), (4, 1000), (65535, 131072)],
-    ids=["4_5", "4_9", "4_1000", "65535_131072"],
+    [(4, 5), (4, 9), (4, 1000), (65535, 131070)],
+    ids=["4_5", "4_9", "4_1000", "65535_131070"],
 )
 def test_h264_rtp_packetizer_outgoing_with_minimum_max_fragment_size(
     max_fragment_size: int, nal_size: int
@@ -107,14 +107,15 @@ def test_h264_rtp_packetizer_outgoing_with_minimum_max_fragment_size(
     NAL 5 バイトは分割が起きる最小のサイズ (max_fragment_size + 1)、 9 バイトは
     2 * max_fragment_size + 1 で、 いずれもフラグメント長がヘッダ長をわずかに上回る
     境界である。 1000 バイトは複数に分割される正常系、 65535 はフラグメント長が
-    uint16_t に切り詰められない上限で、 131072 バイトの NAL で境界を確認する。
+    uint16_t に切り詰められない上限で、 131070 バイト (分割数 2 で切り詰め前の
+    フラグメント長が 65535 になる最大のサイズ) の NAL で境界を確認する。
     outgoing は引数のメッセージ列を RTP パケットに置き換えるだけで send を呼ばず、
     引数は Python 側へ書き戻されないため結果を観測できない。 恒停しないことは
     子プロセスに分離して timeout で確認する。
     """
     result = _run_packetizer_outgoing("h264", max_fragment_size, nal_size)
     assert result.returncode == 0, (
-        f"h264 (max_fragment_size={max_fragment_size}, NAL {nal_size} バイト) の"
+        f"h264 (max_fragment_size={max_fragment_size}, NAL {nal_size} バイト) の "
         f"outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
     )
 
@@ -155,19 +156,22 @@ def test_h265_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: 
 
 @pytest.mark.parametrize(
     ("max_fragment_size", "nal_size"),
-    [(6, 7), (6, 13), (6, 1000), (65535, 131072)],
-    ids=["6_7", "6_13", "6_1000", "65535_131072"],
+    [(6, 7), (6, 13), (6, 1000), (65535, 131070)],
+    ids=["6_7", "6_13", "6_1000", "65535_131070"],
 )
 def test_h265_rtp_packetizer_outgoing_with_minimum_max_fragment_size(
     max_fragment_size: int, nal_size: int
 ) -> None:
     """下限ちょうどの max_fragment_size で outgoing が恒停せず戻ること
 
-    H265 は FU ヘッダが 3 バイトのため、 分割が起きる最小のサイズは 7 バイトになる。
+    H265 は FU ヘッダが 3 バイトのため、 分割が起きる最小のサイズは 7 バイト、
+    2 * max_fragment_size + 1 は 13 バイトになる。 1000 バイトは正常系、 65535 は
+    フラグメント長が uint16_t に切り詰められない上限で、 131070 バイトの NAL で
+    境界を確認する。
     """
     result = _run_packetizer_outgoing("h265", max_fragment_size, nal_size)
     assert result.returncode == 0, (
-        f"h265 (max_fragment_size={max_fragment_size}, NAL {nal_size} バイト) の"
+        f"h265 (max_fragment_size={max_fragment_size}, NAL {nal_size} バイト) の "
         f"outgoing が恒停した: returncode={result.returncode} stderr={result.stderr[-2000:]}"
     )
 
@@ -275,11 +279,11 @@ def test_packetizer_outgoing_releases_gil(codec: str) -> None:
 
         # GIL を解放しない呼び出し (プロパティ読み出し) の所要時間。 失敗時の診断用で、
         # 判定には使わない
-        baseline_total = 0
         baseline_start = time.monotonic()
         for _ in range(200):
-            baseline_total += packetizer.rtp_config.payload_type
+            payload_type = packetizer.rtp_config.payload_type
         baseline_elapsed = time.monotonic() - baseline_start
+        assert payload_type == 96
 
         # GIL を解放しない限り、 待機 thread は switch interval (1 秒) のあいだ GIL を
         # 得られない。 1 秒より十分短い 50 ms のあいだ呼び続け、 その間に待機 thread が

@@ -89,7 +89,7 @@ H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組�
 
 ## 完了条件
 
-- 範囲外の `max_fragment_size` を構築時に拒否すること。 例外は `ValueError` で、 メッセージに期待値と実際の値を含むこと (`max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` / `max_fragment_size must be at most 65535 to fragment an H264 NAL unit, got 65536` の形)
+- 範囲外の `max_fragment_size` を構築時に拒否すること。 例外は `ValueError` で、 メッセージはクラス名を前置し、 期待値と実際の値を含むこと (`H264RtpPacketizer: max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` / `H264RtpPacketizer: max_fragment_size must be at most 65535 to fragment an H264 NAL unit, got 65536` の形)
 - 次の境界値と正常値をテストで固定すること (拒否は構築時の例外なので `@pytest.mark.timeout(10)` を付けて 1 プロセスで確認できる)
   - H264: `max_fragment_size` 1 / 2 / 3 (拒否)、 65536 / 65537 (拒否)、 4 (許可)。 入力は 5 バイト (分割が起きる最小) / 9 バイト (2 * max_fragment_size + 1) / 1000 バイトの NAL、 上限は 65535 と 131072 バイトの NAL
   - H265: 1 / 2 / 3 / 4 / 5 (拒否)、 65536 (拒否)、 6 (許可)。 入力は 7 バイト / 13 バイト / 1000 バイトの NAL、 上限は 65535 と 131072 バイトの NAL
