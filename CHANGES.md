@@ -48,7 +48,7 @@
 - [FIX] WebSocketServer の stop() を GIL 解放下で実行するようにする
   - 受け入れ thread が Python callback の GIL を待っている間に stop() が GIL を保持したまま走ると恒停し得るため、 GIL を解放して停止する
   - `WebSocketServer.__del__` からも GIL 解放下で stop() を呼ぶ (Python サブクラスでは破棄時に実行される)
-  - 明示 stop() を呼ばずに破棄する経路の恒停の根本対応は別 issue で扱う
+  - 明示 stop() を呼ばずに破棄する経路の恒停には未対応である (破棄時は GIL を保持したまま C++ 側の公開デストラクタが stop() を呼ぶ)
   - @voluntas
 - [FIX] Free-Threading 対応の Python かどうかを判定して FREE_THREADED を明示的に指定する
   - nanobind は GIL ありの Python で `FREE_THREADED` をエラーも警告もなく無効化するため、 指定と実際の ABI が黙って食い違っていた
