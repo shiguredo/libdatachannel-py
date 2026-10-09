@@ -19,14 +19,6 @@ _HANDLER_COUNT = 4
 _MAX_OPERATIONS = 8
 
 
-class _Handler(MediaHandler):
-    """テスト用の MediaHandler (callback は使わない)"""
-
-
-def _next_index(model: dict[int, int | None], index: int) -> int | None:
-    return model[index]
-
-
 def _chain_indices(model: dict[int, int | None], start: int) -> list[int]:
     """start から next() をたどったノード列 (cycle があれば打ち切る)"""
     nodes: list[int] = []
@@ -35,7 +27,7 @@ def _chain_indices(model: dict[int, int | None], start: int) -> list[int]:
     while current is not None and current not in seen:
         seen.add(current)
         nodes.append(current)
-        current = _next_index(model, current)
+        current = model[current]
     return nodes
 
 
@@ -52,17 +44,19 @@ def _apply(model: dict[int, int | None], kind: str, index: int, handler_index: i
 
 
 def _has_cycle_from(model: dict[int, int | None], start: int) -> bool:
+    """start から next() をたどって cycle に到達するか"""
     seen: set[int] = set()
     current: int | None = start
     while current is not None:
         if current in seen:
             return True
         seen.add(current)
-        current = _next_index(model, current)
+        current = model[current]
     return False
 
 
 def _actual_chain(head: MediaHandler) -> list[MediaHandler]:
+    """実際の handler から next() をたどったノード列"""
     nodes: list[MediaHandler] = []
     seen: set[int] = set()
     current: MediaHandler | None = head
@@ -73,6 +67,7 @@ def _actual_chain(head: MediaHandler) -> list[MediaHandler]:
     return nodes
 
 
+# CI の速度ゆらぎで deadline 超過の偽陽性を出さないようにする
 @settings(max_examples=200, deadline=None)
 @given(
     st.lists(
@@ -84,9 +79,11 @@ def _actual_chain(head: MediaHandler) -> list[MediaHandler]:
         max_size=_MAX_OPERATIONS,
     )
 )
-def test_mediahandler_chain_operations(operations) -> None:
+def test_mediahandler_chain_operations(
+    operations: list[tuple[str, int, int]],
+) -> None:
     """cycle になる操作だけが拒否され、 チェーンがモデルと一致し続けること"""
-    handlers = [_Handler() for _ in range(_HANDLER_COUNT)]
+    handlers = [MediaHandler() for _ in range(_HANDLER_COUNT)]
     # handler の index -> 次の handler の index (None は終端)
     model: dict[int, int | None] = dict.fromkeys(range(_HANDLER_COUNT))
 

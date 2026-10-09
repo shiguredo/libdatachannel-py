@@ -858,8 +858,9 @@ class PyMediaHandlerImpl : public PyMediaHandler {
 // libdatachannel の MediaHandler::last() は next() を再帰でたどるため、 cycle があると
 // 戻らずにスタックオーバーフローで SEGV する。 Python から到達できる連結操作の時点で
 // 検出して例外にする。
-// 走査の上限。 libdatachannel 側に長さ制限は無いため、 入力チェーンの長さがこの値を
-// 超えた場合は cycle とみなして拒否する (検査自体が無限再帰しないようにするため)
+// 走査の上限。 libdatachannel 側に長さ制限は無いため、 入力チェーンの走査がこの値までに
+// 終端へ到達しなかった場合は長さ超過として拒否する (検査自体が無限再帰しないようにする
+// ため。 既に cycle がある場合もここで止まる)
 constexpr size_t kMaxMediaHandlerChainLength = 1024;
 
 enum class MediaHandlerChainCheck {
@@ -887,7 +888,9 @@ MediaHandlerChainCheck collect_media_handler_chain(
 }
 
 // handler が self のチェーンへ戻る場合 (add_to_chain で cycle になる場合) を判定する。
-// add_to_chain は last(self) -> handler の辺を張るため、 両チェーンのノードが交われば cycle
+// add_to_chain は last(self) -> handler の辺を張るため、 両チェーンのノードが交われば cycle。
+// 検査と addToChain の間は非原子のため、 free-threading 環境で同じチェーンを並行して
+// 連結する用途は想定しない (GIL 下では安全)
 MediaHandlerChainCheck media_handler_add_to_chain_check(
     const std::shared_ptr<MediaHandler>& self,
     const std::shared_ptr<MediaHandler>& handler) {
@@ -934,10 +937,12 @@ void throw_media_handler_chain_error(MediaHandlerChainCheck check,
                                   " would create a cycle in the MediaHandler "
                                   "chain");
     case MediaHandlerChainCheck::kTooLong:
+      // 終端までの長さは分からないため、 分かっている事実だけを伝える
       throw std::invalid_argument(
           std::string(operation) +
-          ": MediaHandler chain is longer than the supported limit (" +
-          std::to_string(kMaxMediaHandlerChainLength) + " nodes)");
+          ": the MediaHandler chain did not reach its end within " +
+          std::to_string(kMaxMediaHandlerChainLength) +
+          " nodes (too long, or already contains a cycle)");
     case MediaHandlerChainCheck::kOk:
       return;
   }

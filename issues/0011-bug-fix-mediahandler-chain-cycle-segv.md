@@ -4,7 +4,7 @@
 - Created: 2026-08-30
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-mediahandler-chain-cycle-segv
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-09
 
 ## 目的
 

@@ -69,23 +69,9 @@ def test_chaining():
     assert len(called) == 1
 
 
-def test_add_to_chain_rejects_self_cycle():
-    """自分自身を chain に追加しようとすると例外になること (SEGV しないこと)"""
-    h = DummyHandler()
-    with pytest.raises(ValueError):
-        h.add_to_chain(h)
-    # 例外になった後も chain は壊れていない
-    assert h.next() is None
-
-
-def test_set_next_rejects_self_cycle():
-    """自分自身を next に設定しようとすると例外になること (SEGV しないこと)"""
-    h = DummyHandler()
-    with pytest.raises(ValueError):
-        h.set_next(h)
-    assert h.next() is None
-
-
+# cycle 検出の網羅 (自己参照 / 相互参照 / チェーン途中への接続 / 同一 handler の再追加 /
+# 別チェーンでの共有) は property-based test (tests/prop_mediahandler.py) が担う。
+# ここには issue の再現手順、 Track 経路、 PBT では到達できない境界値だけを置く。
 def test_add_to_chain_rejects_mutual_cycle():
     """相互参照になる追加は例外になること (SEGV しないこと)"""
     h1 = DummyHandler()
@@ -97,68 +83,6 @@ def test_add_to_chain_rejects_mutual_cycle():
     assert h1.next() is h2
     assert h2.next() is None
     assert h1.last() is h2
-
-
-def test_set_next_rejects_cycle_into_own_chain():
-    """自分の chain の先頭へ戻る next は例外になること"""
-    h1 = DummyHandler()
-    h2 = DummyHandler()
-    h1.set_next(h2)
-    with pytest.raises(ValueError):
-        h2.set_next(h1)
-    assert h2.next() is None
-
-
-def test_add_to_chain_rejects_cycle_into_own_chain():
-    """自分の chain の途中へ戻る追加は例外になること"""
-    h1 = DummyHandler()
-    h2 = DummyHandler()
-    h3 = DummyHandler()
-    h1.add_to_chain(h2)
-    with pytest.raises(ValueError):
-        h2.add_to_chain(h1)
-    # h3 は無関係なので接続できる
-    h2.add_to_chain(h3)
-    assert h2.next() is h3
-    assert h2.last() is h3
-
-
-def test_add_to_chain_allows_shared_handler_in_other_chain():
-    """別の chain で既に使われている handler を末尾に追加できること (cycle ではない)"""
-    h1 = DummyHandler()
-    h2 = DummyHandler()
-    h3 = DummyHandler()
-    h1.add_to_chain(h3)
-    h2.add_to_chain(h3)
-    assert h1.next() is h3
-    assert h2.next() is h3
-
-
-def test_add_to_chain_rejects_same_handler_twice():
-    """同じ handler を 2 回追加しようとすると例外になること
-
-    chain の末尾へ同じ handler を再度連結すると自己 cycle になる。
-    """
-    h1 = DummyHandler()
-    h2 = DummyHandler()
-    h3 = DummyHandler()
-    h1.add_to_chain(h2)
-    h1.add_to_chain(h3)
-    with pytest.raises(ValueError):
-        h1.add_to_chain(h3)
-    assert h1.last() is h3
-
-
-def test_add_to_chain_rejects_handler_in_middle_of_own_chain():
-    """自分の chain の途中の handler を末尾へ繋ごうとすると例外になること"""
-    h1 = DummyHandler()
-    h2 = DummyHandler()
-    h3 = DummyHandler()
-    h1.set_next(h2)
-    h2.set_next(h3)
-    with pytest.raises(ValueError):
-        h1.add_to_chain(h2)
-    assert h1.last() is h3
 
 
 def test_chain_media_handler_rejects_cycle():
@@ -195,5 +119,5 @@ def test_add_to_chain_rejects_too_long_chain():
     for i in range(1025):
         handlers[i].set_next(handlers[i + 1])
     fresh = DummyHandler()
-    with pytest.raises(ValueError, match="longer than the supported limit"):
+    with pytest.raises(ValueError, match="did not reach its end within"):
         handlers[0].add_to_chain(fresh)

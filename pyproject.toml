@@ -53,7 +53,7 @@ build-backend = "scikit_build_core.build"
 
 [tool.pytest.ini_options]
 # PBT のファイル名は prop_<module>.py (規約) のため collect 対象に含める
-python_files = ["test_*.py", "prop_*.py"]
+python_files = ["test_*.py", "*_test.py", "prop_*.py"]
 testpaths = ["tests"]
 
 [tool.ruff]
