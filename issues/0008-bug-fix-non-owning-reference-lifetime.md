@@ -46,7 +46,7 @@ m.mid()  # 親の Description は破棄済み → use-after-free
 ## 設計方針
 
 - media / application / config は `nb::cast(..., nb::rv_policy::reference_internal, nb::find(parent))` で親を渡し、 戻り値が親を生存させる形にする (`nb::object` を返す関数では def 側の policy が効かないため、 cast に parent を渡す)
-- rtp_map は `remove_rtp_map` による erase 経路があるため keep_alive では防げない。 値 (コピー) を `std::optional` で返す設計に変更する (存在しない payload type は従来どおり例外)
+- rtp_map は `remove_rtp_map` による erase 経路があるため keep_alive では防げない。 値 (コピー) を返す設計に変更する (存在しない payload type は libdatachannel が例外を投げ、 従来どおり `ValueError` になる)
 - 動作変更に合わせて型スタブを再生成 (`make develop`) し、 テストを更新する
 - 寿命の検証は回帰時にプロセスが落ちるため、 テストの実行中に SEGV したらそのまま失敗として扱う (サブプロセス分離はしない。 落ちれば即座に CI が失敗するため)
 

@@ -11,6 +11,11 @@
 
 ## develop
 
+- [CHANGE] `Media.rtp_map()` が値 (コピー) を返すようにする
+  - 内部の `RtpMap` への参照は `remove_rtp_map()` / `remove_format()` で無効になっていた
+  - 戻り値を書き換えても `Media` に反映されなくなる
+  - 既存の payload type を変更する場合は `remove_rtp_map()` の後に `add_rtp_map()` を呼ぶ (`add_rtp_map()` は同じ payload type が既にあると上書きしない)
+  - @voluntas
 - [CHANGE] `DataChannel.send()` / `Track.send()` / `WebSocket.send()` の `(data, size)` 版と、 `Track.send_frame()` の `(data, size, info)` 版を削除する
   - `size` に `data` の長さを超える値を渡すとヒープの範囲外を読み、 その内容が対向に送信されていた (SIGBUS でプロセスが落ちることもあった)
   - `size` は `len(data)` から導出できるため、 size を取らない版 (`send` は 1 引数、 `send_frame` は `data` と `info`) とスライス (`data[:size]`) で置き換えられる (`size` を渡して呼ぶと `TypeError` になる)
@@ -28,10 +33,6 @@
   - Free Threading 対応
   - @voluntas
 - [ADD] Python 3.12 に対応する
-  - @voluntas
-- [CHANGE] `Media.rtp_map()` が値 (コピー) を返すようにする
-  - 内部の `RtpMap` への参照は `remove_rtp_map()` / `remove_format()` で無効になっていた
-  - 戻り値を書き換えても `Media` に反映されなくなる (書き換えは `add_rtp_map()` を使う)
   - @voluntas
 - [FIX] Description.media() / Description.application() / PeerConnection.config() の戻り値が親の寿命に紐付かない問題を修正する
   - 親を先に破棄してから戻り値を使うと use-after-free で落ちていた (実測: exit 139)

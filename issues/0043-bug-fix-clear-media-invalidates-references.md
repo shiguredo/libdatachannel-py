@@ -33,7 +33,7 @@ m.mid()  # 解放済みの Media を参照 → SIGSEGV (exit 139)
 - `_deps/libdatachannel/v0.24.0/source/src/description.cpp` の `clearMedia()` は `mEntries.clear(); mApplication.reset();`
 - `Description::mEntries` は `std::vector<std::shared_ptr<Entry>>` で、 Python 側が保持しているのは `Entry` 内の `Media*` / `Application*` への生ポインタ
 - binding 側で `shared_ptr` を取得する公開 API は無く、 `media(int)` / `application()` は生ポインタを返す
-- `add_media(Application)` / `add_application()` も `removeApplication()` を先に呼ぶため、 取得済みの `application()` 参照を無効にする (実測: 旧参照が新しい Application を指し、 `sctp_port()` が None になる)
+- `add_media(Application)` / `add_application()` も `removeApplication()` を先に呼ぶため、 取得済みの `application()` 参照を無効にする (実測: `add_media(Description.Application("data2"))` の後、 旧参照の `mid()` が `data` から `data2` に変わり、 新しい参照と同じオブジェクトを指す)
 - `add_media(Media)` / `add_video()` / `add_audio()` / `add_rtp_map()` は `mEntries` (`vector<shared_ptr<Entry>>`) に追加するだけで、 取得済みの `Media*` を無効にしない
 
 ## 設計方針
