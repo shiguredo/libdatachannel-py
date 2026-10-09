@@ -44,7 +44,7 @@
 ### 2. テスト (tests/test_websocket.py)
 
 - **恒停し得る検証は pytest プロセス内で実行しない**。 検証スクリプトは `tests/hang_reproduction_websocket.py` (pytest が collect しない名前) に置き、 `subprocess.run([sys.executable, <スクリプト>, mode, iterations], timeout=180, capture_output=True)` で子プロセスとして実行して `returncode` を検証する。 子プロセスが恒停した場合は親側で `subprocess.TimeoutExpired` になりテストが失敗するため、 CI の job timeout まで停止しない。 pytest-timeout は恒停時に発火しないため使わない (理由をテストのコメントに残す)
-- 子プロセス側では、 恒停の窓を作るために 1 ms 間隔で push し続けるサーバーを立て、 受信 callback の実行中に close 経路を呼ぶ。 callback が実行中であることは `threading.Event` で同期する (`Event.wait()` は GIL を解放するため callback 側の進行を妨げない)。 恒停に必要なのは「内部 thread が callback mutex を保持したまま GIL を待ち続ける状態」であり、 callback 内の I/O の有無ではない
+- 子プロセス側では、 恒停の窓を作るために 1 ms 間隔で push し続けるサーバーを立て、 受信 callback の実行中に close 経路を呼ぶ。 callback が実行中であることは `threading.Event` で同期する (`Event.wait()` は GIL を解放するため callback 側の進行を妨げない)。 callback では恒停の窓を確実に作るため `time.sleep` で GIL を解放する (callback が即座に return すると窓が狭くなり、 修正前でも恒停せず回帰を検出できない)
   - [[0025-test-remove-callback-prints]] が callback 内の `print` の除去を進めているため `print` は使わない
   - 検証するのは `close()` と `force_close()` の 2 経路。 どちらも呼び出し後に `ready_state()` が `Closed` であることを検証する。 `close()` は対向との close handshake を待つため 1 回あたり 10 秒程度かかるので 1 回、 `force_close()` は 5 回反復する
   - 子プロセスは最後に `os._exit(0)` で終了する。 C++ destructor は GIL を保持したまま走り、 callback 実行中の窓では依然として恒停し得るため (スコープ外を参照)、 検証は close 経路に絞る
