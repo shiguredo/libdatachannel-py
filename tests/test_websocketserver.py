@@ -1,4 +1,5 @@
 import gc
+import socket
 import sys
 import threading
 import time
@@ -166,13 +167,16 @@ def test_stop_releases_gil() -> None:
             server.port()
         baseline = counter - baseline_start
 
-        # stop() は GIL を解放するため、 待機 thread が進行する。 1 回の呼び出しは
-        # µs で終わるため、 一定時間呼び続けて判定する
-        stop_start = counter
-        stop_deadline = time.monotonic() + 0.5
-        while time.monotonic() < stop_deadline:
+        # stop() は GIL を解放するため、 待機 thread が進行する。 バーストは GIL の
+        # 受け渡し周期より十分短く保ち、 短いバーストでは待機 thread が走り出せない
+        # ことがあるため複数回試行する (stop は冪等)
+        stopped = 0
+        for _ in range(50):
+            stop_start = counter
             server.stop()
-        stopped = counter - stop_start
+            stopped = counter - stop_start
+            if stopped > baseline:
+                break
 
         assert stopped > baseline, (
             f"stop() が GIL を解放しなかった (stopped={stopped}, baseline={baseline})"
@@ -232,6 +236,14 @@ def test_del_calls_stop_on_python_subclass() -> None:
                 super().__del__()
             except BaseException as e:  # noqa: BLE001 (破棄経路の例外を検証する)
                 del_errors.append(repr(e))
+            # stop() が実際に呼ばれたことを、 停止後に接続できないことで確認する
+            # (binding の __del__ は C++ の stop を直接呼ぶため、 Python 側の
+            #  stop override では検出できない)
+            try:
+                with socket.create_connection(("127.0.0.1", self.port()), timeout=1):
+                    del_errors.append("stop 後も接続できた")
+            except OSError:
+                pass
 
     config = WebSocketServerConfiguration()
     config.port = 48092
