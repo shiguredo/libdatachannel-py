@@ -193,10 +193,17 @@ void bind_configuration(nb::module_& m) {
 
 nb::object get_media(Description& desc, int index) {
   auto var = desc.media(index);
+  // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる。
+  // nanobind の reference_internal + parent が keep_alive 相当になる
+  nb::object parent = nb::find(desc);
   if (std::holds_alternative<Description::Media*>(var)) {
-    return nb::cast(std::get<Description::Media*>(var));
+    if (auto* media = std::get<Description::Media*>(var)) {
+      return nb::cast(media, nb::rv_policy::reference_internal, parent);
+    }
   } else if (std::holds_alternative<Description::Application*>(var)) {
-    return nb::cast(std::get<Description::Application*>(var));
+    if (auto* application = std::get<Description::Application*>(var)) {
+      return nb::cast(application, nb::rv_policy::reference_internal, parent);
+    }
   }
   return nb::none();
 }
@@ -308,8 +315,18 @@ void bind_description(nb::module_& m) {
       .def("parse_sdp_line", &Description::Media::parseSdpLine)
       .def("has_payload_type", &Description::Media::hasPayloadType)
       .def("payload_types", &Description::Media::payloadTypes)
-      .def("rtp_map", nb::overload_cast<int>(&Description::Media::rtpMap),
-           "payload_type"_a, nb::rv_policy::reference)
+      .def(
+          "rtp_map",
+          [](Description::Media& media,
+             int payload_type) -> std::optional<Description::Media::RtpMap> {
+            // 内部の RtpMap への参照は remove_rtp_map で無効になるため、 値で返す
+            if (const Description::Media::RtpMap* map =
+                    media.rtpMap(payload_type)) {
+              return *map;
+            }
+            return std::nullopt;
+          },
+          "payload_type"_a)
       .def("add_rtp_map", &Description::Media::addRtpMap, "map"_a)
       .def("remove_rtp_map", &Description::Media::removeRtpMap,
            "payload_type"_a)
@@ -414,12 +431,11 @@ void bind_description(nb::module_& m) {
       .def("clear_media", &Description::clearMedia)
       .def("media", &get_media)
       .def("media_count", &Description::mediaCount)
-      .def(
-          "application",
-          [](Description& desc) -> Description::Application* {
-            return desc.application();
-          },
-          nb::rv_policy::reference);
+      .def("application", [](Description& desc) {
+        // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる
+        return nb::cast(desc.application(), nb::rv_policy::reference_internal,
+                        nb::find(desc));
+      });
 }
 
 // ---- candidate.hpp ----
@@ -1601,7 +1617,12 @@ void bind_peerconnection(nb::module_& m) {
             }
           },
           nb::call_guard<nb::gil_scoped_release>())
-      .def("config", &PeerConnection::config, nb::rv_policy::reference)
+      .def("config",
+           [](PeerConnection& pc) {
+             // 戻り値は PeerConnection 内部への参照のため、 親を生存させる
+             return nb::cast(pc.config(), nb::rv_policy::reference_internal,
+                             nb::find(pc));
+           })
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)
       .def("gathering_state", &PeerConnection::gatheringState)

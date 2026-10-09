@@ -1,3 +1,7 @@
+import gc
+
+import pytest
+
 from libdatachannel import CertificateFingerprint, Description
 
 
@@ -70,3 +74,54 @@ def test_certificate_fingerprint_operations():
 
     assert isinstance(id_str, str)
     assert isinstance(size, int)
+
+
+# media() / application() の戻り値は Description 内部への参照のため、 親を生存させないと
+# use-after-free で SEGV する。 回帰した場合はこのテストの実行中にプロセスが落ちる
+def test_media_outlives_description():
+    """Description を破棄しても media() の戻り値が使えること"""
+
+    def make_media():
+        desc = Description("v=0...")
+        desc.add_audio("audio", Description.Direction.SendOnly)
+        return desc.media(0)
+
+    media = make_media()
+    gc.collect()
+    assert media.mid() == "audio"
+
+
+def test_application_outlives_description():
+    """Description を破棄しても application() の戻り値が使えること"""
+
+    def make_application():
+        desc = Description("v=0...")
+        desc.add_application("data")
+        return desc.application()
+
+    application = make_application()
+    gc.collect()
+    assert isinstance(application, Description.Application)
+
+
+def test_rtp_map_is_valid_after_remove():
+    """remove_rtp_map の後も rtp_map() の戻り値が有効なこと
+
+    内部の RtpMap への参照ではなく値 (コピー) を返すため、 erase の影響を受けない。
+    """
+    media = Description.Audio()
+    media.add_audio_codec(96, "opus", "useinbandfec=1")
+    rtpmap = media.rtp_map(96)
+    assert rtpmap is not None
+    media.remove_rtp_map(96)
+
+    assert rtpmap.payload_type == 96
+    assert "opus" in rtpmap.format.lower()
+    assert not media.has_payload_type(96)
+
+
+def test_rtp_map_raises_for_unknown_payload_type():
+    """存在しない payload type では ValueError になること (libdatachannel の挙動)"""
+    media = Description.Audio()
+    with pytest.raises(ValueError):
+        media.rtp_map(123)
