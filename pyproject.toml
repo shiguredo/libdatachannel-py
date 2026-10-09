@@ -500,9 +500,9 @@ verbose = false
 packages = ["src/libdatachannel"]
 expand-macos-universal-tags = true
 
-# 標準記法 [[tool.dynamic-metadata]] への移行は、 tombi のスキーマが当該キーを
-# Table として定義しており Array を拒否するため見送る (tombi 1.7.3 / 最新版の両方で再現)。
-# 移行できるようになった時点で切り替える
+# 標準記法 [[tool.dynamic-metadata]] への移行は tombi が拒否するため見送る
+# (schemastore の pyproject スキーマが tool.* を一律 Table として扱うため Array にできない)。
+# この記法は scikit-build-core 1.0 以降 deprecation warning を出す
 [tool.scikit-build.metadata.version]
 provider = "scikit_build_core.metadata.regex"
 input = "VERSION"

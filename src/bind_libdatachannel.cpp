@@ -42,7 +42,7 @@ struct type_caster<std::vector<std::byte>> {
   NB_TYPE_CASTER(std::vector<std::byte>, const_name("bytes"));
 
   // nanobind 3 で flags が uint32_t に広がったため合わせる。
-  // nanobind 側の宣言に合わせて noexcept を付ける (この caster は例外を投げない)
+  // noexcept は nanobind 側の宣言に合わせる (組み込み caster も同じ前提)
   bool from_python(handle src, uint32_t flags, cleanup_list* cleanup) noexcept {
     if (PyBytes_Check(src.ptr()) == 0) {
       PyErr_Clear();
@@ -57,7 +57,7 @@ struct type_caster<std::vector<std::byte>> {
 
   static handle from_cpp(const std::vector<std::byte>& vec,
                          rv_policy policy,
-                         cleanup_list* cleanup) {
+                         cleanup_list* cleanup) noexcept {
     return PyBytes_FromStringAndSize(reinterpret_cast<const char*>(vec.data()),
                                      vec.size());
   }
@@ -1467,8 +1467,7 @@ void bind_peerconnection(nb::module_& m) {
               close_peer_connection(self);
             } catch (...) {
               nb::gil_scoped_acquire gil;
-              // Python 3.15 以降は interpreter 停止中に GIL を取得できない。
-              // その場合は Python API を触らずに握り潰す
+              // interpreter 停止中は Python API を触らずに握り潰す
               if (!gil.is_valid()) {
                 return;
               }
@@ -1566,8 +1565,8 @@ void close_websocket(WebSocket& self) {
   while (self.readyState() != WebSocket::State::Closed) {
     if (std::chrono::steady_clock::now() >= deadline) {
       nb::gil_scoped_acquire gil;
-      // Python 3.15 以降は interpreter 停止中に GIL を取得できない。 その場合は
-      // Python API を触らずに終了する (nanobind 3 の gil_scoped_acquire::is_valid)
+      // Python 3.15 以降は interpreter 停止中に GIL を取得できないため、
+      // その場合は Python API を触らずに終了する
       if (!gil.is_valid()) {
         return;
       }

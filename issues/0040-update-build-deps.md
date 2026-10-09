@@ -32,7 +32,7 @@
 ## 設計方針
 
 - `pyproject.toml` の `requires` を `nanobind>=3.1.0` と `scikit-build-core>=1.1.1` に更新する (`minimum-version = "build-system.requires"` により scikit-build-core の最小バージョンも同期する)
-- `tool.scikit-build.metadata` を scikit-build-core 1.0 以降の標準記法である `[[tool.dynamic-metadata]]` へ移行するかどうかを判断する。 移行形は scikit-build-core 1.1.1 の実装と一致する (`field = "version"` が必要) が、 **tombi のスキーマが `tool.dynamic-metadata` を Table として定義しており Array を拒否するため移行しない** (tombi 1.7.3 と最新版の両方で再現。 tombi が対応した時点で切り替える)。 移行しない場合はビルド時に deprecation warning が出るため、 その旨を pyproject.toml のコメントに残す
+- `tool.scikit-build.metadata` を scikit-build-core 1.0 以降の標準記法である `[[tool.dynamic-metadata]]` へ移行するかどうかを判断する。 移行形は scikit-build-core 1.1.1 の実装と一致する (`field = "version"` が必要) が、 **tombi は schemastore の pyproject スキーマで `tool.*` を一律 Table として扱うため Array を拒否するため移行しない** (tombi 1.7.3 で再現。 無関係な `[[tool.*]]` でも同じエラーになる)。 tombi が対応した時点で切り替える。 移行しない場合はビルド時に deprecation warning が出るため、 その旨を pyproject.toml のコメントに残す
 - nanobind 3 で必要なソース修正を行う:
   - `NB_TRAMPOLINE(PyMediaHandler, 5)` を `NB_TRAMPOLINE(PyMediaHandler)` にする
   - 独自型 caster の `from_python()` の `flags` を `uint32_t` に広げる
@@ -51,7 +51,7 @@
 
 ## スコープ外 (関連する未解決問題)
 
-- nanobind 3 の分割モード (split mode / `BACKEND_MODULE`) の採用は行わない (ホイール配布戦略の変更になるため別途判断する)
+- nanobind 3 の分割モード (split mode / `BACKEND_MODULE`) の採用は行わない (ホイール配布戦略の変更になるため [[0041-update-nanobind-split-mode]] に分離する)
 - 恒停問題の根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] の範囲とする
 - libdatachannel 本体や他の依存の更新は対象外
 
