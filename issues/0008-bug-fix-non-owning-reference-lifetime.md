@@ -12,8 +12,8 @@ Description.media() / Description.application() / Media.rtp_map() / PeerConnecti
 
 ## 優先度根拠
 
-- 実測: `m = desc.media(0)` → `del desc` → `gc.collect()` → `m.mid()` で SIGSEGV。application も同様
-- 実測: `rtp_map()` の戻り値は `remove_rtp_map()` 後に値が破壊される (format が空文字列になる)
+- 実測 (修正前のビルド): `m = desc.media(0)` のように親を破棄した後に `m.mid()` を呼ぶと exit 139 (SIGSEGV) になる。 同様の経路 (`application()` / `config()`) も親を破棄すると落ちる
+- 実測 (修正前のビルド): `rtp_map()` の戻り値は `remove_rtp_map()` 後に値が破壊される (`format` が空文字列になる)
 - Python の参照カウントは即時解放のため、「関数内で Description を作って media だけ返す」コードで確実に発火する
 - Free-Threading 環境では GC タイミングが非決定的になり、顕在化しやすい
 
@@ -59,6 +59,11 @@ m.mid()  # 親の Description は破棄済み → use-after-free
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## スコープ外 (関連する未解決問題)
+
+- **`clear_media()` を呼ぶと、 それ以前に取得した `media()` / `application()` の戻り値は無効になる** (`Description::clearMedia()` が `mEntries.clear()` / `mApplication.reset()` で実体を解放するため)。 親を生存させるだけでは防げず、 binding 側で対処するには `media()` を値返しにする (内部を書き換える既存の使い方を壊す) などの設計変更が要る。 実測では修正後も `desc.media(0)` → `desc.clear_media()` → `m.mid()` で exit 139 (SIGSEGV) になる。 恒久対応は [[0043-bug-fix-clear-media-invalidates-references]] で扱う
+- `remove_format` は内部で `remove_rtp_map` を呼ぶため、 取得済みの `rtp_map()` の戻り値は無効になる (本 issue の値返しで `rtp_map()` 側は解消済み)
 
 ## 参考
 
