@@ -1,0 +1,155 @@
+"""IceUdpMuxListener のテスト
+
+明示 stop() を呼ばずに破棄した場合の恒停を防ぐ仕組み (GIL 解放下の stop) を検証する。
+"""
+
+import gc
+import socket
+import sys
+import threading
+import time
+import weakref
+
+import pytest
+
+from libdatachannel import IceUdpMuxListener
+
+
+def _is_gil_enabled() -> bool:
+    """GIL が有効か (sys._is_gil_enabled は 3.13 以降にしか無い)"""
+    return getattr(sys, "_is_gil_enabled", lambda: True)()
+
+
+def _can_bind_udp_port(port: int) -> bool:
+    """UDP ポートを bind できるか (listener が停止していれば bind できる)"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def test_stop_releases_gil() -> None:
+    """IceUdpMuxListener.stop() が GIL を解放して実行されること
+
+    内部 thread が Python callback の GIL を待っている間に stop() が GIL を保持したまま
+    走ると、 Python プロセス全体が恒停し得る。 stop() の呼び出し中に GIL を待つ thread が
+    進行するかで判定する。
+    """
+    # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
+    if not _is_gil_enabled():
+        pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
+
+    listener = IceUdpMuxListener(48095, "127.0.0.1")
+
+    counter = 0
+    stopping = threading.Event()
+
+    def spin() -> None:
+        nonlocal counter
+        while not stopping.is_set():
+            counter += 1
+
+    original_interval = sys.getswitchinterval()
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        # 待機 thread が実際に動き始めるまで待つ (起動前に測ると 0 のままになる)
+        deadline = time.monotonic() + 5
+        while counter == 0 and time.monotonic() < deadline:
+            time.sleep(0)
+        assert counter > 0, "GIL を待つ thread が動き始めなかった"
+
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
+        sys.setswitchinterval(1.0)
+
+        # GIL を解放しない呼び出し (port()) で待機 thread が進まないことを確認する
+        baseline_start = counter
+        for _ in range(20):
+            listener.port()
+        baseline = counter - baseline_start
+
+        # stop() は GIL を解放するため、 待機 thread が進行する。 バーストは GIL の
+        # 受け渡し周期より十分短く保ち、 短いバーストでは待機 thread が走り出せない
+        # ことがあるため複数回試行する (stop は冪等)
+        stopped = 0
+        for _ in range(50):
+            stop_start = counter
+            listener.stop()
+            stopped = counter - stop_start
+            if stopped > baseline:
+                break
+
+        assert stopped > baseline, (
+            f"stop() が GIL を解放しなかった (stopped={stopped}, baseline={baseline})"
+        )
+    finally:
+        sys.setswitchinterval(original_interval)
+        stopping.set()
+        thread.join(timeout=5)
+        # 失敗時も listener を確実に停止する (stop は冪等)
+        listener.stop()
+
+
+def test_destruct_without_explicit_close() -> None:
+    """明示 stop() を呼ばずに破棄しても恒停せず終了すること
+
+    破棄経路では libdatachannel 本体の公開デストラクタが stop() を呼ぶ。 ここでは
+    明示 stop() を呼ばずに破棄し、 破棄が完了すること (Python オブジェクトが解放され
+    weakref が死ぬこと) を確認する。
+
+    Python callback が GIL を待っていないため、 このテストは破棄経路の恒停を検出しない
+    (恒停が起きればテスト自体が停止する)。 恒停の検出には GIL を待つ callback を動かす
+    必要があり、 破棄経路の恒停の根本対応は別 issue で扱う。
+    """
+    listener = IceUdpMuxListener(48096, "127.0.0.1")
+    ref = weakref.ref(listener)
+
+    assert ref() is not None
+
+    # 明示 stop() を呼ばずに破棄する
+    del listener
+    gc.collect()
+
+    assert ref() is None, "IceUdpMuxListener が破棄されなかった"
+
+
+def test_del_calls_stop_on_python_subclass() -> None:
+    """Python サブクラスでは __del__ から binding の stop が呼ばれること
+
+    nanobind の tp_dealloc は C++ destructor を直接呼ぶため基底クラスのインスタンスでは
+    __del__ は実行されないが、 Python サブクラスでは __del__ が実行される。 __del__ が
+    正常に動き、 stop() によりポートが解放されることを確認する。
+    """
+    port = 48097
+    del_called = []
+    del_errors = []
+
+    class Listener(IceUdpMuxListener):
+        def __del__(self) -> None:
+            del_called.append(True)
+            # binding の __del__ (GIL 解放下の stop) が例外を投げても CPython は
+            # unraisable として記録するだけでテストは PASS してしまうため、 ここで
+            # 捕まえて検証する
+            try:
+                super().__del__()
+            except BaseException as e:  # noqa: BLE001 (破棄経路の例外を検証する)
+                del_errors.append(repr(e))
+            # stop() が実際に呼ばれたことを、 停止後に同じ UDP ポートを bind できる
+            # ことで確認する (binding の __del__ は C++ の stop を直接呼ぶため、
+            # Python 側の stop override では検出できない)
+            if not _can_bind_udp_port(port):
+                del_errors.append("stop 後もポートを bind できなかった")
+
+    listener = Listener(port, "127.0.0.1")
+    # listener が起動している間は同じポートを bind できない
+    assert not _can_bind_udp_port(port), "listener 起動中にポートを bind できてしまった"
+
+    del listener
+    gc.collect()
+
+    assert del_called == [True]
+    assert del_errors == [], f"binding の __del__ が異常終了した: {del_errors}"
