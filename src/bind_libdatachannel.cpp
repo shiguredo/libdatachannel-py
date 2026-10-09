@@ -317,14 +317,10 @@ void bind_description(nb::module_& m) {
       .def("payload_types", &Description::Media::payloadTypes)
       .def(
           "rtp_map",
-          [](Description::Media& media,
-             int payload_type) -> std::optional<Description::Media::RtpMap> {
-            // 内部の RtpMap への参照は remove_rtp_map で無効になるため、 値で返す
-            if (const Description::Media::RtpMap* map =
-                    media.rtpMap(payload_type)) {
-              return *map;
-            }
-            return std::nullopt;
+          [](Description::Media& media, int payload_type) {
+            // 内部の RtpMap への参照は remove_rtp_map / remove_format で無効になるため、
+            // 値 (コピー) を返す。 存在しない payload type では rtpMap が例外を投げる
+            return *media.rtpMap(payload_type);
           },
           "payload_type"_a)
       .def("add_rtp_map", &Description::Media::addRtpMap, "map"_a)
@@ -431,11 +427,10 @@ void bind_description(nb::module_& m) {
       .def("clear_media", &Description::clearMedia)
       .def("media", &get_media)
       .def("media_count", &Description::mediaCount)
-      .def("application", [](Description& desc) {
-        // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる
-        return nb::cast(desc.application(), nb::rv_policy::reference_internal,
-                        nb::find(desc));
-      });
+      // 戻り値は Description 内部への参照のため、 reference_internal で親を生存させる。
+      // application() は const / 非 const の overload があるため明示的に選ぶ
+      .def("application", nb::overload_cast<>(&Description::application),
+           nb::rv_policy::reference_internal);
 }
 
 // ---- candidate.hpp ----
@@ -1617,12 +1612,8 @@ void bind_peerconnection(nb::module_& m) {
             }
           },
           nb::call_guard<nb::gil_scoped_release>())
-      .def("config",
-           [](PeerConnection& pc) {
-             // 戻り値は PeerConnection 内部への参照のため、 親を生存させる
-             return nb::cast(pc.config(), nb::rv_policy::reference_internal,
-                             nb::find(pc));
-           })
+      // 戻り値は PeerConnection 内部への参照のため、 reference_internal で親を生存させる
+      .def("config", &PeerConnection::config, nb::rv_policy::reference_internal)
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)
       .def("gathering_state", &PeerConnection::gatheringState)
