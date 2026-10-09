@@ -3,6 +3,7 @@
 - Priority: Medium
 - Created: 2026-05-18
 - Polished: 2026-10-09
+- Completed: 2026-10-09
 - Model: Opus 4.7
 - Branch: feature/fix-ice-udp-mux-listener-destructor-gil-release
 
@@ -45,7 +46,7 @@
 - 新規ファイル `tests/test_iceudpmuxlistener.py` を作成し、 以下を追加する。
   - `test_stop_releases_gil`: `stop()` の呼び出し中に GIL を待つ thread が進行することで、 GIL 解放を実測する ([[0003-bug-fix-websocketserver-destructor-gil-release]] と同じ方式。 free-threading ビルドでは skip)
   - `test_destruct_without_explicit_close`: 明示 `stop()` を呼ばずに破棄しても恒停せず終了すること (weakref が死ぬこと) を検証する。 **`weakref` で `__del__` の発火は検証できない**: nanobind 3 の `tp_dealloc` は C++ destructor を直接呼び、 CPython の finalizer (`tp_finalize`) を呼ばないため、 基底クラスのインスタンス破棄時に `__del__` は実行されない ([[0002-bug-fix-websocket-destructor-gil-release]] / [[0003-bug-fix-websocketserver-destructor-gil-release]] の実装時に実測して判明済み)
-  - `test_del_calls_stop_on_python_subclass`: Python サブクラスでは破棄時に `__del__` が実行され、 その中から `super().__del__()` (= binding の stop) を呼べること、 停止後に同じ UDP ポートを bind できること (= stop が実際に走ったこと) を検証する
+  - `test_del_calls_stop_on_python_subclass`: Python サブクラスでは破棄時に `__del__` が実行され、 その中から `super().__del__()` (= binding の stop) が例外なく呼べることを検証する (binding から `__del__` を削除すると `AttributeError` になる)
 - ファイル名はテストディレクトリ内の既存命名 (`test_<lower_case>.py`) に従う。
 
 ### 4. CHANGES.md
@@ -80,7 +81,8 @@
   - `f67b9ee` (`IceUdpMuxListener` を hang 対策の対象に追加) は wrapper 方式に基づく試行錯誤であり、 0001 の解決方法で撤回された。 cherry-pick せず、 develop に取り込まれた 0001 の実装 (`close_peer_connection` / `.def("__del__")` / `nb::is_weak_referenceable()`) を踏襲すること。
 - 関連 issue: [[0001-bug-fix-peer-connection-destructor-gil-release]] (`close_peer_connection` / `__del__` / `is_weak_referenceable` の実装元) / [[0002-bug-fix-websocket-destructor-gil-release]] / [[0003-bug-fix-websocketserver-destructor-gil-release]]
 - 検証の限界: `test_del_calls_stop_on_python_subclass` で「停止後に同じ UDP ポートを bind できる」ことによる stop の実行確認は使えない。 libjuice は mux socket を registry に保持し、 接続中の agent が無くなるまで cleanup しないため、 stop() 直後に同じポートを bind できるとは限らない (CI の Linux leg で失敗した)。 そのため binding の `__del__` が呼ばれたこと (削除すると `super().__del__()` が AttributeError になる) だけを検証する
-- 検証 (レビュー): `stop()` を GIL 解放下で実行しない場合は `test_stop_releases_gil` が失敗する (GIL を解放しない呼び出しを同形で回すと進行 0 になる)。 `__del__` を削除した場合は `super().__del__()` の `AttributeError` を、 `stop()` を呼ばない場合は停止後のポート bind 成功を検出して失敗する
+- GIL 解放の判定方式: 待機 thread を `sys.setswitchinterval(1.0)` で待たせ直してから、 1 秒より十分短い 50 ms のあいだ対象を呼び続け、 その間に待機 thread が進行するかで判定する。 50 ms では周期的な GIL 受け渡しが起きないため、 進行があれば呼び出しが GIL を解放したと断定できる。 1 回だけの計測は、 解放窓が µs で待機 thread がその窓で走り出せるとは限らず偽陰性になる (CI の macOS / arm64 leg で 2 回発生した)
+- 検証 (実測): `port()` を同形で回すと `released=0` (非解放)、 `stop()` を回すと `released=48393291` (解放) になり、 判定に識別力があることを確認した。 `__del__` を削除した場合は `super().__del__()` の `AttributeError` を検出して失敗する
 - 既知の制約: nanobind 3 の `tp_dealloc` は CPython の finalizer を呼ばないため、 基底クラスのインスタンスを破棄する経路では `__del__` は実行されない。 破棄時に GIL を保持したまま走る C++ 側の公開デストラクタ (`stop()` 呼び出し) の恒停は binding 側では解消できず、 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] に集約する ([[0003-bug-fix-websocketserver-destructor-gil-release]] と同じ整理)
 - libdatachannel 関連コード位置 (シンボル名で特定する):
   - `_deps/libdatachannel/v0.24.0/source/deps/libjuice/src/conn_mux.c` の `conn_mux_registry_cleanup` (内部の `thread_join`)
