@@ -215,3 +215,4 @@ def test_add_rtp_map_adds_codec_to_media() -> None:
 
     assert media.has_payload_type(96)
     assert "a=rtpmap:96 H264/90000" in str(desc)
+    assert "a=rtcp-fb:96 nack" in str(desc)
