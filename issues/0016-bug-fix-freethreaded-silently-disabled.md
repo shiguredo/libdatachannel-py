@@ -21,7 +21,7 @@ CMakeLists.txt は FREE_THREADED を無条件に指定しているが、 nanobin
 
 - pyproject.toml は requires-python >= 3.12 で、 classifiers に 3.12 / 3.13 / 3.14 と `Free Threading :: 2 - Beta` を列挙している (GIL あり版と Free-Threading 版の両方を配布する前提)
 - wheel.yml の matrix は 3.12 / 3.13 / 3.14 (GIL あり) と 3.14t で、 3.13t 向けの wheel は配布していない。 3.14t leg には wheel を install して pytest を実行する step と、 import 後に GIL が無効であることを確認する step がある ([[0022-test-enable-ci-tests]] で対応済み)
-- tests/test_free_threading.py の skipif は実行時の `sys._is_gil_enabled()` だけを見ており、 モジュールが Free-Threading 対応でビルドされたか (`NB_FREE_THREADED`) は検証しない (GIL あり wheel を Free-Threading の Python に入れた場合は逆に実行される)
+- tests/test_free_threading.py の skipif は実行時の `sys._is_gil_enabled()` だけを見ており、 モジュールが Free-Threading 対応でビルドされたか (`NB_FREE_THREADED`) は検証しない (GIL あり wheel を Free-Threading の Python に入れた場合は import 時に GIL が再有効化されるため skip に戻る。 CI の GIL 無効確認 step はその状態も検出する)
 
 ## 設計方針
 
@@ -35,9 +35,9 @@ CMakeLists.txt は FREE_THREADED を無条件に指定しているが、 nanobin
 ## 完了条件
 
 - Free-Threading 対応の Python では `FREE_THREADED` が指定され `NB_FREE_THREADED=1` の wheel (`cp314t`) になり、 GIL ありの Python では指定されず `NB_FREE_THREADED=0` の wheel になること (`_build/CMakeCache.txt` と wheel タグで確認する)
-- 判定とビルドが食い違った場合に `message(WARNING)` が出ること (nanobind の暗黙の上書きの検出)
+- ABI (`Python_SOABI` / `SKBUILD_SOABI`) から見た判定と nanobind の判定 (`NB_FREE_THREADED`) が食い違った場合に `message(WARNING)` が出ること (再現手順: Free-Threading の Python で `-DSKBUILD_SOABI=cpython-312-darwin` のように ABI を偽装して configure する)
 - 3.14t leg で `tests/test_free_threading.py` が skip されず PASSED のままであること (回帰防止)
-- `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する
+- `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する (GIL あり環境では Free-Threading のテストは skip されるため、 Free-Threading の検証は CI の 3.14t leg が担う)
 - CI (wheel.yml の全 leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` に変更内容が記録されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
