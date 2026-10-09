@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-08
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-rtp-packetizer-small-fragment-size-hang
 - Polished: 2026-10-10
 
@@ -100,6 +100,22 @@ H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組�
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS すること
 - `CHANGES.md` の `## develop` に変更内容が記録されていること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp`
+  - `H264RtpPacketizer` / `H265RtpPacketizer` / `AV1RtpPacketizer` の構築時に `max_fragment_size` の範囲を検証するようにした。 H264 は 4〜65535、 H265 は 6〜65535、 AV1 は 2 以上で、 範囲外は `ValueError` になる (`H264RtpPacketizer: max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` の形)
+  - 下限はフラグメント計算 (フラグメント数 `ceil(size / max_fragment_size)`、 フラグメント長 `ceil(size / 分割数)` から FU ヘッダを引く) を全数確認して決めた。 下限未満ではフラグメント長が 0 (ハング) やアンダーフロー (範囲外アクセス) になる。 ヘッダ長の 2 倍 (H264 は 4、 H265 は 6) ならば入力サイズによらず起きない
+  - 上限は、 フラグメント長を `uint16_t` に切り詰める処理があるための 65535。 65536 以上では切り詰めで長さが 0 や 1 になり、 小さい値と同じ不具合になる (実測で `max_fragment_size` 65536 と 131071 バイトの NAL が `ValueError: vector` になることを確認)
+  - `outgoing` (基底 `RtpPacketizer` と映像 3 クラス) を `nb::call_guard<nb::gil_scoped_release>()` で実行するようにした。 検証で防げない経路が残っても、 GIL を保持したまま無限ループに入ってプロセス全体が固まることを避ける
+  - AV1 の `max_fragment_size < 2 + SequenceHeader の長さ` の経路は binding からは判定できない (`AV1RtpPacketizer` は `mSequenceHeader` を公開しておらず、 クラスが final のため継承もできない)。 この制約はコードのコメントに残し、 libdatachannel 側の修正を upstream へ報告する前提とする
+- `tests/test_rtppacketizer.py`
+  - 構築時の範囲外拒否 (H264 1 / 2 / 3 / 65536 / 65537、 H265 1〜5 / 65536、 AV1 0 / 1) を `pytest.raises` で固定した
+  - 許可値で `outgoing` が恒停しないことを確認するテストを追加した。 入力は分割の境界 (H264 は 5 / 9 バイト、 H265 は 7 / 13 バイト) と正常系 (1000 バイト)、 上限 (65535 と 131070 バイト) である
+  - `outgoing` が GIL を解放して実行されることを、 他 thread の進行で 3 クラスそれぞれ確認するテストを追加した
+- `tests/hang_reproduction_packetizer.py` を追加した (恒停し得る `outgoing` を子プロセスで実行して timeout で検出する)
+- `CHANGES.md` の `## develop` に `[FIX]` を追記した
+- 検証: `tests/test_rtppacketizer.py` 26 passed、 全体 146 passed / 12 skipped / 1 deselected、 `/review-diff-code` 3 周で致命的 0 / 重要 0
 
 ## 参考
 
