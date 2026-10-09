@@ -4,7 +4,7 @@
 - Created: 2026-10-08
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-request-keyframe-gil-release
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-09
 
 ## 目的
 
@@ -26,13 +26,17 @@
 
 - `request_keyframe` / `request_bitrate` に `nb::call_guard<nb::gil_scoped_release>()` を付与する
 - 理由コメントは `bind_channel` 直前の既存コメントを参照できるようにする
-- [[0032-bug-fix-send-gil-deadlock]] で追加した regression テストと同じループバック構成を使い、 `request_keyframe()` の実行中に PLI の callback が実行されることを検証するテストを追加する
+- [[0032-bug-fix-send-gil-deadlock]] で追加したループバック構成を `tests/test_peerconnection.py` の共通ヘルパー (`make_loopback_with_pli`) に切り出し、 `request_keyframe()` の実行中に PLI の callback が実行されることを検証するテストを追加する
+  - `Track.request_keyframe()` は media handler chain の `PliHandler` 経由で送信経路に入る。 受信した PLI は worker thread が GIL を取得して処理するため、 送信中に GIL を保持し続けると callback が実行されない
+  - タイミング依存のため、 送信中フラグで「実行区間中に callback が動いたか」を判定する ([[0032-bug-fix-send-gil-deadlock]] と同じ方式)
 
 ## 完了条件
 
 - `Track.request_keyframe()` / `Track.request_bitrate()` が GIL 解放下で実行されること
 - ループバック構成で、 `request_keyframe()` の実行中に受信側の callback が実行されることを検証するテストを追加し PASS すること
-- `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
+- `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する
+- CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
+- `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
