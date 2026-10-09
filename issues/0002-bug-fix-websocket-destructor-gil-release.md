@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-05-18
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Polished: 2026-10-09
 - Branch: feature/fix-websocket-destructor-gil-release
 
@@ -66,6 +66,19 @@
 - C++ 側の public `~WebSocket()` の恒停 (callback 実行中に破棄が走る場合) は本 issue の対象外とする (スコープ外を参照)。 `close()` が `Closed` に到達するのは Connecting / Open から呼んだ場合で、 `Closing` の場合は polling せず即 return する
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp`
+  - `close_websocket` を匿名 namespace に追加した。 `Closed` は no-op、 `Closing` は polling せず即 return し、 それ以外は `close()` して `Closed` まで polling する (10 ms 間隔 / 30 秒)。 30 秒で到達しなかった場合は GIL を再取得して `RuntimeWarning` を出し、 警告が例外に昇格した場合は `nb::python_error` を投げる。 残処理は C++ デストラクタに委ねる
+  - `force_close_websocket` を匿名 namespace に追加した。 `Closed` は no-op、 それ以外は `forceClose()` を呼ぶ (同期で `Closed` に到達するため polling しない)
+  - `WebSocket` の `close` / `force_close` の binding を GIL 解放下で実行するように差し替え、 `__del__` を追加した。 `__del__` は GIL 解放下で `resetCallbacks()` を呼んでから `close_websocket` を呼び、 例外は `RuntimeWarning` として記録するだけで握り潰す
+  - `nb::class_<WebSocket, Channel>` に `nb::is_weak_referenceable()` を指定した
+- `tests/test_websocket.py` / `tests/hang_reproduction_websocket.py`
+  - 恒停を再現する検証スクリプトを追加した。 1 ms 間隔で push し続けるサーバーを立て、 受信 callback の実行中に `close()` / `force_close()` を呼ぶ。 恒停時は pytest-timeout が発火しないため、 検証は子プロセスで実行し `subprocess.run` の timeout (180 秒) で打ち切る
+  - `test_close_does_not_hang_while_receiving` / `test_force_close_does_not_hang` / `test_del_releases_native` / `test_close_is_idempotent` を追加した
+  - 実測: 未修正のビルドでは `close()` / `force_close()` の検証が恒停して timeout で失敗し、 修正後は WebSocket の 6 テストすべて PASS。 全体は 84 passed / 12 skipped / 1 deselected
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
 
 ## スコープ外 (関連する未解決問題)
 
