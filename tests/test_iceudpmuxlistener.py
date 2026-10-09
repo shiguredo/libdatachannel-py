@@ -53,13 +53,14 @@ def test_stop_releases_gil() -> None:
         # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
         sys.setswitchinterval(1.0)
         # 待機 thread に新しい switch interval で GIL を待たせ直す。 ここで一度 GIL を
-        # 手放し、 待機 thread が GIL を取って slice (1 秒) を終えるまで待つ。 これを
-        # しないと、 待機 thread は変更前の短い interval (既定 5 ms) で待ち続けている
-        # ため、 計測中に周期的な受け渡しが起きて、 GIL を解放しない呼び出しでも進行が
-        # 観測されてしまう
+        # 手放して保留中の受け渡しを解消する。 これをしないと、 待機 thread は変更前の
+        # 短い interval (既定 5 ms) で待ち続けているため、 計測中に周期的な受け渡しが
+        # 起きて、 GIL を解放しない呼び出しでも進行が観測されてしまう
         time.sleep(0)
 
-        # GIL を解放しない呼び出し (port()) は待機 thread に GIL を渡さない
+        # GIL を解放しない呼び出し (port()) は待機 thread に GIL を渡さない。
+        # この baseline は失敗時の診断用で、 判定には使わない (待機 thread の待ち直しが
+        # 効かない環境では baseline 中にも受け渡しが起き得るため)
         baseline_start = time.monotonic()
         for _ in range(20):
             listener.port()
@@ -116,8 +117,10 @@ def test_del_calls_stop_on_python_subclass() -> None:
     """Python サブクラスでは __del__ から binding の stop が呼ばれること
 
     nanobind の tp_dealloc は C++ destructor を直接呼ぶため基底クラスのインスタンスでは
-    __del__ は実行されないが、 Python サブクラスでは __del__ が実行される。 __del__ が
-    正常に動き、 stop() によりポートが解放されることを確認する。
+    __del__ は実行されないが、 Python サブクラスでは __del__ が実行される。 破棄時に
+    binding の __del__ (GIL 解放下の stop) が例外なく呼べることを確認する。 binding から
+    __del__ を削除すると super().__del__() が AttributeError になるため、 この検証で
+    呼ばれたことが分かる。
     """
     del_called = []
     del_errors = []
