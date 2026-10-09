@@ -219,22 +219,32 @@ def test_av1_rtp_packetizer_outgoing_with_minimum_max_fragment_size() -> None:
 
 
 @pytest.mark.timeout(10)
-def test_packetizer_outgoing_releases_gil() -> None:
-    """RtpPacketizer.outgoing() が GIL を解放して実行されること
+@pytest.mark.parametrize("codec", ["h264", "h265", "av1"], ids=["h264", "h265", "av1"])
+def test_packetizer_outgoing_releases_gil(codec: str) -> None:
+    """RtpPacketizer 系の outgoing() が GIL を解放して実行されること
 
     sys.setswitchinterval を大きくして Python 側の定期切替を止め、 GIL を待つ thread が
     呼び出し中に進行するかで判定する。 GIL を解放しない呼び出しでは、 待機 thread は
-    進行できない。
+    進行できない。 映像の 3 クラスすべてで確認する。
     """
     # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
     # (call_guard の gil_scoped_release も no-op になる)
     if not getattr(sys, "_is_gil_enabled", lambda: True)():
         pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
 
-    config = make_rtp_config(H264RtpPacketizer.CLOCK_RATE)
-    packetizer = H264RtpPacketizer(NalUnit.Separator.Length, config, 1220)
     # 分割の回数を増やして呼び出し 1 回あたりの処理時間を稼ぐ
-    message = make_nal_message(bytes([0x65]) + bytes(63999))
+    if codec == "h264":
+        config = make_rtp_config(H264RtpPacketizer.CLOCK_RATE)
+        packetizer = H264RtpPacketizer(NalUnit.Separator.Length, config, 1220)
+        message = make_nal_message(bytes([0x65]) + bytes(63999))
+    elif codec == "h265":
+        config = make_rtp_config(H265RtpPacketizer.CLOCK_RATE)
+        packetizer = H265RtpPacketizer(NalUnit.Separator.Length, config, 1220)
+        message = make_nal_message(bytes([0x42, 0x01]) + bytes(63998))
+    else:
+        config = make_rtp_config(AV1RtpPacketizer.CLOCK_RATE)
+        packetizer = AV1RtpPacketizer(AV1RtpPacketizer.Packetization.Obu, config, 1220)
+        message = make_message(bytes([0x32]) + bytes(63999))
 
     counter = 0
     stop = False

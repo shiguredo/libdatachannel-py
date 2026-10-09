@@ -82,7 +82,7 @@ H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組�
   - `H264RtpPacketizer`: `max_fragment_size` が 4 未満または 65535 超を拒否する。 4〜65535 なら入力サイズによらずハングも範囲外アクセスも起きない (上記の全数確認)
   - `H265RtpPacketizer`: 同じく 6 未満または 65535 超を拒否する
   - `AV1RtpPacketizer`: `max_fragment_size` が 2 未満を拒否する (0 は `payload.at(0)` の範囲外、 1 は `payloadRemaining` が 0 になる)。 上限は無い
-- AV1 の SequenceHeader キャッシュ経路 (`max_fragment_size < 2 + SequenceHeader の長さ`) は binding では判定できない。 `AV1RtpPacketizer` は `mPacketization` / `mMaxFragmentSize` を公開しておらず、 Python 側から構築時の値を参照する手段も無いためである。 この経路は binding のコメントと issue に記録し、 libdatachannel 側の修正を upstream へ報告することを前提とする (利用者は SequenceHeader より十分大きい `max_fragment_size` を使う)
+- AV1 の SequenceHeader キャッシュ経路 (`max_fragment_size < 2 + SequenceHeader の長さ`) は binding では判定できない。 未知なのはキャッシュ済みの SequenceHeader の長さで、 `AV1RtpPacketizer` は `mSequenceHeader` を公開しておらず、 Python 側から読む手段も無い (クラスが final のため継承もできない)。 判定には libdatachannel と同じ OBU 解析 (TemporalUnit の leb128 走査を含む) を binding に二重実装する必要があり、 保守の負担に見合わないため採らない。 この経路は binding のコメントと issue に記録し、 libdatachannel 側の修正を upstream へ報告することを前提とする (利用者は SequenceHeader より十分大きい `max_fragment_size` を使う)
 - `outgoing` の binding に `nb::call_guard<nb::gil_scoped_release>()` を付ける。 検証で防げない経路が残っても、 GIL を保持したまま無限ループに入ってプロセス全体が固まることを避ける
 - 例外メッセージは libdatachannel 内部のものではなく、 何が問題かを示す英語のメッセージにし、 期待値と実際の値を含める (例: `max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2`)
 - テストは、 構築時の拒否を 1 プロセスで (`@pytest.mark.timeout(10)` を付けて)、 許可値で恒停しないことを子プロセス + timeout で確認する。 恒停し得るのは構築時に拒否されなかった値だけなので、 子プロセスで確認するのはその範囲になる。 なお `@pytest.mark.timeout(10)` は GIL を保持したままの native ループの中では発火しないため、 恒停の検出は子プロセスの timeout に頼る
