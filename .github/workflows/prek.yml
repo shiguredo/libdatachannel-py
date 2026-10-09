@@ -74,9 +74,9 @@ jobs:
       - name: Install wheel
         run: uv pip install --python .venv/bin/python dist/*.whl
 
-      # 型検査は失敗したら job を失敗させる (リトライの対象にしない)
+      # 型検査は失敗したら job を失敗させる (リトライの対象にしない)。
+      # 失敗した場合は以降のステップも実行されない
       - name: Run ty
-        id: ty
         uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
         with:
           extra-args: "--all-files ty"
