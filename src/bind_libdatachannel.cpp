@@ -41,7 +41,9 @@ template <>
 struct type_caster<std::vector<std::byte>> {
   NB_TYPE_CASTER(std::vector<std::byte>, const_name("bytes"));
 
-  bool from_python(handle src, uint8_t flags, cleanup_list* cleanup) {
+  // nanobind 3 で flags が uint32_t に広がったため合わせる。
+  // nanobind 側の宣言に合わせて noexcept を付ける (この caster は例外を投げない)
+  bool from_python(handle src, uint32_t flags, cleanup_list* cleanup) noexcept {
     if (PyBytes_Check(src.ptr()) == 0) {
       PyErr_Clear();
       return false;
@@ -829,7 +831,8 @@ void bind_h265nalunit(nb::module_& m) {
 class PyMediaHandler : public MediaHandler {};
 class PyMediaHandlerImpl : public PyMediaHandler {
  public:
-  NB_TRAMPOLINE(PyMediaHandler, 5);
+  // nanobind 3 で size 引数は不要になった (指定すると deprecation warning が出る)
+  NB_TRAMPOLINE(PyMediaHandler);
   void media(const Description::Media& desc) override {
     NB_OVERRIDE(media, desc);
   }
@@ -1378,6 +1381,11 @@ void close_peer_connection(PeerConnection& self) {
   while (self.state() != PeerConnection::State::Closed) {
     if (std::chrono::steady_clock::now() >= deadline) {
       nb::gil_scoped_acquire gil;
+      // Python 3.15 以降は interpreter 停止中に GIL を取得できない。 その場合は
+      // Python API を触らずに終了する (nanobind 3 の gil_scoped_acquire::is_valid)
+      if (!gil.is_valid()) {
+        return;
+      }
       // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
       // 放置せず Python 例外として伝播させる。
       if (PyErr_WarnEx(
@@ -1459,6 +1467,11 @@ void bind_peerconnection(nb::module_& m) {
               close_peer_connection(self);
             } catch (...) {
               nb::gil_scoped_acquire gil;
+              // Python 3.15 以降は interpreter 停止中に GIL を取得できない。
+              // その場合は Python API を触らずに握り潰す
+              if (!gil.is_valid()) {
+                return;
+              }
               PyErr_WarnEx(PyExc_RuntimeWarning,
                            "PeerConnection.__del__: close() failed", 1);
               // filterwarnings=error 等で warning が例外に昇格された場合も
@@ -1553,6 +1566,11 @@ void close_websocket(WebSocket& self) {
   while (self.readyState() != WebSocket::State::Closed) {
     if (std::chrono::steady_clock::now() >= deadline) {
       nb::gil_scoped_acquire gil;
+      // Python 3.15 以降は interpreter 停止中に GIL を取得できない。 その場合は
+      // Python API を触らずに終了する (nanobind 3 の gil_scoped_acquire::is_valid)
+      if (!gil.is_valid()) {
+        return;
+      }
       // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
       // 放置せず Python 例外として伝播させる。
       if (PyErr_WarnEx(

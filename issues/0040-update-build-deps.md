@@ -23,29 +23,30 @@
 - nanobind 3.0 の破壊的変更のうち、 本リポジトリに関係するもの:
   - `NB_TRAMPOLINE(Base, Size)` の `Size` が不要になり、 指定すると deprecation warning が出る (`src/bind_libdatachannel.cpp` の `PyMediaHandlerImpl` で `NB_TRAMPOLINE(PyMediaHandler, 5)` を使用)
   - 型 caster の `from_python()` の `flags` が `uint8_t` から `uint32_t` に拡張された (`src/bind_libdatachannel.cpp` の独自 caster で `uint8_t flags` を使用。 旧シグネチャでも動作するが警告が出る可能性がある)
-  - `nb::gil_scoped_acquire` が interpreter 停止中に失敗し得るようになり、 `is_valid()` でのガードが推奨される (該当箇所は `close_peer_connection` の timeout 分岐と `close_websocket` の timeout 分岐。 Python 3.15 未満では従来どおり)
-  - `nb::none` が wrapper class になり、 条件式で他の wrapper 型と混在できなくなった
-  - `rv_policy` は compile-time tag になり、 実行時に計算した値を渡せなくなった
+  - `nb::gil_scoped_acquire` が interpreter 停止中に失敗し得るようになり、 `is_valid()` でのガードが推奨される (該当箇所は `close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐の 3 箇所。 Python 3.15 未満では従来どおり `is_valid()` は常に true)。 本 issue でガードを実装する (`__del__` と GC の経路は interpreter 終了局面で走り得るため)
+  - `nb::none` が wrapper class になり、 条件式で他の wrapper 型と混在できなくなった (本リポジトリの使用箇所は `return nb::none()` とデフォルト引数のみで、 `class none : public object` のため実害なし)
+  - `rv_policy` は compile-time tag になり、 実行時に計算した値を渡せなくなった (本リポジトリの使用箇所はすべてリテラルのためソース修正不要)
+  - ビルド依存のバージョン固定は `pyproject.toml` の `requires` のみ (確認済み: `uv.lock` に nanobind / scikit-build-core は入らず、 CI にも固定なし)
 - 参考: nanobind 3.0.0 は Python 3.9 互換を誤って宣言していたため yank され、 3.0.1 が後継。 最新は 3.1.0
 
 ## 設計方針
 
 - `pyproject.toml` の `requires` を `nanobind>=3.1.0` と `scikit-build-core>=1.1.1` に更新する (`minimum-version = "build-system.requires"` により scikit-build-core の最小バージョンも同期する)
+- `tool.scikit-build.metadata` を scikit-build-core 1.0 以降の標準記法である `[[tool.dynamic-metadata]]` へ移行するかどうかを判断する。 移行形は scikit-build-core 1.1.1 の実装と一致する (`field = "version"` が必要) が、 **tombi のスキーマが `tool.dynamic-metadata` を Table として定義しており Array を拒否するため移行しない** (tombi 1.7.3 と最新版の両方で再現。 tombi が対応した時点で切り替える)。 移行しない場合はビルド時に deprecation warning が出るため、 その旨を pyproject.toml のコメントに残す
 - nanobind 3 で必要なソース修正を行う:
   - `NB_TRAMPOLINE(PyMediaHandler, 5)` を `NB_TRAMPOLINE(PyMediaHandler)` にする
   - 独自型 caster の `from_python()` の `flags` を `uint32_t` に広げる
-  - `nb::gil_scoped_acquire` の `is_valid()` ガードは、 Python 3.15 未満で挙動が変わらないことと、 ガードしない場合の実害 (停止中の acquire で恒停し得る) を確認したうえで要否を決める
+  - `nb::gil_scoped_acquire` の 3 箇所 (`close_peer_connection` の timeout 分岐 / `PeerConnection.__del__` の `catch (...)` / `close_websocket` の timeout 分岐) に `is_valid()` ガードを入れる
   - その他、 ビルドエラー・警告が出た箇所を修正する
-- ビルドは `make develop` (フルビルド) で確認し、 ホイール生成 (`uv build --wheel`) も確認する
-- `uv.lock` や CI のビルドステップにビルド依存のバージョン固定があれば合わせて更新する
+- ビルドは `make develop` で確認し、 警告の有無は `uv build --wheel --verbose` の出力で確認する (`verbose = false` のため既定ではコンパイラ出力が抑制される)
 
 ## 完了条件
 
-- `make develop` が通る (nanobind 3 系 / scikit-build-core 1.1.1 でコンパイルエラー・警告なし)
-- `uv build --wheel` が通り、 生成したホイールで `uv run --no-sync python -m pytest tests/ -v --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close` が PASS する
+- `make develop` が通り、 `uv build --wheel -Cbuild.verbose=true` の出力にコンパイル警告が出ない (`uv build` の `--verbose` は scikit-build-core に伝わらないため、 設定で有効化する)
+- 生成したホイールを CI と同じ手順で検証する: `rm -rf dist .venv-wheel` → `uv build --wheel` → `uv venv --python 3.12 .venv-wheel` → `uv pip install --python .venv-wheel/bin/python --group test dist/*.whl` → `.venv-wheel/bin/python -m pytest tests/ -v --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close` が PASS する
 - `prek run --all-files pytest` (prek.toml の pytest フック) が PASS する
 - CI (wheel.yml の 24 leg / prek.yml の `ty` ジョブ) が PASS する
-- `CHANGES.md` の `## develop` に `[UPDATE]` エントリが追加されている
+- `CHANGES.md` の `## develop` の既存 `[UPDATE]` エントリ (scikit-build-core / nanobind) が新しい最小バージョンに更新され、 ソース修正の内容が反映されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## スコープ外 (関連する未解決問題)

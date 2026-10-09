@@ -18,9 +18,11 @@
   - @voluntas
 - [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
-- [UPDATE] scikit-build-core の最小バージョンを 1.0.3 にする
+- [UPDATE] scikit-build-core の最小バージョンを 1.1.1 にする
   - @voluntas
-- [UPDATE] nanobind の最小バージョンを 2.13.0 にする
+- [UPDATE] nanobind の最小バージョンを 3.1.0 にする
+  - nanobind 3 で `NB_TRAMPOLINE` の size 引数が不要になったため削除し、 型 caster の `flags` を `uint32_t` に広げた
+  - `nb::gil_scoped_acquire::is_valid()` を使い、 interpreter 停止中は Python API を触らずに終了するようにした (Python 3.15 以降で必要)
   - @voluntas
 - [ADD] Python 3.14t に対応する
   - Free Threading 対応

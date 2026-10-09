@@ -48,7 +48,7 @@ test = [
 ]
 
 [build-system]
-requires = ["nanobind>=2.13.0", "scikit-build-core>=1.0.3"]
+requires = ["nanobind>=3.1.0", "scikit-build-core>=1.1.1"]
 build-backend = "scikit_build_core.build"
 
 [tool.pytest.ini_options]
@@ -500,6 +500,9 @@ verbose = false
 packages = ["src/libdatachannel"]
 expand-macos-universal-tags = true
 
+# 標準記法 [[tool.dynamic-metadata]] への移行は、 tombi のスキーマが当該キーを
+# Table として定義しており Array を拒否するため見送る (tombi 1.7.3 / 最新版の両方で再現)。
+# 移行できるようになった時点で切り替える
 [tool.scikit-build.metadata.version]
 provider = "scikit_build_core.metadata.regex"
 input = "VERSION"
