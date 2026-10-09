@@ -587,6 +587,11 @@ def test_request_media_control_releases_gil(operation: str) -> None:
     進行できない。 呼び出しは送信経路を通るため RtcpReceivingSession を持つ受信側
     トラックを使う (戻り値が真であることが送信経路を通った証拠)。
     """
+    # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
+    # (call_guard の gil_scoped_release も no-op になる)。
+    if not getattr(sys, "_is_gil_enabled", lambda: True)():
+        pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
+
     pc1, pc2, _t1, t2, _dc1 = make_loopback_with_pli(lambda: None)
 
     def call_media_control() -> bool:
@@ -615,6 +620,8 @@ def test_request_media_control_releases_gil(operation: str) -> None:
         baseline = counter - baseline_start
 
         # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
+        # 1 呼び出しあたり switch interval (1 秒) 分の GIL 再取得待ちが入るため、
+        # 回数を増やすと所要時間が線形に伸びる。
         target_start = counter
         for _ in range(5):
             assert call_media_control(), f"{operation}() が送信経路を通らなかった"
