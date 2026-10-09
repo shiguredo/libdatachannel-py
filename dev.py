@@ -1,6 +1,5 @@
 import argparse
 import subprocess
-import sys
 
 
 # ファイルを読み込み、バージョンを更新
@@ -41,44 +40,6 @@ def update_version(file_path: str, dry_run: bool) -> str | None:
         print(f"Version updated in {file_path} to {new_version}")
 
     return new_version
-
-
-# prek の pytest フックはビルド済みの拡張モジュールを必要とする (prek.toml 参照)。
-# 未ビルドの場合は make develop 相当を実行しておく
-def ensure_extension(dry_run: bool) -> None:
-    if dry_run:
-        print("Dry-run: Would run 'make develop' when the extension is not built")
-        return
-
-    probe = subprocess.run(
-        ["uv", "run", "python", "-c", "import libdatachannel"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if probe.returncode == 0:
-        return
-
-    print("Building the extension module for the pytest hook (make develop)...")
-    subprocess.run(["make", "develop"], check=True)
-
-
-# prek のフックを commit の前に実行する
-#
-# commit 時にも prek のフックが走るが、 失敗すると commit が中断されて tag と push まで
-# 到達しない。 事前に実行して、 失敗した場合は理由を表示して終了する
-def run_prek(dry_run: bool) -> None:
-    if dry_run:
-        print("Dry-run: Would run 'prek run --all-files'")
-        return
-
-    result = subprocess.run(["prek", "run", "--all-files"], check=False)
-    if result.returncode != 0:
-        print(
-            "prek failed. Fix the reported issues and run this script again.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
 
 
 # uv sync を実行し、uv.lock を git に追加
@@ -133,12 +94,6 @@ def main() -> None:
 
     # uv sync 実行
     run_uv_sync(args.dry_run)
-
-    # pytest フック用の拡張モジュールを用意
-    ensure_extension(args.dry_run)
-
-    # prek のフックを commit の前に実行
-    run_prek(args.dry_run)
 
     # git 操作
     git_operations(new_version, args.dry_run)
