@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-ci-pytest-retry
 - Polished: {YYYY-MM-DD}
 
@@ -38,6 +38,13 @@ prek.yml の `ty` ジョブにある pytest のリトライが、 1 回目の失
 - `ty` が失敗した場合はリトライされず job が failure になること
 - `CHANGES.md` の `### misc` にエントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `.github/workflows/prek.yml` の `ty` ジョブのステップを `Run ty` と `Run pytest` に分けた。 1 つのステップで ty と pytest をまとめて実行すると、 `continue-on-error` により ty の失敗までリトライで救済されて型検査のゲートが失われるため
+- `Run pytest` に `continue-on-error: true` を付け、 `Warn pytest retry` と `Retry pytest` の条件を `steps.pytest.outcome == 'failure'` にした。 これにより 1 回目失敗 + 2 回目成功なら job は success、 2 回目も失敗なら job は failure、 ty が失敗した場合はリトライされず job は failure になる
+- リトライ時に `::warning::pytest failed; retrying the test suite once` を出し、 wheel.yml と同じ文言にした
+- `CHANGES.md` の `### misc` に `[FIX]` エントリを追加した
 
 ## スコープ外 (関連する未解決問題)
 
