@@ -79,6 +79,14 @@ else()
     UPDATE_COMMAND ""
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_SSL_DTLS_SRTP
+      # MbedTLS をスレッドセーフにする。 libdatachannel は複数の thread から
+      # psa_crypto_init() / mbedtls_entropy_func() を呼ぶため、 MBEDTLS_THREADING_C が
+      # 無いと mbedTLS 内部の状態が壊れてヒープ破壊 (malloc の freelist 検査で SIGTRAP、
+      # または SIGSEGV) を起こす。 MbedTLS 自身の mbedtls_config.h にも
+      # 「複数 thread から PSA 関数を呼ぶ場合は MBEDTLS_THREADING_C が必要」と書かれている
+      # (Windows は pthread が無いため対象外。 必要になったら MBEDTLS_THREADING_ALT を使う)
+      COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_THREADING_C
+      COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_THREADING_PTHREAD
       COMMAND ${CMAKE_COMMAND}
         -S ${MBEDTLS_SOURCE_DIR}
         -B ${MBEDTLS_BUILD_DIR}

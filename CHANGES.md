@@ -11,6 +11,10 @@
 
 ## develop
 
+- [FIX] mbedTLS をスレッドセーフにビルドする
+  - スレッド対応が無い設定でビルドしていたため、 複数の thread から TLS を初期化したときに mbedTLS 内部 (PSA / entropy) の状態が壊れ、 TLS の初期化中に SIGTRAP (malloc の freelist 検査) や SIGSEGV でプロセスが落ちていた
+  - WebSocketServer / WebSocket の TLS 接続が稀にプロセスごと落ちる問題を修正する (mbedTLS のビルドを再現可能にするため、 libdatachannel も同じ設定で再ビルドが必要)
+  - @voluntas
 - [CHANGE] `Media.as_audio()` / `Media.as_video()` が参照を返すようにする
   - 従来は値コピーを返しており、 戻り値への codec 追加が元の `Media` に反映されなかった
   - 動的型が一致する場合は同じオブジェクトを返し、 一致しない場合は `TypeError` になる (従来は未定義動作)

@@ -19,13 +19,21 @@ from libdatachannel import (
 # を Python に直したもの
 def test_websocketserver():
     server_config = WebSocketServerConfiguration()
-    server_config.port = 48080
+    # port に 0 を指定して OS に空きポートを割り当てさせ、 前のテストや残存プロセスとの
+    # bind 衝突を避ける (実際に割り当てられたポートは server.port() で取得する)
+    server_config.port = 0
     server_config.enable_tls = True
     server_config.bind_address = "127.0.0.1"
     server_config.max_message_size = 1000
     server = WebSocketServer(server_config)
+    port = server.port()
 
     client = None
+
+    # サーバー側 callback の完了を待つためのイベント (sleep によるポーリングをしない)
+    client_opened = threading.Event()
+    client_closed = threading.Event()
+    client_message_received = threading.Event()
 
     def server_on_client(incoming):
         nonlocal client
@@ -43,14 +51,17 @@ def test_websocketserver():
             path = client.path()
             if path is not None:
                 print(f"WebSocketServer: Requested path is {path}")
+            client_opened.set()
 
         def client_on_closed():
             print("WebSocketServer: Client connection closed")
+            client_closed.set()
 
         def client_on_message(message):
             nonlocal client
             assert client is not None
             client.send(message)
+            client_message_received.set()
 
         client.on_open(client_on_open)
         client.on_closed(client_on_closed)
@@ -64,14 +75,22 @@ def test_websocketserver():
 
     my_message = "Hello world from client"
 
+    # クライアント側 callback の完了を待つためのイベント (sleep によるポーリングをしない)
+    ws_opened = threading.Event()
+    ws_closed = threading.Event()
+    message_received = threading.Event()
+    max_size_received_event = threading.Event()
+
     def ws_on_open():
         print("WebSocket: Open")
         assert ws is not None
         ws.send(b"\x00" * 1001)
         ws.send(my_message)
+        ws_opened.set()
 
     def ws_on_closed():
         print("WebSocket: Closed")
+        ws_closed.set()
 
     ws.on_open(ws_on_open)
     ws.on_closed(ws_on_closed)
@@ -86,33 +105,39 @@ def test_websocketserver():
             received = message == my_message
             if received:
                 print("WebSocket: Received expected message")
+                message_received.set()
             else:
                 print("WebSocket: Received UNEXPECTED message")
         else:
             max_size_received = len(message) == 1000
             if max_size_received:
                 print("WebSocket: Received large message truncated at max size")
+                max_size_received_event.set()
             else:
                 print("WebSocket: Received large message NOT TRUNCATED")
 
     ws.on_message(ws_on_message)
 
-    ws.open("wss://localhost:48080/")
+    ws.open(f"wss://localhost:{port}/")
 
-    attempts = 15
-    while (not ws.is_open() or not received) and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    # callback から通知されるまで待つ (ポーリングしない)
+    assert ws_opened.wait(timeout=15), "クライアントの WebSocket が open にならなかった"
+    assert client_opened.wait(timeout=15), "サーバー側のクライアント接続が open にならなかった"
+    assert client_message_received.wait(timeout=15), "サーバーがメッセージを受信しなかった"
+    assert message_received.wait(timeout=15), "エコーされたテキストメッセージを受信しなかった"
+    assert max_size_received_event.wait(timeout=15), (
+        "上限で切り詰められたバイナリメッセージを受信しなかった"
+    )
 
     assert ws.is_open()
     assert max_size_received
     assert received
 
     ws.close()
-    time.sleep(1)
+    assert ws_closed.wait(timeout=15), "クライアントの WebSocket が close にならなかった"
 
     server.stop()
-    time.sleep(1)
+    assert client_closed.wait(timeout=15), "サーバー側のクライアント接続が close にならなかった"
 
     # これが無いとリークする
     ws = None
@@ -136,7 +161,8 @@ def test_stop_releases_gil() -> None:
         pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
 
     config = WebSocketServerConfiguration()
-    config.port = 48090
+    # 固定ポートだと前のテストや残存プロセスと衝突するため動的確保にする
+    config.port = 0
     config.bind_address = "127.0.0.1"
     server = WebSocketServer(config)
 
@@ -211,7 +237,8 @@ def test_destruct_without_explicit_close() -> None:
     別 issue で扱う。
     """
     config = WebSocketServerConfiguration()
-    config.port = 48091
+    # 固定ポートだと前のテストや残存プロセスと衝突するため動的確保にする
+    config.port = 0
     config.bind_address = "127.0.0.1"
     server = WebSocketServer(config)
     ref = weakref.ref(server)
@@ -255,7 +282,8 @@ def test_del_calls_stop_on_python_subclass() -> None:
                 pass
 
     config = WebSocketServerConfiguration()
-    config.port = 48092
+    # 固定ポートだと前のテストや残存プロセスと衝突するため動的確保にする
+    config.port = 0
     config.bind_address = "127.0.0.1"
     server = Server(config)
 

@@ -107,14 +107,8 @@ jobs:
           # 除外するテスト: test_destruct_without_explicit_close は GIL と libdatachannel の
           # mutex のデッドロックで停止し、 pytest-timeout も発火しないため job の timeout まで
           # 止まる。 根本対応は別途行う。
-          run_pytest() {
-            .venv-test/bin/python -m pytest tests/ -v \
-              --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
-          }
-          run_pytest || {
-            echo "::warning::pytest failed; retrying the test suite once"
-            run_pytest
-          }
+          .venv-test/bin/python -m pytest tests/ -v \
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
 
       # free-threading の leg では GIL が無効であることを確認する。
       # モジュールを import した後で確認することで、 GIL を使うモジュールが静かに GIL を
@@ -173,14 +167,8 @@ jobs:
           set -euo pipefail
           uv venv --python "${{ matrix.python_version }}" .venv-test
           uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
-          run_pytest() {
-            .venv-test/bin/python -m pytest tests/ -v \
-              --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
-          }
-          run_pytest || {
-            echo "::warning::pytest failed; retrying the test suite once"
-            run_pytest
-          }
+          .venv-test/bin/python -m pytest tests/ -v \
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
 
       # free-threading の leg ではモジュールを import した後で GIL が無効であることを確認する
       - name: Check free-threading
