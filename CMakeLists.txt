@@ -151,12 +151,45 @@ else()
 endif()
 
 # nanobind モジュール
-nanobind_add_module(libdatachannel_ext
-  NB_DOMAIN "libdatachannel"
-  FREE_THREADED
-  src/bind_libdatachannel.cpp
-  src/libdatachannel_ext.cpp
-)
+#
+# Free-Threading 対応の Python (3.13t / 3.14t) かどうかをここで判定し、 FREE_THREADED を
+# 明示的に指定する。 nanobind は GIL ありの Python では ARG_FREE_THREADED をエラーも
+# 警告もなく FALSE に上書きするため、 黙って方針と食い違わないようにする。
+#
+# 方針: Free-Threading 版の wheel は 3.14t の leg でビルドし、 GIL あり版は従来どおり
+# 3.12 / 3.13 / 3.14 の leg でビルドする (requires-python >= 3.12 と classifiers は
+# どちらの wheel も配布する前提)。 3.13t 向けの wheel は配布しない。
+# 判定は nanobind と同じく Python の ABI が Free-Threading かどうか (`[0-9]t`) で行う。
+set(LIBDATACHANNEL_FREE_THREADED OFF)
+if(NB_FREE_THREADED
+   OR Python_SOABI MATCHES "[0-9]t"
+   OR SKBUILD_SOABI MATCHES "[0-9]t")
+  set(LIBDATACHANNEL_FREE_THREADED ON)
+endif()
+
+if(LIBDATACHANNEL_FREE_THREADED)
+  message(STATUS "Free-Threading 対応の Python のため FREE_THREADED を指定する")
+  nanobind_add_module(libdatachannel_ext
+    NB_DOMAIN "libdatachannel"
+    FREE_THREADED
+    src/bind_libdatachannel.cpp
+    src/libdatachannel_ext.cpp
+  )
+else()
+  message(STATUS "GIL ありの Python のため FREE_THREADED を指定しない (GIL あり版の wheel を配布する)")
+  nanobind_add_module(libdatachannel_ext
+    NB_DOMAIN "libdatachannel"
+    src/bind_libdatachannel.cpp
+    src/libdatachannel_ext.cpp
+  )
+endif()
+
+# 判定と実際のビルドが食い違っていないことを確認する (nanobind の暗黙の上書きを検出する)
+if(LIBDATACHANNEL_FREE_THREADED AND NOT NB_FREE_THREADED)
+  message(WARNING "Free-Threading 対応の Python だが FREE_THREADED が無効化された")
+elseif(NOT LIBDATACHANNEL_FREE_THREADED AND NB_FREE_THREADED)
+  message(WARNING "GIL ありの Python だが FREE_THREADED が有効になった")
+endif()
 
 # ビルド順序を保証するため依存関係を追加
 add_dependencies(libdatachannel_ext mbedtls_build libdatachannel_build)
