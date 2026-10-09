@@ -1255,8 +1255,10 @@ void bind_rtppacketizer(nb::module_& m) {
 // 引いた値が 0 のときは offset が進まず空のフラグメントを確保し続け、 ヘッダ長より
 // 小さいときは size_t がアンダーフローして範囲外のイテレータ対を作る (Release ビルド
 // では assert が消えるため libdatachannel 側の防御が働かない)。
-// m1 は max_fragment_size 以下になるため、 下限はヘッダ長の 2 倍 (H264 は 4、 H265 は 6)、
-// 上限は m1 が uint16_t に切り詰められない 65535 になる
+// 引いた値がヘッダ長以下になるのは、 m1 が max_fragment_size の半分以下に落ちるときだけで、
+// max_fragment_size がヘッダ長の 2 倍以上なら size > max_fragment_size の範囲で起きない。
+// そのため下限はヘッダ長の 2 倍 (H264 は 4、 H265 は 6) になる。
+// 上限は、 m1 が max_fragment_size 以下であることから、 uint16_t に切り詰められない 65535
 constexpr size_t kMinH264MaxFragmentSize = 4;
 constexpr size_t kMinH265MaxFragmentSize = 6;
 constexpr size_t kMaxFragmentSizeUpperBound = 65535;

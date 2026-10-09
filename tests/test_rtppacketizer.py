@@ -87,7 +87,7 @@ def test_h264_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: 
     """
     config = make_rtp_config(H264RtpPacketizer.CLOCK_RATE)
     expected = (
-        "max_fragment_size must be at least 4 to fragment an H264 NAL unit, "
+        "H264RtpPacketizer: max_fragment_size must be at least 4 to fragment an H264 NAL unit, "
         f"got {max_fragment_size}"
     )
     with pytest.raises(ValueError, match=expected):
@@ -131,7 +131,7 @@ def test_h264_rtp_packetizer_rejects_large_max_fragment_size(max_fragment_size: 
     """
     config = make_rtp_config(H264RtpPacketizer.CLOCK_RATE)
     expected = (
-        "max_fragment_size must be at most 65535 to fragment an H264 NAL unit, "
+        "H264RtpPacketizer: max_fragment_size must be at most 65535 to fragment an H264 NAL unit, "
         f"got {max_fragment_size}"
     )
     with pytest.raises(ValueError, match=expected):
@@ -147,7 +147,7 @@ def test_h265_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: 
     """
     config = make_rtp_config(H265RtpPacketizer.CLOCK_RATE)
     expected = (
-        "max_fragment_size must be at least 6 to fragment an H265 NAL unit, "
+        "H265RtpPacketizer: max_fragment_size must be at least 6 to fragment an H265 NAL unit, "
         f"got {max_fragment_size}"
     )
     with pytest.raises(ValueError, match=expected):
@@ -166,8 +166,8 @@ def test_h265_rtp_packetizer_outgoing_with_minimum_max_fragment_size(
 
     H265 は FU ヘッダが 3 バイトのため、 分割が起きる最小のサイズは 7 バイト、
     2 * max_fragment_size + 1 は 13 バイトになる。 1000 バイトは正常系、 65535 は
-    フラグメント長が uint16_t に切り詰められない上限で、 131070 バイトの NAL で
-    境界を確認する。
+    フラグメント長が uint16_t に切り詰められない上限で、 131070 バイト (分割数 2 で
+    切り詰め前のフラグメント長が 65535 になる最大のサイズ) の NAL で境界を確認する。
     """
     result = _run_packetizer_outgoing("h265", max_fragment_size, nal_size)
     assert result.returncode == 0, (
@@ -185,7 +185,7 @@ def test_h265_rtp_packetizer_rejects_large_max_fragment_size(max_fragment_size: 
     """
     config = make_rtp_config(H265RtpPacketizer.CLOCK_RATE)
     expected = (
-        "max_fragment_size must be at most 65535 to fragment an H265 NAL unit, "
+        "H265RtpPacketizer: max_fragment_size must be at most 65535 to fragment an H265 NAL unit, "
         f"got {max_fragment_size}"
     )
     with pytest.raises(ValueError, match=expected):
@@ -202,7 +202,8 @@ def test_av1_rtp_packetizer_rejects_small_max_fragment_size(max_fragment_size: i
     """
     config = make_rtp_config(AV1RtpPacketizer.CLOCK_RATE)
     expected = (
-        f"max_fragment_size must be at least 2 to fragment an AV1 OBU, got {max_fragment_size}"
+        f"AV1RtpPacketizer: max_fragment_size must be at least 2 to fragment an AV1 OBU, "
+        f"got {max_fragment_size}"
     )
     with pytest.raises(ValueError, match=expected):
         AV1RtpPacketizer(AV1RtpPacketizer.Packetization.Obu, config, max_fragment_size)
