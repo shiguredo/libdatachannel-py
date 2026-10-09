@@ -1,5 +1,6 @@
 import gc
 import sys
+import threading
 import time
 import weakref
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from libdatachannel import (
     RtcpReceivingSession,
     RtcpSrReporter,
     RtpPacketizationConfig,
+    Track,
 )
 
 
@@ -361,7 +363,9 @@ def test_close_is_idempotent():
     assert pc.state() is PeerConnection.State.Closed
 
 
-def make_loopback_with_pli(on_pli: Callable[[], None]) -> tuple:
+def make_loopback_with_pli(
+    on_pli: Callable[[], None],
+) -> tuple[PeerConnection, PeerConnection, Track, Track, DataChannel]:
     """映像トラックに PliHandler を chain したループバック接続を作る
 
     送信側 (pc1) で映像トラックと DataChannel を開き、 受信側 (pc2) のトラックには
@@ -494,7 +498,7 @@ def test_send_releases_gil_for_incoming_callback():
     sending = False
     callback_during_send = False
 
-    def on_pli():
+    def on_pli() -> None:
         nonlocal callback_during_send
         # DataChannel.send() の実行中に callback が実行されたかどうかを記録する。
         if sending:
@@ -529,37 +533,29 @@ def test_send_releases_gil_for_incoming_callback():
 
 
 @pytest.mark.timeout(120)
-def test_request_keyframe_releases_gil_for_incoming_callback():
-    """Track.request_keyframe() を連続実行している間に受信経路の PLI callback が実行されること
+def test_request_keyframe_releases_gil_for_incoming_callback() -> None:
+    """Track.request_keyframe() が送信経路を通り PLI callback が動くこと
 
-    request_keyframe() は media handler chain の PliHandler 経由で送信経路に入るため、
-    binding が GIL を保持したまま実行すると、 受信した PLI を処理する worker thread が
-    GIL を取得できず恒久デッドロックする。 callback が request_keyframe() の実行区間で
-    実行されたかどうかを送信中フラグで確認する。
+    RtcpReceivingSession が send callback (= impl()->transportSend) を呼ぶことで送信
+    経路に入る。 戻り値が真であることが送信経路を通った証拠になる。 送った PLI は
+    pc1 の PliHandler が受信し、 worker thread が Python callback を実行する (実行
+    区間中かどうかは送信中フラグで見るが、 通常の GIL 切替でも成立し得るため GIL 解放の
+    証拠にはならない。 GIL 解放そのものは test_request_media_control_releases_gil で
+    測る)。 request_bitrate() は PLI ではなく REMB を送るため、 このテストの対象外。
 
-    恒久デッドロックはタイミング依存で発生するため、 このテストは callback 経路の
-    regression 検証であり、 修正前のコードではデッドロックして停止するか、 実行中の
-    callback が観測できない。 停止した場合は pytest-timeout では中断できず、 外部からの
-    kill が必要になる。 接続確立と PLI の往復を見込んで 120 秒を上限とする。
+    接続確立と PLI の往復を見込んで 120 秒を上限とする。
     """
     sending = False
     callback_during_send = False
 
-    def on_pli():
+    def on_pli() -> None:
         nonlocal callback_during_send
-        # Track.request_keyframe() の実行中に callback が実行されたかどうかを記録する。
+        # request_keyframe() の実行中に callback が動いたか記録する。
         if sending:
             callback_during_send = True
 
     pc1, pc2, _t1, t2, _dc1 = make_loopback_with_pli(on_pli)
 
-    # 測定区間では RtcpReceivingSession を持つ受信側トラック (t2) の request_keyframe()
-    # を呼ぶ。 これが PLI を送る送信経路 (pushPLI -> send -> transportSend) に入る唯一の
-    # 経路で、 真を返すことが送信経路を通った証拠になる。 送信側トラックの chain には
-    # requestKeyframe を実装するハンドラが無いため、 そちらでは送信経路に入らない。
-    # 送られた PLI は pc1 の PliHandler が受信し、 worker thread が GIL を取得して
-    # callback を実行する。 GIL を解放していれば request_keyframe() の実行中でも
-    # callback が動く。
     deadline = time.monotonic() + 10
     call_count = 0
     while not callback_during_send and time.monotonic() < deadline and call_count < 20000:
@@ -571,6 +567,65 @@ def test_request_keyframe_releases_gil_for_incoming_callback():
 
     assert callback_during_send, (
         f"Track.request_keyframe() の実行中に PLI の callback が実行されなかった (call_count={call_count})"
+    )
+
+    pc1.close()
+    pc2.close()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["request_keyframe", "request_bitrate"],
+    ids=["request_keyframe", "request_bitrate"],
+)
+@pytest.mark.timeout(120)
+def test_request_media_control_releases_gil(operation: str) -> None:
+    """Track の request_keyframe() / request_bitrate() が GIL を解放して実行されること
+
+    sys.setswitchinterval を大きくして Python 側の定期切替を止め、 GIL を待つ thread が
+    呼び出し中に進行するかで判定する。 GIL を解放しない呼び出しでは、 待機 thread は
+    進行できない。 呼び出しは送信経路を通るため RtcpReceivingSession を持つ受信側
+    トラックを使う (戻り値が真であることが送信経路を通った証拠)。
+    """
+    pc1, pc2, _t1, t2, _dc1 = make_loopback_with_pli(lambda: None)
+
+    def call_media_control() -> bool:
+        if operation == "request_keyframe":
+            return t2.request_keyframe()
+        return t2.request_bitrate(500000)
+
+    counter = 0
+    stop = False
+
+    def spin() -> None:
+        nonlocal counter
+        while not stop:
+            counter += 1
+
+    original_interval = sys.getswitchinterval()
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする。
+        sys.setswitchinterval(1.0)
+        # 呼び出し前の進行を測る (GIL を解放しない呼び出しの比較対象)。
+        baseline_start = counter
+        for _ in range(200):
+            t2.description()
+        baseline = counter - baseline_start
+
+        # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
+        target_start = counter
+        for _ in range(5):
+            assert call_media_control(), f"{operation}() が送信経路を通らなかった"
+        released = counter - target_start
+    finally:
+        stop = True
+        sys.setswitchinterval(original_interval)
+        thread.join(timeout=10)
+
+    assert released > baseline, (
+        f"{operation}() が GIL を解放しなかった (released={released}, baseline={baseline})"
     )
 
     pc1.close()
