@@ -4,7 +4,7 @@
 - Created: 2026-10-08
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-rtp-packetizer-small-fragment-size-hang
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-10
 
 ## 目的
 
@@ -12,10 +12,11 @@ H264RtpPacketizer / H265RtpPacketizer / AV1RtpPacketizer の `max_fragment_size`
 
 ## 優先度根拠
 
-- `max_fragment_size` に 1〜4 を渡すと `outgoing()` が無限ループし、 RSS が 6.5 GB から 23 GB へ約 6 秒で増加した (実測)。 OOM でマシンごと落ちうる
+- `max_fragment_size` にハングする値 (例: H264 の 4 バイト NAL に 2) を渡すと `outgoing()` が無限ループし、 RSS が 6.5 GB から 23 GB へ約 6 秒で増加した (実測)。 追試でも 2.0 MB から 7.2 GB へ 2.8 秒で増加した。 OOM でマシンごと落ちうる
 - ハング中は GIL を保持したままなのでプロセス全体が固まり、 KeyboardInterrupt も効かない (`outgoing` の binding に `nb::call_guard<nb::gil_scoped_release>()` が付いていない。 実測でハング中は他のスレッドが 1 度も動かないことを確認)
+- AV1 に小さい値を渡すと、 ハングではなくヒープ破壊による即時クラッシュになる (6 バイトの SequenceHeader を渡した後で `max_fragment_size` 2 を渡すと exit 138)。 ハングと違って回避の余地が無くプロセスごと落ちる
 - 例外になる場合も `ValueError: vector` / `IndexError: vector` という libdatachannel 内部のメッセージで、 原因が分からない
-- 既定値 (1220) と既存のテスト / サンプル (1200) では発生しないが、 明示的に小さい値を渡すだけで到達する
+- 既定値は `RtpPacketizer::DefaultMaxFragmentSize` (1220) で、 明示的に 1200 を渡しているのは `tests/test_peerconnection.py` と `examples/whip.py` だけである。 どちらも正常に動く値で、 小さい値を渡すだけで到達する
 
 ## 現状
 
@@ -56,36 +57,52 @@ H264 / H265 の `generateFragments` (`source/src/nalunit.cpp` / `source/src/h265
 
 `m1 < ヘッダサイズ` のときは範囲外のイテレータ対を作るため、 libc++ の range コンストラクタが `std::length_error` を投げ、 Python では `ValueError: vector` になる。 `m1 == ヘッダサイズ` のときは 0 バイトのフラグメントを追加し続け、 `offset += m2` が進まないため無限ループになる (空のフラグメントを確保し続けるためメモリが増え続ける)。
 
-AV1 の `AV1RtpPacketizer::outgoing` (`source/src/av1rtppacketizer.cpp`) は `payload(std::min(max_fragment_size, size + 1))` を作るため、 `max_fragment_size` が 0 のとき `payload.at(0)` が `std::out_of_range` になり Python では `IndexError: vector` になる。 1 のときは `payloadRemaining` が 0 になり `index` が進まないため無限ループになる。
+AV1 は `outgoing` を上書きせず、 private の `AV1RtpPacketizer::fragment` から `AV1RtpPacketizer::fragmentObu` (`source/src/av1rtppacketizer.cpp`) に入る。 `binary payload(std::min(size_t(mMaxFragmentSize), remaining + metadataSize))` を作るため、 `max_fragment_size` が 0 のとき `payload.at(0)` が `std::out_of_range` になり Python では `IndexError: vector` になる。 1 のときは `payloadOffset` が `payload.size()` と等しくなって `payloadRemaining` が 0 になり、 `remaining` と `index` が進まないため無限ループになる。
 
-壊れる条件は `max_fragment_size` だけでなく NAL / OBU のサイズにも依存する (例: H264 は 4 バイトの NAL で 3 を渡すとハングするが、 1000 バイトの NAL では 3 は正常)。 libdatachannel master でも未修正である。
+`fragmentObu` は SequenceHeader OBU を `mSequenceHeader` にキャッシュして呼び出しをまたいで保持し、 次の呼び出しで `payload` の先頭に前置する。 このとき `metadataSize` は `2 + SequenceHeader の長さ`、 `payloadOffset` も同じ値になるため、 `max_fragment_size < 2 + SequenceHeader の長さ` では次のどちらかになる (実測)。
+
+- `max_fragment_size` が 1 のとき: `payload.at(1)` が範囲外になり `IndexError: vector`
+- `max_fragment_size` が `2 + SequenceHeader の長さ` 未満のとき: SequenceHeader を前置する `memcpy` が `payload` をはみ出し、 続いて `payload.size() - payloadOffset` が `size_t` でアンダーフローして `memcpy` の長さが巨大になる。 いずれにしてもヒープ破壊で、 その後の症状 (ハング / クラッシュ) は実行環境によって変わる
+
+実際、 6 バイトの SequenceHeader をキャッシュさせた後は `max_fragment_size` 1 で `IndexError`、 2〜7 (`2 + SequenceHeader の長さ` 未満の全域) で `memcpy` の長さが巨大になって即時クラッシュする (実測で exit 138。 素の 6 バイト OBU なら 2 は正常)。 表の AV1 の値は **SequenceHeader を渡していない場合** のものである。
+
+H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組み合わせで決まる (例: H264 は 4 バイトの NAL で 3 を渡すとハングするが、 1000 バイトの NAL では 3 は正常)。 `size` 1〜4000 と `max_fragment_size` 0〜40 の全組み合わせを上記の式で再計算したところ、 **H264 は `max_fragment_size` 4 以上、 H265 は 6 以上でハングも範囲外アクセスも 1 件も発生しない** (H264 は 3 以下、 H265 は 5 以下で、 入力サイズによっては発生する)。 つまり「下限を検証しても防げない」のではなく、 「ヘッダサイズの 2 倍 (H264 は 4、 H265 は 6) 未満の下限では防げない」 のが正確である。
+
+さらに AV1 は事前に渡した SequenceHeader の長さにも依存するため、 `max_fragment_size` と入力サイズだけでは壊れる条件を決められない。 libdatachannel v0.24.0 では未修正で、 upstream の master でも同じ算術である。
 
 ### binding 側
 
 - `bind_rtp_packetizer` 系は `"max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize` をそのまま受け取り、 下限を検証していない
 - `outgoing` の binding には `nb::call_guard<nb::gil_scoped_release>()` が付いていないため、 ハングすると GIL を保持したままプロセス全体が固まる
-- 既存のテスト (`tests/test_peerconnection.py`) とサンプル (`examples/whip.py`) は 1200 / 1220 しか渡しておらず、 境界値のテストはない ([[0026-test-add-missing-binding-tests]] の対象)
+- Packetizer 系のテストは `tests/test_rtppacketizer.py` に `RtpPacketizer` / `OpusRtpPacketizer` の構築確認しかなく、 `outgoing` を呼ぶテストは無い。 [[0026-test-add-missing-binding-tests]] は未テストの binding を一般的にカバーする issue で、 本 issue は `max_fragment_size` の境界値と壊れる入力を対象にする
 
 ## 設計方針
 
-- 「壊れる条件」は `max_fragment_size` と入力サイズの組み合わせで決まるため、 `max_fragment_size` の下限検証だけでは防げない。 次のどれを取るかを実装時に決める
-  - `max_fragment_size` の下限を検証する (`nb::value_error`)。 単独では不十分なため、 防げない組み合わせが残ることを issue に記録する
-  - `outgoing` の binding で、 渡されたメッセージのサイズと `max_fragment_size` から壊れる条件 (上記の式) を判定し、 該当する場合は `nb::value_error` を投げる
-  - libdatachannel 側の修正を upstream に報告することを前提にし、 binding には当面の回避 (上記のいずれか) を入れる
-- どの案でも、 ハングする組み合わせが例外になることをテストで固定する (テスト自体がハングしない形で書く。 例: `max_fragment_size` と入力サイズの組み合わせを引数化し、 例外になることだけを確認する)
-- 例外メッセージは libdatachannel 内部のものではなく、 何が問題かを示すものにする
+- binding 側で構築時に下限を検証し、 壊れる入力は `nb::value_error` で拒否する。 libdatachannel 本体は Release ビルドで `assert` が消えるため入力の防御が無い (`generateFragments` の `assert(size() > maxFragmentSize)` も同様)
+  - `H264RtpPacketizer`: `max_fragment_size < 4` を拒否する。 4 以上なら入力サイズによらずハングも範囲外アクセスも起きない (上記の全数確認)
+  - `H265RtpPacketizer`: `max_fragment_size < 6` を拒否する
+  - `AV1RtpPacketizer`: `max_fragment_size < 2` を拒否する (0 は `payload.at(0)` の範囲外、 1 は `payloadRemaining` が 0 になる)
+- AV1 の SequenceHeader キャッシュ経路 (`max_fragment_size < 2 + SequenceHeader の長さ`) は binding では判定できない。 `AV1RtpPacketizer` は `mPacketization` / `mMaxFragmentSize` を公開しておらず、 Python 側から構築時の値を参照する手段も無いためである。 この経路は binding のコメントと issue に記録し、 libdatachannel 側の修正を upstream へ報告することを前提とする (利用者は SequenceHeader より十分大きい `max_fragment_size` を使う)
+- `outgoing` の binding に `nb::call_guard<nb::gil_scoped_release>()` を付ける。 検証で防げない経路が残っても、 GIL を保持したまま無限ループに入ってプロセス全体が固まることを避ける
+- 例外メッセージは libdatachannel 内部のものではなく、 何が問題かを示す英語のメッセージにし、 期待値と実際の値を含める (例: `max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2`)
+- テストは構築時の拒否と `outgoing` の正常動作を確認する形にし、 ハングし得る入力は構築時に拒否されるためテスト内で `outgoing` に到達しない。 防御の本体はこの構築時の拒否である。 `@pytest.mark.timeout(10)` は保険として付ける (GIL を保持したままの native ループの中では SIGALRM が発火しないため、 timeout だけでは守れない)
 
 ## 完了条件
 
-- `max_fragment_size` に小さい値を渡してもハングせず、 メモリを消費し続けないこと
-- 壊れる条件が判定され、 該当する呼び出しが例外になること (または libdatachannel 側の修正を前提とした回避が入っていること)
-- H264 / H265 / AV1 の 3 クラスで、 境界の値と正常値をカバーするテストが追加されていること
-- 例外になる場合は原因が分かるメッセージになること
-- `uv sync && make test` で全テストが PASS すること (既知の恒停を持つテストは [[0005-bug-fix-destructor-callback-deadlock]] の対象)
+- 下限未満の `max_fragment_size` を構築時に拒否すること。 例外は `ValueError` で、 メッセージに期待値と実際の値を含むこと (`max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` の形)
+- 次の境界値と正常値をテストで固定すること (1 プロセスで完結し、 ハングしない形で書く。 `@pytest.mark.timeout(10)` を付ける)
+  - H264: `max_fragment_size` 1 / 2 / 3 (拒否) と 4 (許可)。 入力は 4 バイトの NAL (境界) と 1000 バイトの NAL (正常)
+  - H265: 1 / 2 / 3 / 4 / 5 (拒否) と 6 (許可)。 入力は 5 バイトの NAL と 1000 バイトの NAL
+  - AV1: 0 / 1 (拒否) と 2 (許可)。 入力は OBU 6 バイト (SequenceHeader を渡さない前提)
+- 許可した値で `outgoing` がハングせず、 フラグメントが返ること
+- `outgoing` が GIL を解放すること (他スレッドが動くことを確認する)
+- `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` が PASS すること
+- CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS すること
+- `CHANGES.md` の `## develop` に変更内容が記録されていること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
 
 - 対象シンボル: `bind_av1rtppacketizer` / `bind_h264rtppacketizer` / `bind_h265rtppacketizer` (src/bind_libdatachannel.cpp)
-- libdatachannel v0.24.0: `source/src/nalunit.cpp` (`NalUnit::generateFragments`)、 `source/src/h265nalunit.cpp` (`H265NalUnit::generateFragments`)、 `source/src/av1rtppacketizer.cpp` (`AV1RtpPacketizer::outgoing`)
+- libdatachannel v0.24.0: `source/src/nalunit.cpp` (`NalUnit::generateFragments`)、 `source/src/h265nalunit.cpp` (`H265NalUnit::generateFragments`)、 `source/src/av1rtppacketizer.cpp` (`AV1RtpPacketizer::fragment` / `AV1RtpPacketizer::fragmentObu`)、 `source/include/rtc/av1rtppacketizer.hpp` (`mPacketization` / `mMaxFragmentSize` が private)
 - 関連 issue: [[0007-bug-fix-nalunit-empty-size-segv]] (レビュー中に発見。 binding 側の入力検証という同じテーマ)、 [[0026-test-add-missing-binding-tests]] (Packetizer 系のテスト)
