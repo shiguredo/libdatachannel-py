@@ -193,11 +193,10 @@ def test_track():
     media2.set_bitrate(3000)
     media2.add_ssrc(2468, "video-send")
 
-    # NOTE: Overwriting the old shared_ptr for t1 will cause it's respective
-    #       track to be dropped (so it's SSRCs won't be on the description next time)
-    # 再ネゴシエーションでは新しい Track インスタンスが作られるため、 待ちに使う
-    # イベントも作り直す。 1 本目の Track が遅れて通知しても、 既に登録済みの
-    # callback は古いイベントを set するため新しい待ちには影響しない。
+    # t2 側の callback は外側の Event をセル参照で捕捉するため、 再ネゴシエーションで
+    # イベントを作り直すと 1 本目の Track の通知でも新しい Event が set される。
+    # 偽陽性を避けるため、 1 本目の open は直前の assert で確認し、 最後に
+    # t2.is_closed() で閉じていることを担保する。
     t1_opened = threading.Event()
     t1_closed = threading.Event()
     t2_opened = threading.Event()

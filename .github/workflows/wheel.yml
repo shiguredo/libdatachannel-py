@@ -96,8 +96,7 @@ jobs:
 
       # 断続的に失敗し得るテスト: free-threading の leg のコンカレンシー系、 callback 内
       # print が残るテスト (恒停経路)、 WebSocketServer 系のテスト (稀に native crash する)。
-      # 除外はせず、 失敗した場合はテストスイート全体をもう 1 回だけ実行して判断する
-      # (2 回目も失敗した場合は step が失敗する)。 根本対応は別途行う。
+      # リトライは行わず、 pytest の失敗をそのまま step の失敗として扱う。
       - name: Test wheel
         shell: bash
         run: |

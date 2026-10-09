@@ -42,7 +42,7 @@ tests/test_websocketserver.py::test_websocketserver を実行したとき、 稀
 - 原因 (mbedTLS のスレッド対応欠落によるヒープ破壊) が crash report のスタックで裏付けられていること
 - 修正後、 TLS を使うテストを繰り返し実行してクラッシュしないこと (試行回数 N と 0/N の 95% 上側限界 (rule of three で 3/N) を報告する。 N=22 では 13.6% が限界で根拠として弱いため、 N は 100 以上とする)
 - CI の再試行を外しても安定して PASS すること (prek.yml / wheel.yml のリトライを削除する)
-- テストから `time.sleep` によるポーリングが無くなっていること (`time.sleep(0)` の測定用を除く)
+- テストから `time.sleep` によるポーリングが無くなっていること。 例外は (a) `time.sleep(0)` の測定用 yield、 (b) 恒停する既知テスト (`test_destruct_without_explicit_close`) 内の待ち (実行検証ができないため差分を作らない)、 (c) RTP の再送間隔 (受信通知 callback が無くイベント待ちにできない) の 3 つで、 いずれも理由コメントを付ける
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
