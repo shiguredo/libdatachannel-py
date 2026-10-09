@@ -74,16 +74,19 @@ jobs:
       - name: Install wheel
         run: uv pip install --python .venv/bin/python dist/*.whl
 
-      # 断続的に失敗し得るテストがあるため、 pytest は失敗した場合に 1 回だけやり直す
-      # (2 回目も失敗した場合は job が失敗する。 詳細は wheel.yml の Test wheel を参照)
+      # 断続的に失敗し得るテストがあるため、 pytest は失敗した場合に 1 回だけやり直す。
+      # continue-on-error で 1 回目の失敗を job の失敗にせず、 steps.prek.outcome で
+      # 失敗を検出してリトライする (2 回目も失敗した場合は job が失敗する)。
+      # 詳細は wheel.yml の Test wheel を参照
       - name: Run ty and pytest
         id: prek
+        continue-on-error: true
         uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
         with:
           extra-args: "--all-files ty pytest"
 
       - name: Retry pytest
-        if: failure() && steps.prek.outcome == 'failure'
+        if: steps.prek.outcome == 'failure'
         uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
         with:
           extra-args: "--all-files pytest"

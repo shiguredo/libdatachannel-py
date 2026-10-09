@@ -65,6 +65,10 @@
 
 ### misc
 
+- [FIX] CI の pytest リトライが job を救済できていなかったのを解消する
+  - 1 回目の失敗で job が失敗扱いになり、 リトライが成功しても赤くなっていた
+  - 断続的に失敗するテストのリトライが機能するようにする
+  - @voluntas
 - [FIX] CI で pytest が実行されていなかったのを解消し、 ビルドした wheel を検証する
   - build_ubuntu / build_macos で wheel を fresh な環境に install してテストする
   - prek.toml に pytest のフックを追加し、 CI では wheel をビルドするジョブで実行する
