@@ -116,6 +116,13 @@
   - WebSocketServer / WebSocket の TLS 接続が稀にプロセスごと落ちる問題を修正する (mbedTLS のビルドを再現可能にするため、 libdatachannel も同じ設定で再ビルドが必要)
   - @voluntas
 
+- [FIX] RtpPacketizer の max_fragment_size に小さい値を渡すとハングし、 メモリを消費し続ける問題を修正する
+  - H264RtpPacketizer / H265RtpPacketizer / AV1RtpPacketizer で、 ハングや範囲外アクセスになる max_fragment_size を構築時に拒否する (H264 は 4〜65535、 H265 は 6〜65535、 AV1 は 2 以上。 範囲外は `ValueError` になる)
+  - 上限があるのは、 フラグメント長を uint16_t に切り詰める処理があり、 65536 以上では切り詰めで長さが 0 や 1 になるためである
+  - `outgoing` を GIL 解放下で実行し、 呼び出し中も他の thread が動けるようにする
+  - なお、 AV1 で SequenceHeader をキャッシュした後は max_fragment_size が 2 + SequenceHeader 長 未満だとヒープを壊す経路が残る。 SequenceHeader のキャッシュの有無は binding から判定できないため、 根本解消は libdatachannel 側の修正が必要である
+  - @voluntas
+
 ### misc
 
 - [FIX] CI の pytest リトライを削除する
