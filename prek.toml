@@ -50,14 +50,17 @@ hooks = [
     priority = 10,
   },
   {
-    # pytest: `uv run pytest` を使うため、 拡張モジュールを install した .venv が必要になる
-    # (make develop 相当を実行するまでこのフックは失敗する)。
+    # pytest: 拡張モジュールを install した .venv が必要になる (make develop 相当を
+    # 実行するまでこのフックは失敗する)。
+    # --no-sync を付けるのは、 uv run が uv sync を実行すると [tool.uv] の
+    # package = false により make develop で install した拡張モジュールが削除され、
+    # フックが必ず失敗するため (uv run は --no-sync でも既存の .venv を使う)。
     # tests/test_peerconnection.py::test_destruct_without_explicit_close は GIL と
     # libdatachannel の mutex のデッドロックで停止し、 pytest-timeout も発火しないため
     # 除外する (tests/test_websocketserver.py の同名テストは除外対象ではない)。
     id = "pytest",
     name = "pytest",
-    entry = "uv run pytest",
+    entry = "uv run --no-sync pytest",
     args = [
       "-v",
       "--deselect",
