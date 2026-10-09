@@ -1530,7 +1530,8 @@ void bind_peerconnection(nb::module_& m) {
 // send が GIL を解放する理由は bind_channel 直前のコメントを参照。
 
 // WebSocket.close() のバインディング本体。 libdatachannel の close() は非同期で進むため、
-// ここで state==Closed まで待機し、 close() から戻った時点で破棄しても安全な状態を保証する。
+// Connecting / Open から呼ばれた場合は state==Closed まで待機し、 close() から戻った時点で
+// 破棄しても安全な状態にする (Closed と Closing では待機しない。 下のコメントを参照)。
 // 呼び出し側バインディングは nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提。
 void close_websocket(WebSocket& self) {
   // ビジーループにならない値でのポーリング間隔。
@@ -1600,13 +1601,16 @@ void bind_websocket(nb::module_& m) {
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 close_websocket で
-      // state==Closed まで進め、 続けて callback を解除する。 どちらも GIL 解放下で実行する
-      // ため、 受信 callback を実行中の内部 thread が GIL を取得して処理を終えられる。
-      // これをしないと、 直後の public ~WebSocket() が GIL を保持したまま resetCallbacks()
-      // で callback mutex を待ち、 callback 側は GIL を待つため恒停する。
-      // __del__ から投げた例外は呼び出し側で捕捉できないため RuntimeWarning として
-      // 記録するだけで握り潰す。
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 GIL 解放下で close_websocket
+      // を呼び、 続けて callback を解除する。 この区間は GIL を解放しているため、 受信
+      // callback を実行中の内部 thread が GIL を取得して処理を進められる。
+      // ただし Python の object 破棄に続く C++ 側の public ~WebSocket()
+      // (rtc::WebSocket のデストラクタ) は GIL を保持したまま remoteClose() /
+      // resetCallbacks() を実行するため、 その時点で callback が実行中だと恒停し得る。
+      // そこは本修正の範囲外 (根本対応は別 issue)。
+      // なお close_websocket は Closed に到達するまで最大 30 秒待つため、 GC 中に最大 30 秒
+      // ブロックし得る。 __del__ から投げた例外は呼び出し側で捕捉できないため
+      // RuntimeWarning として記録するだけで握り潰す。
       .def(
           "__del__",
           [](WebSocket& self) {

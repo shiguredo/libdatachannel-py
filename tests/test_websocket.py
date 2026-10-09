@@ -116,18 +116,19 @@ def test_websocket_send_slice(echo_websocket_server) -> None:
 
 # 恒停 (GIL と libdatachannel の callback mutex のロック順逆転) の窓を作る検証スクリプト。
 #
-# 恒停は「受信 callback が GIL を解放する処理を実行している間に、 GIL を保持した側が
-# callback mutex を待つ」窓で発生する。 そのため 1 ms 間隔で push するサーバーを立て、
-# callback 内で sleep して GIL を解放し、 その最中に close() / force_close() を呼ぶ。
-# 未修正の binding は GIL を保持したまま close 経路 (closeTransports()) に入るため恒停する。
+# 恒停は「内部 thread が受信 callback を実行して callback mutex を保持したまま GIL を
+# 待っている間に、 GIL を保持した側が close 経路で同じ mutex を待つ」窓で発生する。
+# そのため 1 ms 間隔で push し続けるサーバーを立て、 callback の実行中に close() /
+# force_close() を呼ぶ。 未修正の binding は GIL を保持したまま close 経路
+# (closeTransports()) に入るため恒停する。
 #
 # 恒停した場合、 main thread が native の mutex 待ちになるため pytest-timeout の SIGALRM は
 # 発火しない。 そのためこの検証は pytest プロセス内では実行せず、 子プロセスに分離して
 # 親側の subprocess.run の timeout で打ち切る。 callback 内では print を使わない
-# (callback 内 print の除去を進めているため、 stdout ではなく GIL 解放のみを狙う)。
+# (callback 内 print の除去を進めているため使わない)。
 #
-# 子プロセスは最後に os._exit(0) で終了する。 C++ destructor (`~WebSocket()` の
-# remoteClose() / resetCallbacks()) は GIL を保持したまま走るため、 callback が実行中の
+# 子プロセスは最後に os._exit(0) で終了する。 C++ 側の public ~WebSocket()
+# (rtc::WebSocket のデストラクタ) は GIL を保持したまま走るため、 callback が実行中の
 # 窓では依然として恒停し得る (根本対応は別 issue)。 ここでは close 経路の検証に絞る。
 _HANG_REPRODUCTION_SCRIPT = """
 import asyncio
@@ -180,58 +181,61 @@ loop.run_until_complete(start_server())
 threading.Thread(target=loop.run_forever, daemon=True).start()
 
 received = 0
+# callback が実行中であることを main thread に伝えるためのイベント。
+# callback 先頭で set し、 main thread は wait() で同期してから close 経路を呼ぶ。
+# Event.wait() は GIL を解放するため、 callback 側の進行を妨げない。
+callback_running = threading.Event()
 
 
 def on_message(message):
     global received
     received += 1
-    # 恒停の窓を作るため GIL を解放する (print は使わない)
-    time.sleep(0.001)
+    callback_running.set()
 
 
 for i in range(ITERATIONS):
     ws = WebSocket()
     ws.on_message(on_message)
+    callback_running.clear()
     ws.open("ws://127.0.0.1:%d/" % PORT)
     deadline = time.monotonic() + 10.0
     while not ws.is_open() and time.monotonic() < deadline:
         time.sleep(0.01)
     if not ws.is_open():
-        print("connect failed", file=sys.stderr)
+        print("接続に失敗しました", file=sys.stderr)
         sys.exit(1)
-    # 受信 callback が動き出すのを待ってから close 経路を呼ぶ
-    while received == 0 and time.monotonic() < deadline:
-        time.sleep(0.001)
-    time.sleep(0.002)
+    # 受信 callback が実行中になるまで待ってから close 経路を呼ぶ
+    if not callback_running.wait(timeout=10.0):
+        print("受信 callback が実行されませんでした", file=sys.stderr)
+        sys.exit(1)
     if MODE == "force_close":
         # GIL 解放下で forceClose() が呼ばれることを検証する
         ws.force_close()
     else:
-        # GIL 解放下で close() が呼ばれ、 Closed まで到達することを検証する
+        # GIL 解放下で close() が呼ばれることを検証する
         ws.close()
-        if ws.ready_state() is not WebSocket.State.Closed:
-            print("state is not Closed: %s" % ws.ready_state(), file=sys.stderr)
-            sys.exit(1)
+    # どちらの経路も Closed に到達することを検証する
+    if ws.ready_state() is not WebSocket.State.Closed:
+        print("状態が Closed ではありません: %s" % ws.ready_state(), file=sys.stderr)
+        sys.exit(1)
 
-print("OK")
-sys.stdout.flush()
-# C++ destructor の恒停 (別 issue) を避けるため、 明示的に即時終了する
+# C++ 側の ~WebSocket() の恒停 (別 issue) を避けるため、 明示的に即時終了する
 os._exit(0)
 """
 
 # close() は対向の close handshake を待つため 1 回あたり 10 秒程度かかる。
-_CLOSE_ITERATIONS = "1"
-_FORCE_CLOSE_ITERATIONS = "5"
+_CLOSE_ITERATIONS = 1
+_FORCE_CLOSE_ITERATIONS = 5
 
 
-def _run_hang_reproduction(mode: str, iterations: str) -> subprocess.CompletedProcess:
+def _run_hang_reproduction(mode: str, iterations: int) -> subprocess.CompletedProcess[str]:
     """恒停し得る検証を子プロセスに分離して実行する。
 
     子プロセスが恒停した場合は親側で subprocess.TimeoutExpired になりテストが失敗する
     ため、 CI の job timeout までは停止しない。
     """
     return subprocess.run(
-        [sys.executable, "-c", _HANG_REPRODUCTION_SCRIPT, mode, iterations],
+        [sys.executable, "-c", _HANG_REPRODUCTION_SCRIPT, mode, str(iterations)],
         capture_output=True,
         text=True,
         timeout=120,
@@ -266,7 +270,11 @@ def test_force_close_does_not_hang() -> None:
 
 
 def test_del_releases_native() -> None:
-    """callback 未登録の最小ケースで __del__ 経由の close を検証する"""
+    """callback 未登録の最小ケースで __del__ 経由の close を検証する
+
+    Free Threading 環境では refcount=0 の即時 destruct 保証が弱いので、 gc.collect() を
+    介して確実に発火させる (0001 の PeerConnection の同名テストと同じ理由)。
+    """
     ws = WebSocket()
     ref = weakref.ref(ws)
     ws = None
@@ -274,9 +282,21 @@ def test_del_releases_native() -> None:
     assert ref() is None, "__del__ が発火しなかった"
 
 
-def test_close_is_idempotent() -> None:
-    """close() を 2 回呼んでも 2 回目が早期 return で即時完了することを検証する"""
+def test_close_is_idempotent(echo_websocket_server) -> None:
+    """接続を開いた状態で close() を 2 回呼んでも 2 回目が早期 return で即時完了することを検証する
+
+    未接続の WebSocket は初期状態が Closed で 1 回目も 2 回目も早期 return になるため、
+    実際に接続して state が Closed 以外の状態から close() を呼ぶ。
+    """
     ws = WebSocket()
+    ws.open(echo_websocket_server)
+
+    attempts = 20
+    while not ws.is_open() and attempts > 0:
+        attempts -= 1
+        time.sleep(1)
+    assert ws.is_open()
+
     ws.close()
     assert ws.ready_state() is WebSocket.State.Closed
     start = time.monotonic()
