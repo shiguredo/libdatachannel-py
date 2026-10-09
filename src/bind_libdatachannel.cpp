@@ -194,7 +194,8 @@ void bind_configuration(nb::module_& m) {
 nb::object get_media(Description& desc, int index) {
   auto var = desc.media(index);
   // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる。
-  // nanobind の reference_internal + parent が keep_alive 相当になる
+  // nanobind の reference_internal + parent が keep_alive 相当になる。
+  // desc は Python から渡されたインスタンスなので nb::find は必ず見つかる
   nb::object parent = nb::find(desc);
   if (std::holds_alternative<Description::Media*>(var)) {
     if (auto* media = std::get<Description::Media*>(var)) {
@@ -322,7 +323,8 @@ void bind_description(nb::module_& m) {
             // 値 (コピー) を返す。 存在しない payload type では rtpMap が例外を投げる
             return *media.rtpMap(payload_type);
           },
-          "payload_type"_a)
+          "payload_type"_a,
+          "戻り値はコピーのため、 書き換えても Media には反映されない")
       .def("add_rtp_map", &Description::Media::addRtpMap, "map"_a)
       .def("remove_rtp_map", &Description::Media::removeRtpMap,
            "payload_type"_a)

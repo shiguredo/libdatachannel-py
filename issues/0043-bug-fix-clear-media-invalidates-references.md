@@ -8,7 +8,7 @@
 
 ## 目的
 
-`Description.clear_media()` は `Description::clearMedia()` を呼び、 内部で `mEntries.clear()` と `mApplication.reset()` を行うため、 それ以前に取得した `media()` / `application()` の戻り値が解放済みメモリを指す。 親オブジェクトを生存させても防げないため、 誤用すると use-after-free でプロセスが落ちる。 安全な扱いを確定する。
+`Description` には、 それ以前に取得した `media()` / `application()` の戻り値を無効にする操作がある (`clear_media()` は `mEntries.clear()` / `mApplication.reset()`、 `add_media(Application)` / `add_application()` は `removeApplication()`)。 戻り値は内部オブジェクトへの生ポインタのため、 無効化後に触ると use-after-free でプロセスが落ちるか、 別オブジェクトを指す。 親を生存させるだけでは防げないため、 安全な扱いを確定する。
 
 ## 優先度根拠
 
@@ -33,7 +33,8 @@ m.mid()  # 解放済みの Media を参照 → SIGSEGV (exit 139)
 - `_deps/libdatachannel/v0.24.0/source/src/description.cpp` の `clearMedia()` は `mEntries.clear(); mApplication.reset();`
 - `Description::mEntries` は `std::vector<std::shared_ptr<Entry>>` で、 Python 側が保持しているのは `Entry` 内の `Media*` / `Application*` への生ポインタ
 - binding 側で `shared_ptr` を取得する公開 API は無く、 `media(int)` / `application()` は生ポインタを返す
-- `add_media()` / `add_video()` / `add_audio()` は追加のみで、 取得済み参照を無効にしない
+- `add_media(Application)` / `add_application()` も `removeApplication()` を先に呼ぶため、 取得済みの `application()` 参照を無効にする (実測: 旧参照が新しい Application を指し、 `sctp_port()` が None になる)
+- `add_media(Media)` / `add_video()` / `add_audio()` / `add_rtp_map()` は `mEntries` (`vector<shared_ptr<Entry>>`) に追加するだけで、 取得済みの `Media*` を無効にしない
 
 ## 設計方針
 
@@ -46,7 +47,8 @@ m.mid()  # 解放済みの Media を参照 → SIGSEGV (exit 139)
 
 ## 完了条件
 
-- 採用した案に応じて、 `clear_media()` 後の取得済み参照の扱いが確定し、 テストまたはドキュメントで検証できる
+- 取得済みの `media()` / `application()` 参照を無効にする操作を一覧化する (`clear_media()` / `add_media(Application)` / `add_application()`)
+- 採用した案に応じて、 これらの操作の後の取得済み参照の扱いが確定し、 テストまたはドキュメントで検証できる
 - 案 A / B を採る場合は、 既存の `media()` 経由の書き換えが引き続き動くことをテストで確認する
 - `prek run --all-files pytest` が PASS する
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
