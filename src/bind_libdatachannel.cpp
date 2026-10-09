@@ -1248,6 +1248,42 @@ void bind_rtppacketizer(nb::module_& m) {
 
 // ---- av1rtppacketizer.hpp ----
 
+// RtpPacketizer 系の max_fragment_size の下限。
+//
+// NalUnit::generateFragments / H265NalUnit::generateFragments は、 分割が必要なときに
+// フラグメント数 c = ceil(size / max_fragment_size) とフラグメント長
+// m1 = ceil(size / c) を求めたあと、 FU ヘッダの分 (H264 は 2、 H265 は 3) を引く。
+// 引いた値が 0 のときは offset が進まず空のフラグメントを確保し続け、 ヘッダ長より
+// 小さいときは size_t がアンダーフローして範囲外のイテレータ対を作る (Release ビルド
+// では assert が消えるため libdatachannel 側の防御が働かない)。
+// size 1〜4000 と max_fragment_size 0〜40 の全組み合わせを確認したところ、
+// ヘッダ長の 2 倍 (H264 は 4、 H265 は 6) 以上ならどちらも起きない
+constexpr size_t kMinH264MaxFragmentSize = 4;
+constexpr size_t kMinH265MaxFragmentSize = 6;
+
+// AV1RtpPacketizer::fragmentObu は payload を
+// min(max_fragment_size, remaining + metadataSize) で確保するため、
+// max_fragment_size が 0 のときは payload.at(0) が範囲外になり、 1 のときは
+// payloadRemaining が 0 になってループが進まない。 SequenceHeader をキャッシュして
+// いるときは payloadOffset が 2 + SequenceHeader 長 になるため、 その長さ未満でも
+// payload をはみ出すが、 キャッシュの有無は binding からは判定できない
+constexpr size_t kMinAV1MaxFragmentSize = 2;
+
+// max_fragment_size の下限を検証する。 unit は "H264 NAL unit" のような対象の呼び名
+void check_max_fragment_size(size_t max_fragment_size,
+                             size_t min_size,
+                             const char* name,
+                             const char* unit) {
+  if (max_fragment_size >= min_size) {
+    return;
+  }
+  throw nb::value_error((std::string(name) +
+                         ": max_fragment_size must be at least " +
+                         std::to_string(min_size) + " to fragment an " + unit +
+                         ", got " + std::to_string(max_fragment_size))
+                            .c_str());
+}
+
 void bind_av1rtppacketizer(nb::module_& m) {
   nb::class_<AV1RtpPacketizer, RtpPacketizer> av1pkt(m, "AV1RtpPacketizer");
 
@@ -1257,11 +1293,21 @@ void bind_av1rtppacketizer(nb::module_& m) {
       .value("TemporalUnit", AV1RtpPacketizer::Packetization::TemporalUnit);
 
   av1pkt
-      .def(nb::init<AV1RtpPacketizer::Packetization,
-                    std::shared_ptr<RtpPacketizationConfig>, size_t>(),
-           "packetization"_a, "rtp_config"_a,
-           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
-      .def("outgoing", &AV1RtpPacketizer::outgoing)
+      .def(
+          "__init__",
+          [](AV1RtpPacketizer* self,
+             AV1RtpPacketizer::Packetization packetization,
+             std::shared_ptr<RtpPacketizationConfig> rtp_config,
+             size_t max_fragment_size) {
+            check_max_fragment_size(max_fragment_size, kMinAV1MaxFragmentSize,
+                                    "AV1RtpPacketizer", "AV1 OBU");
+            new (self) AV1RtpPacketizer(packetization, std::move(rtp_config),
+                                        max_fragment_size);
+          },
+          "packetization"_a, "rtp_config"_a,
+          "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
+      .def("outgoing", &AV1RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
       .def_prop_ro_static(
           "CLOCK_RATE", [](nb::handle) { return AV1RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
@@ -1273,11 +1319,20 @@ void bind_av1rtppacketizer(nb::module_& m) {
 
 void bind_h264rtppacketizer(nb::module_& m) {
   nb::class_<H264RtpPacketizer, RtpPacketizer>(m, "H264RtpPacketizer")
-      .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
-                    size_t>(),
-           "separator"_a, "rtp_config"_a,
-           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
-      .def("outgoing", &H264RtpPacketizer::outgoing)
+      .def(
+          "__init__",
+          [](H264RtpPacketizer* self, NalUnit::Separator separator,
+             std::shared_ptr<RtpPacketizationConfig> rtp_config,
+             size_t max_fragment_size) {
+            check_max_fragment_size(max_fragment_size, kMinH264MaxFragmentSize,
+                                    "H264RtpPacketizer", "H264 NAL unit");
+            new (self) H264RtpPacketizer(separator, std::move(rtp_config),
+                                         max_fragment_size);
+          },
+          "separator"_a, "rtp_config"_a,
+          "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
+      .def("outgoing", &H264RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
       .def_prop_ro_static(
           "CLOCK_RATE", [](nb::handle) { return H264RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
@@ -1289,11 +1344,20 @@ void bind_h264rtppacketizer(nb::module_& m) {
 
 void bind_h265rtppacketizer(nb::module_& m) {
   nb::class_<H265RtpPacketizer, RtpPacketizer>(m, "H265RtpPacketizer")
-      .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
-                    size_t>(),
-           "separator"_a, "rtp_config"_a,
-           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
-      .def("outgoing", &H265RtpPacketizer::outgoing)
+      .def(
+          "__init__",
+          [](H265RtpPacketizer* self, NalUnit::Separator separator,
+             std::shared_ptr<RtpPacketizationConfig> rtp_config,
+             size_t max_fragment_size) {
+            check_max_fragment_size(max_fragment_size, kMinH265MaxFragmentSize,
+                                    "H265RtpPacketizer", "H265 NAL unit");
+            new (self) H265RtpPacketizer(separator, std::move(rtp_config),
+                                         max_fragment_size);
+          },
+          "separator"_a, "rtp_config"_a,
+          "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
+      .def("outgoing", &H265RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
       .def_prop_ro_static(
           "CLOCK_RATE", [](nb::handle) { return H265RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {

@@ -90,11 +90,11 @@ H264 / H265 の壊れる条件は `max_fragment_size` と入力サイズの組�
 ## 完了条件
 
 - 下限未満の `max_fragment_size` を構築時に拒否すること。 例外は `ValueError` で、 メッセージに期待値と実際の値を含むこと (`max_fragment_size must be at least 4 to fragment an H264 NAL unit, got 2` の形)
-- 次の境界値と正常値をテストで固定すること (1 プロセスで完結し、 ハングしない形で書く。 `@pytest.mark.timeout(10)` を付ける)
+- 次の境界値と正常値をテストで固定すること (拒否は構築時の例外なので `@pytest.mark.timeout(10)` を付けて 1 プロセスで確認できる)
   - H264: `max_fragment_size` 1 / 2 / 3 (拒否) と 4 (許可)。 入力は 4 バイトの NAL (境界) と 1000 バイトの NAL (正常)
   - H265: 1 / 2 / 3 / 4 / 5 (拒否) と 6 (許可)。 入力は 5 バイトの NAL と 1000 バイトの NAL
   - AV1: 0 / 1 (拒否) と 2 (許可)。 入力は OBU 6 バイト (SequenceHeader を渡さない前提)
-- 許可した値で `outgoing` がハングせず、 フラグメントが返ること
+- 許可した値で `outgoing` が恒停せず戻ること。 `outgoing` は引数のメッセージ列を RTP パケットに置き換えるだけで `send` を呼ばず、 引数は Python 側へ書き戻されないため結果を観測できない。 恒停しないことは子プロセスに分離して timeout で確認する
 - `outgoing` が GIL を解放すること (他スレッドが動くことを確認する)
 - `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` が PASS すること
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS すること
