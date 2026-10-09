@@ -34,6 +34,10 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] DependencyDescriptorWriter が context の破棄後に壊れた値を読む問題を修正する
+  - writer は context 自体ではなく context のメンバ (structure / descriptor) への参照を保持するため、 context を生存させるようにする
+  - 実測: 一時的な context を渡すと、 context の破棄後に `get_size_bits()` / `get_size()` / `write_to()` が `RuntimeError` になっていた
+  - @voluntas
 - [FIX] Description.media() / Description.application() / PeerConnection.config() の戻り値が親の寿命に紐付かない問題を修正する
   - 親を先に破棄してから戻り値を使うと use-after-free で落ちていた (実測: exit 139)
   - 戻り値が親を生存させるようにする
