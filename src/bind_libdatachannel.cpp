@@ -26,6 +26,7 @@
 #include <rtc/rtc.hpp>
 
 // 標準ライブラリ
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <thread>
@@ -853,6 +854,56 @@ class PyMediaHandlerImpl : public PyMediaHandler {
   }
 };
 
+// MediaHandler のチェーンに cycle を作らせないための検査。
+// libdatachannel の MediaHandler::last() は next() を再帰でたどるため、 cycle があると
+// 戻らずにスタックオーバーフローで SEGV する。 Python から到達できる連結操作の時点で
+// 検出して例外にする。
+// 探索の上限。 libdatachannel 側に長さ制限は無いため、 上限を超えた場合は cycle とみなす
+constexpr size_t kMaxMediaHandlerChainLength = 1024;
+
+// handler から next() をたどって到達できるノードを集める。
+// 上限を超えた場合 (cycle の可能性がある場合) は false を返す
+bool collect_media_handler_chain(const std::shared_ptr<MediaHandler>& handler,
+                                 std::vector<MediaHandler*>& nodes) {
+  auto current = handler;
+  for (size_t i = 0; i < kMaxMediaHandlerChainLength; ++i) {
+    if (!current) {
+      return true;
+    }
+    nodes.push_back(current.get());
+    current = current->next();
+  }
+  return false;
+}
+
+// handler が self のチェーンへ戻る場合 (add_to_chain で cycle になる場合) は true
+bool media_handler_add_to_chain_has_cycle(
+    const std::shared_ptr<MediaHandler>& self,
+    const std::shared_ptr<MediaHandler>& handler) {
+  std::vector<MediaHandler*> own;
+  if (!collect_media_handler_chain(self, own)) {
+    return true;
+  }
+  std::vector<MediaHandler*> added;
+  if (!collect_media_handler_chain(handler, added)) {
+    return true;
+  }
+  return std::any_of(added.begin(), added.end(), [&own](MediaHandler* node) {
+    return std::find(own.begin(), own.end(), node) != own.end();
+  });
+}
+
+// handler が self 自身へ戻る場合 (set_next で cycle になる場合) は true
+bool media_handler_set_next_has_cycle(
+    const std::shared_ptr<MediaHandler>& self,
+    const std::shared_ptr<MediaHandler>& handler) {
+  std::vector<MediaHandler*> added;
+  if (!collect_media_handler_chain(handler, added)) {
+    return true;
+  }
+  return std::find(added.begin(), added.end(), self.get()) != added.end();
+}
+
 void bind_mediahandler(nb::module_& m) {
   nb::class_<MediaHandler>(m, "MediaHandler")
       .def(nb::init<>())
@@ -888,10 +939,27 @@ void bind_mediahandler(nb::module_& m) {
           "add_to_chain",
           [](std::shared_ptr<MediaHandler> self,
              std::shared_ptr<MediaHandler> handler) {
+            // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
+            if (media_handler_add_to_chain_has_cycle(self, handler)) {
+              throw std::invalid_argument(
+                  "add_to_chain would create a cycle in the MediaHandler "
+                  "chain");
+            }
             self->addToChain(handler);
           },
           "handler"_a)
-      .def("set_next", &MediaHandler::setNext, "next"_a)
+      .def(
+          "set_next",
+          [](std::shared_ptr<MediaHandler> self,
+             std::shared_ptr<MediaHandler> handler) {
+            // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
+            if (media_handler_set_next_has_cycle(self, handler)) {
+              throw std::invalid_argument(
+                  "set_next would create a cycle in the MediaHandler chain");
+            }
+            self->setNext(handler);
+          },
+          "next"_a)
       .def("next",
            [](std::shared_ptr<MediaHandler> self) { return self->next(); })
       .def("last",
@@ -1357,7 +1425,20 @@ void bind_track(nb::module_& m) {
       .def("request_keyframe", &Track::requestKeyframe)
       .def("request_bitrate", &Track::requestBitrate, "bitrate"_a)
       .def("set_media_handler", &Track::setMediaHandler, "handler"_a.none())
-      .def("chain_media_handler", &Track::chainMediaHandler, "handler"_a)
+      .def(
+          "chain_media_handler",
+          [](Track& self, std::shared_ptr<MediaHandler> handler) {
+            // media handler が設定済みの場合はそのチェーンの末尾に連結されるため、
+            // binding 側と同じ cycle 検査を行う (未設定の場合は置換のみ)
+            if (auto first = self.getMediaHandler();
+                first && media_handler_add_to_chain_has_cycle(first, handler)) {
+              throw std::invalid_argument(
+                  "chain_media_handler would create a cycle in the "
+                  "MediaHandler chain");
+            }
+            self.chainMediaHandler(std::move(handler));
+          },
+          "handler"_a)
       .def("get_media_handler", &Track::getMediaHandler);
 }
 
