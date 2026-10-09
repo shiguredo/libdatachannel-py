@@ -331,13 +331,36 @@ void bind_description(nb::module_& m) {
       .def("remove_format", &Description::Media::removeFormat, "format"_a)
       .def("add_rtx_codec", &Description::Media::addRtxCodec, "payload_type"_a,
            "orig_payload_type"_a, "clock_rate"_a)
-      .def("as_audio",
-           [](Description::Media* p) {
-             return *static_cast<Description::Audio*>(p);
-           })
-      .def("as_video", [](Description::Media* p) {
-        return *static_cast<Description::Video*>(p);
-      });
+      // 値コピーを返すと戻り値への加工が元の Media に反映されず、 static_cast で
+      // 兄弟クラスへ変換すると未定義動作になる。 dynamic_cast で動的型を確認し、
+      // 一致した場合は元のオブジェクトへの参照 (reference_internal で親を生存させる)
+      // を返す。 Description は media を常に Media として保持するため (libdatachannel
+      // の addMedia / createEntry が Media へスライスする)、 Description から取得した
+      // media では例外になる。 codec は add_media する前に追加する
+      .def(
+          "as_audio",
+          [](Description::Media& media) -> Description::Audio* {
+            auto* audio = dynamic_cast<Description::Audio*>(&media);
+            if (!audio) {
+              throw nb::type_error(
+                  "as_audio: the media is not a Description.Audio; add codecs "
+                  "to a Description.Audio before adding it to a Description");
+            }
+            return audio;
+          },
+          nb::rv_policy::reference_internal)
+      .def(
+          "as_video",
+          [](Description::Media& media) -> Description::Video* {
+            auto* video = dynamic_cast<Description::Video*>(&media);
+            if (!video) {
+              throw nb::type_error(
+                  "as_video: the media is not a Description.Video; add codecs "
+                  "to a Description.Video before adding it to a Description");
+            }
+            return video;
+          },
+          nb::rv_policy::reference_internal);
 
   // RtpMap
   nb::class_<Description::Media::RtpMap> rtpmap(desc, "RtpMap");

@@ -13,15 +13,18 @@ def test_create_description_offer():
 
 def test_add_audio_track():
     desc = Description("v=0...", Description.Type.Offer)
-    index = desc.add_audio("audio", Description.Direction.SendOnly)
+    # Description は media を Media として保持するため、 codec は追加前に付ける
+    audio = Description.Audio("audio", Description.Direction.SendOnly)
+    audio.add_opus_codec(111)
+
+    index = desc.add_media(audio)
     assert index == 0
     assert desc.has_audio_or_video()
     assert desc.media_count() == 1
 
     media = desc.media(0)
     assert isinstance(media, Description.Media)
-
-    media.as_audio().add_opus_codec(111)
+    assert media.has_payload_type(111)
 
 
 def test_add_application_track():
@@ -137,3 +140,75 @@ def test_rtp_map_raises_for_unknown_payload_type() -> None:
     media = Description.Audio()
     with pytest.raises(ValueError):
         media.rtp_map(123)
+
+
+def test_as_audio_returns_self() -> None:
+    """as_audio() が値コピーではなく同じ Audio を返すこと
+
+    値コピーを返すと戻り値への加工が元の Media に反映されないため、 同一の
+    オブジェクトが返ることを検証する。
+    """
+    audio = Description.Audio("audio", Description.Direction.SendOnly)
+
+    assert audio.as_audio() is audio
+    audio.as_audio().add_opus_codec(111)
+    assert audio.has_payload_type(111)
+
+
+def test_as_video_returns_self() -> None:
+    """as_video() が値コピーではなく同じ Video を返すこと"""
+    video = Description.Video("video", Description.Direction.SendOnly)
+
+    assert video.as_video() is video
+    video.as_video().add_h264_codec(96)
+    assert video.has_payload_type(96)
+
+
+def test_as_audio_raises_for_video() -> None:
+    """Video に対して as_audio() を呼ぶと TypeError になること
+
+    static_cast では未定義動作になるため、 動的型を確認して例外にする。
+    """
+    video = Description.Video("video", Description.Direction.SendOnly)
+    with pytest.raises(TypeError):
+        video.as_audio()
+
+
+def test_as_video_raises_for_audio() -> None:
+    """Audio に対して as_video() を呼ぶと TypeError になること"""
+    audio = Description.Audio("audio", Description.Direction.SendOnly)
+    with pytest.raises(TypeError):
+        audio.as_video()
+
+
+def test_as_audio_raises_for_media_in_description() -> None:
+    """Description から取得した media では as_audio() / as_video() が例外になること
+
+    Description は media を Media として保持する (libdatachannel がスライスする) ため、
+    Audio / Video として扱うことはできない。
+    """
+    desc = Description("v=0...")
+    desc.add_audio("audio", Description.Direction.SendOnly)
+    desc.add_video("video", Description.Direction.SendOnly)
+
+    for media in (desc.media(0), desc.media(1)):
+        assert isinstance(media, Description.Media)
+        with pytest.raises(TypeError):
+            media.as_audio()
+        with pytest.raises(TypeError):
+            media.as_video()
+
+
+def test_as_video_outlives_media() -> None:
+    """Media を破棄しても as_video() の戻り値が使えること
+
+    戻り値は元の Media への参照のため、 親を生存させる必要がある。
+    """
+    video = Description.Video("video", Description.Direction.SendOnly)
+    video.add_h264_codec(96)
+    reference = video.as_video()
+    del video
+    gc.collect()
+
+    assert reference.mid() == "video"
+    assert reference.has_payload_type(96)
