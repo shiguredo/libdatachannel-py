@@ -11,6 +11,11 @@
 
 ## develop
 
+- [CHANGE] `Media.as_audio()` / `Media.as_video()` が参照を返すようにする
+  - 従来は値コピーを返しており、 戻り値への codec 追加が元の `Media` に反映されなかった
+  - 動的型が一致する場合は同じオブジェクトを返し、 一致しない場合は `TypeError` になる (従来は未定義動作)
+  - `Description` は media を `Description.Media` として保持するため (`add_media()` / `add_audio()` / SDP の parse はすべて `Media` にスライスされる)、 `Description` から取得した media では `TypeError` になる。 codec は `Description.Audio` / `Description.Video` に追加してから `add_media()` するか、 既存の media には `Description.RtpMap("96 H264/90000")` のように rtpmap 文字列から作った `RtpMap` を `add_rtp_map()` へ渡して追加する
+  - @voluntas
 - [CHANGE] `Media.rtp_map()` が値 (コピー) を返すようにする
   - 内部の `RtpMap` への参照は `remove_rtp_map()` / `remove_format()` で無効になっていた
   - 戻り値を書き換えても `Media` に反映されなくなる

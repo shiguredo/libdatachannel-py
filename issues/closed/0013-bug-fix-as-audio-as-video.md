@@ -1,8 +1,8 @@
-# as_audio() と as_video() が値コピーを返し変更加工が消失する
+# as_audio() と as_video() が値コピーを返し加工が消失する
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-as-audio-as-video
 - Polished: 2026-10-09
 
@@ -48,13 +48,28 @@ assert media.has_payload_type(97)  # False → 加工が消失している
 
 ## 設計方針
 
-- 値返しをやめる。 `dynamic_cast` で動的型を検証し、 一致した場合は元のオブジェクトへの参照 (`nb::rv_policy::reference_internal`) を返す。 動的型が異なる場合は `nb::type_error` を投げる (static_cast の未定義動作に到達させない)
+- 値返しをやめる。 `dynamic_cast` で動的型を検証し、 一致した場合は元のオブジェクト自身を返す (`nb::rv_policy::reference`。 戻り値が同じオブジェクトのため keep_alive は不要)。 動的型が異なる場合は `nb::type_error` を投げる (static_cast の未定義動作に到達させない)
 - ただし `Description` から取得した media の動的型は常に `Media` のため、 この経路は必ず例外になる。 代替を issue と CHANGES に明記する
   - `Description.Audio` / `Description.Video` を直接作って codec を追加し、 その後 `add_media()` する (codec は Media 側に保持されるため引き継がれる)
   - 既に追加済みの media へ codec を足す場合は `add_rtp_map()` に `RtpMap` を渡す
 - テストは 2 本立てにする
   - `Description` から取得した media の `as_audio()` / `as_video()` が `TypeError` になること
   - 動的型が `Audio` / `Video` のオブジェクトでは `as_audio()` / `as_video()` が同じオブジェクトを返し、 加工が反映されること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp` の `as_audio()` / `as_video()` を `dynamic_cast` で動的型を検証する形に変更した
+  - 一致した場合は元のオブジェクト自身を返し (`nb::rv_policy::reference`)、 戻り値への codec 追加が元の `Media` に反映される
+  - 一致しない場合は `nb::type_error` を投げ、 `static_cast` の未定義動作に到達させない
+- `Description` は media を常に base の `Description.Media` として保持するため (`createEntry` は `make_shared<Media>`、 `addMedia(Media)` は値渡しでスライスする)、 `Description` から取得した media では `TypeError` になる。 代替手段を docstring と `CHANGES.md` に明記した
+  - `Description.Audio` / `Description.Video` を直接作って codec を追加してから `add_media()` する
+  - 既に追加済みの media へは `Description.RtpMap("96 H264/90000")` のように rtpmap 文字列から作った `RtpMap` を `add_rtp_map()` へ渡す
+- テスト (`tests/test_description.py`)
+  - 動的型が `Audio` / `Video` のオブジェクトでは `as_audio()` / `as_video()` が同じオブジェクトを返し、 加工が反映されること
+  - `Description` から取得した media (`add_media()` / `add_audio()` / SDP の parse) では `TypeError` になること
+  - 既存 media への `add_rtp_map()` で codec を追加できること (SDP 出力まで検証)
+- `CHANGES.md` の `## develop` に `[CHANGE]` エントリを追加した
+- 実測: 動的型が一致する場合は `as_video() is video` で加工が反映され、 `Description` 由来の media と動的型違いはすべて `TypeError`。 全体で 104 passed / 12 skipped / 1 deselected
 
 ## 完了条件
 

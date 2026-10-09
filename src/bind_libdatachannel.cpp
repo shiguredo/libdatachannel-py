@@ -331,13 +331,52 @@ void bind_description(nb::module_& m) {
       .def("remove_format", &Description::Media::removeFormat, "format"_a)
       .def("add_rtx_codec", &Description::Media::addRtxCodec, "payload_type"_a,
            "orig_payload_type"_a, "clock_rate"_a)
-      .def("as_audio",
-           [](Description::Media* p) {
-             return *static_cast<Description::Audio*>(p);
-           })
-      .def("as_video", [](Description::Media* p) {
-        return *static_cast<Description::Video*>(p);
-      });
+      // 値コピーを返すと戻り値への加工が元の Media に反映されず、 static_cast で
+      // 兄弟クラスへ変換すると未定義動作になる。 dynamic_cast で動的型を確認し、
+      // 一致した場合は元のオブジェクト自身を返す (戻り値が同じオブジェクトのため
+      // keep_alive は不要。 reference_internal にすると自己参照のリークになる)。
+      // v0.24.0 の description.cpp は createEntry / addMedia で常に base の Media を
+      // 作る (addMedia は値渡しでスライスする) ため、 Description から取得した media の
+      // 動的型は Media になり、 この経路では例外になる。 codec は add_media する前に
+      // 追加するか、 既存の media には add_rtp_map で追加する
+      .def(
+          "as_audio",
+          [](Description::Media& media) -> Description::Audio* {
+            auto* audio = dynamic_cast<Description::Audio*>(&media);
+            if (!audio) {
+              throw nb::type_error(
+                  "as_audio: the media is not a Description.Audio; codecs are "
+                  "added "
+                  "to a Description.Audio before it is added to a Description "
+                  "(a Description keeps media as Description.Media)");
+            }
+            return audio;
+          },
+          nb::rv_policy::reference,
+          "Audio として同じオブジェクトへの参照を返す。 動的型が Audio "
+          "でない場合は "
+          "TypeError になる (Description は media を Description.Media として "
+          "保持するため、 Description から取得した media は常に TypeError "
+          "になる)")
+      .def(
+          "as_video",
+          [](Description::Media& media) -> Description::Video* {
+            auto* video = dynamic_cast<Description::Video*>(&media);
+            if (!video) {
+              throw nb::type_error(
+                  "as_video: the media is not a Description.Video; codecs are "
+                  "added "
+                  "to a Description.Video before it is added to a Description "
+                  "(a Description keeps media as Description.Media)");
+            }
+            return video;
+          },
+          nb::rv_policy::reference,
+          "Video として同じオブジェクトへの参照を返す。 動的型が Video "
+          "でない場合は "
+          "TypeError になる (Description は media を Description.Media として "
+          "保持するため、 Description から取得した media は常に TypeError "
+          "になる)");
 
   // RtpMap
   nb::class_<Description::Media::RtpMap> rtpmap(desc, "RtpMap");
