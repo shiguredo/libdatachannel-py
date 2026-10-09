@@ -169,8 +169,6 @@ def test_del_releases_native() -> None:
 
     Free Threading 環境では refcount=0 の即時 destruct 保証が弱いので、 gc.collect() を
     介して確実に破棄させる (PeerConnection の同名テストと同じ理由)。
-    なお nanobind は dealloc で必ず C++ オブジェクトを破棄するため、 この検証は
-    __del__ の呼び出しそのものではなく破棄が完了することを確かめるもの。
     """
     ws = WebSocket()
     ref = weakref.ref(ws)

@@ -1601,35 +1601,13 @@ void bind_websocket(nb::module_& m) {
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 GIL 解放下で callback を
-      // 解除してから close_websocket を呼ぶ。 この区間は GIL を解放しているため、 受信
-      // callback を実行中の内部 thread が GIL を取得して処理を進められる。
-      // 解除を先に行うのは、 close_websocket が timeout で例外を投げた場合でも callback の
-      // 解除が残るようにするため。
-      // ただし Python の object 破棄に続く C++ 側の public ~WebSocket()
-      // (rtc::WebSocket のデストラクタ) は GIL を保持したまま remoteClose() /
-      // resetCallbacks() を実行するため、 その時点で callback が実行中だと恒停し得る。
-      // そこは本修正の範囲外 (根本対応は別途行う)。
-      // なお close_websocket は Closed に到達するまで最大 30 秒待つため、 GC 中に最大 30 秒
-      // ブロックし得る。 __del__ から投げた例外は呼び出し側で捕捉できないため
-      // RuntimeWarning として記録するだけで握り潰す。
-      .def(
-          "__del__",
-          [](WebSocket& self) {
-            try {
-              self.resetCallbacks();
-              close_websocket(self);
-            } catch (...) {
-              nb::gil_scoped_acquire gil;
-              PyErr_WarnEx(PyExc_RuntimeWarning,
-                           "WebSocket.__del__: close() failed", 1);
-              // filterwarnings=error 等で warning が例外に昇格した場合も
-              // destructor を落とさないよう握り潰す。
-              if (PyErr_Occurred())
-                PyErr_Clear();
-            }
-          },
-          nb::call_guard<nb::gil_scoped_release>())
+      // 明示 close() を呼ばずに破棄する経路 (ws = None) には __del__ を使えない。
+      // nanobind の tp_dealloc は C++ destructor を直接呼び、 CPython の finalizer
+      // (tp_finalize) を呼ばないため、 .def("__del__", ...) は通常のメソッドになるだけで
+      // 破棄時には実行されない (tp_finalize を type_slots で登録しても dealloc からは
+      // 呼ばれない)。 破棄時に GIL を保持したまま走る C++ 側の public ~WebSocket()
+      // (rtc::WebSocket のデストラクタ) の恒停は、 binding 側では解消できないため
+      // 別途対応する。
       // (data, size) 版は削除した (DataChannel.send のコメントを参照)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
            "data"_a, nb::call_guard<nb::gil_scoped_release>())
