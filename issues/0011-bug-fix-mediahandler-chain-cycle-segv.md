@@ -42,13 +42,16 @@ h2.last()  # 無限再帰 → SIGSEGV (exit 139)
   - `add_to_chain` が張る辺は `last(self) -> handler` なので、 条件は「self から到達可能なノードの集合」と「handler から到達可能なノードの集合」が交わること。 同じ handler を 2 回追加する場合もこれで検出できる
   - `set_next` は置換なので、 条件は「handler から self に到達可能なこと」
   - 検査は `addToChain` を呼ぶ前に行う (内部で先に `last()` が走るため)
-- 走査には上限 (1024 ノード) を設け、 超えた場合は cycle とみなして例外にする (既に cycle がある場合に検査自体が落ちないようにする)
-- `Track.chain_media_handler` も `Track::chainMediaHandler` 経由で `addToChain` を呼ぶため、 同じ検査を入れる
+- 走査には上限 (1024 ノード) を設ける。 入力チェーンの長さが上限を超えた場合は「長すぎる」として例外にする (既に cycle がある場合に検査自体が落ちないようにするため)。 上限を超えた場合は cycle とは別のメッセージにする
+- 上限は入力チェーンの走査に対する制限であり、 連結後のチェーン長を制限するものではない (1024 ノード同士を連結すると 2048 ノードになり得る)
+- `Track.chain_media_handler` も `Track::chainMediaHandler` 経由で `addToChain` を呼ぶため、 同じ検査を入れる (media handler 未設定時は置換のみなので検査しない)
+- cycle 検出の性質は property-based test (`tests/prop_mediahandler.py`) で検証する (ランダムな連結操作列に対して「cycle になる操作だけが拒否され、 チェーンがモデルと一致する」ことを確かめる)
 - cycle 検出のテストを追加する (自己参照 / 相互参照 / 自分のチェーン途中の handler / 同じ handler の 2 回追加 / 例外後にチェーンが壊れていないこと)
 
 ## 完了条件
 
 - cycle を作ろうとすると `ValueError` になり、 その後に `last()` を呼んでも SEGV しないこと
+- 上限 (1024 ノード) ちょうどのチェーンへは接続でき、 上限を超えるチェーンへの接続は「長すぎる」旨の `ValueError` になること
 - 例外になった後もチェーンが壊れていないこと (`next()` / `last()` が元の値を返す)
 - cycle 検出のテストが追加されていること
 - `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する
@@ -61,3 +64,4 @@ h2.last()  # 無限再帰 → SIGSEGV (exit 139)
 - 対象シンボル: `bind_mediahandler` 内の add_to_chain / set_next (src/bind_libdatachannel.cpp)
 - libdatachannel v0.24.0: `src/mediahandler.cpp` (`MediaHandler::addToChain` は `last()->setNext(handler)`、 `last()` は `next()` の再帰)、 `src/track.cpp` (`Track::chainMediaHandler` は先頭の media handler へ `addToChain`)
 - 対象外: `PeerConnection.set_media_handler` は置換のみ、 `reset_callbacks` は `mNext` に触れないため cycle 経路ではない
+- 対象外: `set_next` を繰り返して線形チェーンを極端に長くする (10 万ノード) と、 `last()` の再帰の深さで SEGV し得る。 cycle ではないため本 issue では扱わない (現実的な構成ではない)

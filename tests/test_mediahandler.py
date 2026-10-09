@@ -177,3 +177,23 @@ def test_chain_media_handler_rejects_cycle():
     with pytest.raises(ValueError):
         track.chain_media_handler(h1)
     assert h1.last() is h2
+
+
+def test_add_to_chain_accepts_chain_at_limit():
+    """上限ちょうどの長さのチェーンへは接続できること"""
+    handlers = [DummyHandler() for _ in range(1024 + 1)]
+    for i in range(1023):
+        handlers[i].set_next(handlers[i + 1])
+    # 1024 ノードのチェーンの末尾へ繋ぐ
+    handlers[0].add_to_chain(handlers[1024])
+    assert handlers[0].last() is handlers[1024]
+
+
+def test_add_to_chain_rejects_too_long_chain():
+    """上限を超える長さのチェーンへの接続は上限エラーで拒否されること"""
+    handlers = [DummyHandler() for _ in range(1026 + 1)]
+    for i in range(1025):
+        handlers[i].set_next(handlers[i + 1])
+    fresh = DummyHandler()
+    with pytest.raises(ValueError, match="longer than the supported limit"):
+        handlers[0].add_to_chain(fresh)

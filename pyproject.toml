@@ -52,6 +52,8 @@ requires = ["nanobind>=3.1.0", "scikit-build-core>=1.1.1"]
 build-backend = "scikit_build_core.build"
 
 [tool.pytest.ini_options]
+# PBT のファイル名は prop_<module>.py (規約) のため collect 対象に含める
+python_files = ["test_*.py", "prop_*.py"]
 testpaths = ["tests"]
 
 [tool.ruff]

@@ -858,50 +858,89 @@ class PyMediaHandlerImpl : public PyMediaHandler {
 // libdatachannel の MediaHandler::last() は next() を再帰でたどるため、 cycle があると
 // 戻らずにスタックオーバーフローで SEGV する。 Python から到達できる連結操作の時点で
 // 検出して例外にする。
-// 探索の上限。 libdatachannel 側に長さ制限は無いため、 上限を超えた場合は cycle とみなす
+// 走査の上限。 libdatachannel 側に長さ制限は無いため、 入力チェーンの長さがこの値を
+// 超えた場合は cycle とみなして拒否する (検査自体が無限再帰しないようにするため)
 constexpr size_t kMaxMediaHandlerChainLength = 1024;
 
+enum class MediaHandlerChainCheck {
+  kOk,
+  kCycle,
+  kTooLong,
+};
+
 // handler から next() をたどって到達できるノードを集める。
-// 上限を超えた場合 (cycle の可能性がある場合) は false を返す
-bool collect_media_handler_chain(const std::shared_ptr<MediaHandler>& handler,
-                                 std::vector<MediaHandler*>& nodes) {
+// 上限を超えた場合 (cycle の可能性がある場合) は kTooLong を返す
+MediaHandlerChainCheck collect_media_handler_chain(
+    const std::shared_ptr<MediaHandler>& handler,
+    std::vector<MediaHandler*>& nodes) {
   auto current = handler;
   for (size_t i = 0; i < kMaxMediaHandlerChainLength; ++i) {
     if (!current) {
-      return true;
+      return MediaHandlerChainCheck::kOk;
     }
     nodes.push_back(current.get());
     current = current->next();
   }
-  return false;
+  // 上限までたどっても終端に到達しなかった
+  return current ? MediaHandlerChainCheck::kTooLong
+                 : MediaHandlerChainCheck::kOk;
 }
 
-// handler が self のチェーンへ戻る場合 (add_to_chain で cycle になる場合) は true
-bool media_handler_add_to_chain_has_cycle(
+// handler が self のチェーンへ戻る場合 (add_to_chain で cycle になる場合) を判定する。
+// add_to_chain は last(self) -> handler の辺を張るため、 両チェーンのノードが交われば cycle
+MediaHandlerChainCheck media_handler_add_to_chain_check(
     const std::shared_ptr<MediaHandler>& self,
     const std::shared_ptr<MediaHandler>& handler) {
   std::vector<MediaHandler*> own;
-  if (!collect_media_handler_chain(self, own)) {
-    return true;
+  if (auto check = collect_media_handler_chain(self, own);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
   }
   std::vector<MediaHandler*> added;
-  if (!collect_media_handler_chain(handler, added)) {
-    return true;
+  if (auto check = collect_media_handler_chain(handler, added);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
   }
-  return std::any_of(added.begin(), added.end(), [&own](MediaHandler* node) {
-    return std::find(own.begin(), own.end(), node) != own.end();
-  });
+  const bool has_cycle =
+      std::any_of(added.begin(), added.end(), [&own](MediaHandler* node) {
+        return std::find(own.begin(), own.end(), node) != own.end();
+      });
+  return has_cycle ? MediaHandlerChainCheck::kCycle
+                   : MediaHandlerChainCheck::kOk;
 }
 
-// handler が self 自身へ戻る場合 (set_next で cycle になる場合) は true
-bool media_handler_set_next_has_cycle(
+// handler が self 自身へ戻る場合 (set_next で cycle になる場合) を判定する。
+// set_next は置換なので、 handler のチェーンに self が含まれれば cycle
+MediaHandlerChainCheck media_handler_set_next_check(
     const std::shared_ptr<MediaHandler>& self,
     const std::shared_ptr<MediaHandler>& handler) {
   std::vector<MediaHandler*> added;
-  if (!collect_media_handler_chain(handler, added)) {
-    return true;
+  if (auto check = collect_media_handler_chain(handler, added);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
   }
-  return std::find(added.begin(), added.end(), self.get()) != added.end();
+  const bool has_cycle =
+      std::find(added.begin(), added.end(), self.get()) != added.end();
+  return has_cycle ? MediaHandlerChainCheck::kCycle
+                   : MediaHandlerChainCheck::kOk;
+}
+
+// 検査結果を Python の例外にして返す。 cycle でなければ何もしない
+void throw_media_handler_chain_error(MediaHandlerChainCheck check,
+                                     const char* operation) {
+  switch (check) {
+    case MediaHandlerChainCheck::kCycle:
+      throw std::invalid_argument(std::string(operation) +
+                                  " would create a cycle in the MediaHandler "
+                                  "chain");
+    case MediaHandlerChainCheck::kTooLong:
+      throw std::invalid_argument(
+          std::string(operation) +
+          ": MediaHandler chain is longer than the supported limit (" +
+          std::to_string(kMaxMediaHandlerChainLength) + " nodes)");
+    case MediaHandlerChainCheck::kOk:
+      return;
+  }
 }
 
 void bind_mediahandler(nb::module_& m) {
@@ -940,11 +979,9 @@ void bind_mediahandler(nb::module_& m) {
           [](std::shared_ptr<MediaHandler> self,
              std::shared_ptr<MediaHandler> handler) {
             // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
-            if (media_handler_add_to_chain_has_cycle(self, handler)) {
-              throw std::invalid_argument(
-                  "add_to_chain would create a cycle in the MediaHandler "
-                  "chain");
-            }
+            throw_media_handler_chain_error(
+                media_handler_add_to_chain_check(self, handler),
+                "add_to_chain");
             self->addToChain(handler);
           },
           "handler"_a)
@@ -953,10 +990,8 @@ void bind_mediahandler(nb::module_& m) {
           [](std::shared_ptr<MediaHandler> self,
              std::shared_ptr<MediaHandler> handler) {
             // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
-            if (media_handler_set_next_has_cycle(self, handler)) {
-              throw std::invalid_argument(
-                  "set_next would create a cycle in the MediaHandler chain");
-            }
+            throw_media_handler_chain_error(
+                media_handler_set_next_check(self, handler), "set_next");
             self->setNext(handler);
           },
           "next"_a)
@@ -1430,11 +1465,10 @@ void bind_track(nb::module_& m) {
           [](Track& self, std::shared_ptr<MediaHandler> handler) {
             // media handler が設定済みの場合はそのチェーンの末尾に連結されるため、
             // binding 側と同じ cycle 検査を行う (未設定の場合は置換のみ)
-            if (auto first = self.getMediaHandler();
-                first && media_handler_add_to_chain_has_cycle(first, handler)) {
-              throw std::invalid_argument(
-                  "chain_media_handler would create a cycle in the "
-                  "MediaHandler chain");
+            if (auto first = self.getMediaHandler()) {
+              throw_media_handler_chain_error(
+                  media_handler_add_to_chain_check(first, handler),
+                  "chain_media_handler");
             }
             self.chainMediaHandler(std::move(handler));
           },

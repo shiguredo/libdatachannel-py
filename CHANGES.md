@@ -32,6 +32,7 @@
 - [FIX] MediaHandler の chain に cycle を作ると SEGV する問題を修正する
   - `add_to_chain` / `set_next` / `Track.chain_media_handler` で cycle を検出し、 連結する前に例外にする
   - cycle があると `MediaHandler::last()` が next() を無限に再帰してスタックオーバーフローで落ちていた
+  - 検査の走査には上限 (1024 ノード) があり、 それを超える長さのチェーンへの接続も例外になる
   - @voluntas
 - [FIX] WebSocket の close() / force_close() の GIL 保持による Python プロセスの停止を修正する
   - 従来は GIL を保持したまま close 経路に入り、 受信 callback を実行中の内部 thread とロック順逆転して Python プロセスが停止していた
