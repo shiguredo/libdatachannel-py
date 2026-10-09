@@ -611,6 +611,13 @@ def test_request_media_control_releases_gil(operation: str) -> None:
     thread = threading.Thread(target=spin, daemon=True)
     thread.start()
     try:
+        # 待機 thread が実際に動き始めるまで待つ。 起動前に測ると、 GIL を解放しても
+        # 受け取る thread がおらず進行が 0 のままになる (CI で観測された flaky)。
+        deadline = time.monotonic() + 5
+        while counter == 0 and time.monotonic() < deadline:
+            time.sleep(0)
+        assert counter > 0, "GIL を待つ thread が動き始めなかった"
+
         # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする。
         sys.setswitchinterval(1.0)
         # 呼び出し前の進行を測る (GIL を解放しない呼び出しの比較対象)。

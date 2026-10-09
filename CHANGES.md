@@ -39,6 +39,11 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] Free-Threading 対応の Python かどうかを判定して FREE_THREADED を明示的に指定する
+  - nanobind は GIL ありの Python で `FREE_THREADED` をエラーも警告もなく無効化するため、 指定と実際の ABI が黙って食い違っていた
+  - Free-Threading 版の wheel は 3.14t、 GIL あり版は 3.12 / 3.13 / 3.14 で配布する (3.13t 向けは配布しない)
+  - ABI から見た判定と nanobind の判定が食い違った場合は CMake の警告で検出する
+  - @voluntas
 - [FIX] Track.request_keyframe() / Track.request_bitrate() が GIL を保持したまま送信経路に入る問題を修正する
   - 送信経路の内部ロックを保持したまま GIL 待ちに入ると、 受信経路の Python callback と循環待ちになって復帰不能になる (`send` 系と同じ構造)
   - `send` 系と同じく GIL を解放して実行する
