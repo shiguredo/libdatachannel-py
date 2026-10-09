@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-non-owning-reference-lifetime
 - Polished: 2026-10-09
 
@@ -59,6 +59,19 @@ m.mid()  # 親の Description は破棄済み → use-after-free
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` に `[FIX]` エントリが追加されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp` で戻り値が親を生存させるようにした
+  - `media()`: `nb::cast(ptr, nb::rv_policy::reference_internal, nb::find(desc))` で親 (Description) を保持する
+  - `application()` / `config()`: メンバ関数ポインタ + `nb::rv_policy::reference_internal` (self が parent になる) に変更した。 `application()` は const / 非 const の overload があるため `nb::overload_cast<>` で非 const 版を選ぶ
+  - 生成スタブも `application -> Description.Application` / `config -> Configuration` と正確になった
+- `rtp_map()` は値 (コピー) を返すようにした (`remove_rtp_map()` / `remove_format()` の erase で無効になるため)。 存在しない payload type は従来どおり `ValueError` になる
+- テスト
+  - `tests/test_description.py`: 親を `del` + `gc.collect()` で破棄した後に `media.mid()` / `application.mid()` を読むこと、 `rtp_map()` が値 (コピー) を返すこと (書き換えが反映されない / 呼ぶたびに別オブジェクト) を検証する
+  - `tests/test_peerconnection.py`: 親を破棄した後に `config.ice_servers` を読むことを検証する
+- `CHANGES.md` の `## develop` に `[CHANGE]` (rtp_map の値返し) と `[FIX]` (media / application / config の寿命) を追加した
+- 実測: 修正前は親を破棄した後の `mid()` で exit 139 (SIGSEGV)、 `rtp_map()` は `remove_rtp_map()` 後に `format` が空文字列。 修正後は media / application / config / rtp_map の 4 経路すべて正常で、 全体 94 passed / 12 skipped / 1 deselected
 
 ## スコープ外 (関連する未解決問題)
 
