@@ -1801,11 +1801,12 @@ void bind_websocket(nb::module_& m) {
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
       .def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())
-      // 明示 close() を呼ばずに破棄する経路 (ws = None) には __del__ を使えない。
+      // 明示 close() を呼ばずに破棄する経路 (ws = None) に __del__ は使えない。
       // nanobind の tp_dealloc は C++ destructor を直接呼び、 CPython の finalizer
-      // (tp_finalize) を呼ばないため、 .def("__del__", ...) は通常のメソッドになるだけで
-      // 破棄時には実行されない (tp_finalize を type_slots で登録しても dealloc からは
-      // 呼ばれない)。 破棄時に GIL を保持したまま走る C++ 側の public ~WebSocket()
+      // (tp_finalize) を呼ばないため、 基底クラスのインスタンスを破棄する経路では
+      // .def("__del__", ...) は通常のメソッドになるだけで実行されない
+      // (Python サブクラスのインスタンスでは subtype_dealloc 経由で実行される)。
+      // 破棄時に GIL を保持したまま走る C++ 側の public ~WebSocket()
       // (rtc::WebSocket のデストラクタ) の恒停は、 binding 側では解消できないため
       // 別途対応する。
       // (data, size) 版は削除した (DataChannel.send のコメントを参照)

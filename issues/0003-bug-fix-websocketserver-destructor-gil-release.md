@@ -51,7 +51,7 @@
 
 - 0001 / 0002 の実装手順により後続 issue は別 PR で着手するため、 `## develop` に 0001 / 0002 のエントリとは別の `[FIX]` エントリを追加する。
   - 「`WebSocketServer` を明示的に `stop()` せずに destruct した場合の GIL 保持 hang を修正する」
-  - 「`WebSocketServer.__del__` で `stop()` が自動的に呼ばれる」
+  - 「`WebSocketServer.__del__` から GIL 解放下で `stop()` が呼ばれる (Python サブクラスでは破棄時に実行される)」
 
 ## 完了条件
 

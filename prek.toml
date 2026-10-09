@@ -52,8 +52,9 @@ hooks = [
   {
     # pytest: `uv run pytest` を使うため、 拡張モジュールを install した .venv が必要になる
     # (make develop 相当を実行するまでこのフックは失敗する)。
-    # test_destruct_without_explicit_close は GIL と libdatachannel の mutex の
-    # デッドロックで停止し、 pytest-timeout も発火しないため除外する。
+    # tests/test_peerconnection.py::test_destruct_without_explicit_close は GIL と
+    # libdatachannel の mutex のデッドロックで停止し、 pytest-timeout も発火しないため
+    # 除外する (tests/test_websocketserver.py の同名テストは除外対象ではない)。
     id = "pytest",
     name = "pytest",
     entry = "uv run pytest",

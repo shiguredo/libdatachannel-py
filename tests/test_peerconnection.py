@@ -627,10 +627,12 @@ def test_request_media_control_releases_gil(operation: str) -> None:
         baseline = counter - baseline_start
 
         # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
-        # 1 呼び出しあたり switch interval (1 秒) 分の GIL 再取得待ちが入るため、
-        # 回数を増やすと所要時間が線形に伸びる。
+        # 1 回の呼び出しは µs で終わるため、 回数を固定すると GIL 解放の窓が短すぎて
+        # 待機 thread が走り出せず偽陰性になる (CI の arm64 leg で発生した)。
+        # 一定時間呼び続けて、 その間に待機 thread が進行したかで判定する。
         target_start = counter
-        for _ in range(5):
+        target_deadline = time.monotonic() + 0.5
+        while time.monotonic() < target_deadline:
             assert call_media_control(), f"{operation}() が送信経路を通らなかった"
         released = counter - target_start
     finally:

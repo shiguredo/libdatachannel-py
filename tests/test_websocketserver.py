@@ -166,9 +166,12 @@ def test_stop_releases_gil() -> None:
             server.port()
         baseline = counter - baseline_start
 
-        # stop() は GIL を解放するため、 待機 thread が進行する
+        # stop() は GIL を解放するため、 待機 thread が進行する。 1 回の呼び出しは
+        # µs で終わるため、 一定時間呼び続けて判定する
         stop_start = counter
-        server.stop()
+        stop_deadline = time.monotonic() + 0.5
+        while time.monotonic() < stop_deadline:
+            server.stop()
         stopped = counter - stop_start
 
         assert stopped > baseline, (
@@ -178,6 +181,8 @@ def test_stop_releases_gil() -> None:
         sys.setswitchinterval(original_interval)
         stopping.set()
         thread.join(timeout=5)
+        # 失敗時もサーバーを確実に停止する (stop は冪等)
+        server.stop()
 
 
 def test_destruct_without_explicit_close() -> None:
@@ -186,6 +191,11 @@ def test_destruct_without_explicit_close() -> None:
     破棄経路では libdatachannel 本体の公開デストラクタが stop() を呼ぶ。 ここでは
     クライアントを接続しない状態で破棄し、 破棄が完了すること (Python オブジェクトが
     解放され weakref が死ぬこと) を確認する。
+
+    クライアントが接続しておらず Python callback が GIL を待っていないため、 この
+    テストは破棄経路の恒停を検出しない (恒停が起きればテスト自体が停止する)。 恒停の
+    検出には GIL を待つ callback を動かす必要があり、 破棄経路の恒停の根本対応は
+    別 issue で扱う。
     """
     config = WebSocketServerConfiguration()
     config.port = 48091
@@ -210,11 +220,18 @@ def test_del_calls_stop_on_python_subclass() -> None:
     正常に動くこと (GIL 解放下の stop を呼べること) を確認する。
     """
     del_called = []
+    del_errors = []
 
     class Server(WebSocketServer):
         def __del__(self) -> None:
             del_called.append(True)
-            super().__del__()
+            # binding の __del__ (GIL 解放下の stop) が例外を投げても CPython は
+            # unraisable として記録するだけでテストは PASS してしまうため、 ここで
+            # 捕まえて検証する
+            try:
+                super().__del__()
+            except BaseException as e:  # noqa: BLE001 (破棄経路の例外を検証する)
+                del_errors.append(repr(e))
 
     config = WebSocketServerConfiguration()
     config.port = 48092
@@ -225,3 +242,4 @@ def test_del_calls_stop_on_python_subclass() -> None:
     gc.collect()
 
     assert del_called == [True]
+    assert del_errors == [], f"binding の __del__ が例外を投げた: {del_errors}"
