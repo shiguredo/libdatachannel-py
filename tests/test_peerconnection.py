@@ -620,33 +620,27 @@ def test_request_media_control_releases_gil(operation: str) -> None:
 
         # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする。
         sys.setswitchinterval(1.0)
-        # 呼び出し前の進行を測る (GIL を解放しない呼び出しの比較対象)。
-        baseline_start = counter
+        # GIL を解放しない呼び出し (description()) の所要時間を比較対象として測る。
+        baseline_start = time.monotonic()
         for _ in range(200):
             t2.description()
-        baseline = counter - baseline_start
+        baseline_elapsed = time.monotonic() - baseline_start
 
-        # 対象の呼び出し中に待機 thread が進行すれば、 GIL が解放されている。
-        # 1 回の呼び出しは µs で終わるため、 バーストは GIL の受け渡し周期 (0.5〜1 秒)
-        # より十分短く保つ。 長いループにすると、 GIL を解放しなくても周期的な受け渡しで
-        # 待機 thread が走り出し、 解放の有無を判定できなくなる。
-        # 短いバーストでは待機 thread が走り出せないことがあるため (CI の arm64 leg で
-        # released=0 を観測)、 複数回試行していずれかで進行すれば解放されていると判定する。
-        released = 0
-        for _ in range(50):
-            target_start = counter
-            for _ in range(5):
-                assert call_media_control(), f"{operation}() が送信経路を通らなかった"
-            released = counter - target_start
-            if released > baseline:
-                break
+        # 対象が GIL を解放すると、 待機 thread が switch interval (1 秒) の間 GIL を
+        # 握るため、 呼び出しは GIL の再取得待ちで 1 秒近くかかる。 GIL を解放しなければ
+        # 即座に戻る。 (進行カウンタ方式は、 解放窓が µs のときに待機 thread が走り出せず
+        # 偽陰性になった。 CI の macOS / arm64 leg で複数回発生している)
+        target_start = time.monotonic()
+        assert call_media_control(), f"{operation}() が送信経路を通らなかった"
+        released_elapsed = time.monotonic() - target_start
     finally:
         stop = True
         sys.setswitchinterval(original_interval)
         thread.join(timeout=10)
 
-    assert released > baseline, (
-        f"{operation}() が GIL を解放しなかった (released={released}, baseline={baseline})"
+    assert released_elapsed > 0.1, (
+        f"{operation}() が GIL を解放しなかった "
+        f"(elapsed={released_elapsed:.3f}, baseline_elapsed={baseline_elapsed:.6f})"
     )
 
     pc1.close()
