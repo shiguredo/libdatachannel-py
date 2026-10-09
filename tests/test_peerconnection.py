@@ -511,3 +511,17 @@ def test_send_releases_gil_for_incoming_callback():
 
     pc1.close()
     pc2.close()
+
+
+def test_config_outlives_peer_connection() -> None:
+    """PeerConnection を破棄しても config() の戻り値が使えること
+
+    config() の戻り値は PeerConnection 内部への参照のため、 親を生存させないと
+    use-after-free になる。 回帰した場合はこのテストの実行中にプロセスが落ちる
+    """
+
+    pc = PeerConnection()
+    config = pc.config()
+    del pc
+    gc.collect()
+    assert isinstance(config.ice_servers, list)
