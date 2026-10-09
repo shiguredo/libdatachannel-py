@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-05-18
-- Polished: 2026-08-30
+- Polished: 2026-10-09
 - Model: Opus 4.7
 - Branch: feature/fix-ice-udp-mux-listener-destructor-gil-release
 
@@ -34,7 +34,7 @@
 - `stop_ice_udp_mux_listener` を `namespace {}` に追加する。 `self.stop()` を呼ぶだけで、 polling は行わない (state API が無い)。 `stop()` の戻り時点で内部 thread の `thread_join` が完了している。
 - `.def("stop", &IceUdpMuxListener::stop)` を `.def("stop", &stop_ice_udp_mux_listener, nb::call_guard<nb::gil_scoped_release>())` に差し替える。
 - `.def("__del__", ...)` を追加し、 GIL release 下で `stop_ice_udp_mux_listener` を呼ぶ。 `__del__` から投げた例外は呼び出し側で捕捉できないため `RuntimeWarning` として記録するだけで握り潰す (0001 の `PeerConnection` binding と同型)。
-- `nb::class_<IceUdpMuxListener>` に `nb::is_weak_referenceable()` を指定する (test で weakref により `__del__` 発火を検証するため)。
+- `nb::class_<IceUdpMuxListener>` に `nb::is_weak_referenceable()` を指定する (test で weakref を使うため)。
 
 ### 2. Python wrapper 側 (src/libdatachannel/__init__.py)
 
@@ -42,21 +42,23 @@
 
 ### 3. テスト (tests/test_ice_udp_mux_listener.py)
 
-- 新規ファイル `tests/test_ice_udp_mux_listener.py` を作成し、 `test_destruct_without_explicit_close` を追加する。 内容は「`IceUdpMuxListener` を明示 `stop()` を呼ばずに destruct しても hang せず終了する」 ことを検証する。
-- 検証方法は 0001 / 0002 / 0003 のテストに合わせ、 `weakref` で `__del__` 発火を実検証し、 `@pytest.mark.timeout` で hang 時の上限を指定する。 polling が無いため `RuntimeWarning` 経路は存在せず、 `recwarn` は使わない。
+- 新規ファイル `tests/test_ice_udp_mux_listener.py` を作成し、 以下を追加する。
+  - `test_stop_releases_gil`: `stop()` の呼び出し中に GIL を待つ thread が進行することで、 GIL 解放を実測する ([[0003-bug-fix-websocketserver-destructor-gil-release]] と同じ方式。 free-threading ビルドでは skip)
+  - `test_destruct_without_explicit_close`: 明示 `stop()` を呼ばずに破棄しても恒停せず終了すること (weakref が死ぬこと) を検証する。 **`weakref` で `__del__` の発火は検証できない**: nanobind 3 の `tp_dealloc` は C++ destructor を直接呼び、 CPython の finalizer (`tp_finalize`) を呼ばないため、 基底クラスのインスタンス破棄時に `__del__` は実行されない ([[0002-bug-fix-websocket-destructor-gil-release]] / [[0003-bug-fix-websocketserver-destructor-gil-release]] の実装時に実測して判明済み)
+  - `test_del_calls_stop_on_python_subclass`: Python サブクラスでは破棄時に `__del__` が実行され、 その中から `super().__del__()` (= binding の stop) を呼べること、 停止後に同じ UDP ポートを bind できること (= stop が実際に走ったこと) を検証する
 - ファイル名はテストディレクトリ内の既存命名 (`test_<lower_case>.py`) に従う。
-- localhost で利用可能な UDP ポートで listener を立ち上げ、 immediately destruct する最小ケースを書く。
 
 ### 4. CHANGES.md
 
 - 0001 / 0002 / 0003 の実装手順により後続 issue は別 PR で着手するため、 `## develop` に 0001 / 0002 / 0003 のエントリとは別の `[FIX]` エントリを追加する。
   - 「`IceUdpMuxListener` を明示的に `stop()` せずに destruct した場合の GIL 保持 hang を修正する」
-  - 「`IceUdpMuxListener.__del__` で `stop()` が自動的に呼ばれる」
+  - 「`IceUdpMuxListener.__del__` から GIL 解放下で `stop()` が呼ばれる (Python サブクラスでは破棄時に実行される)」
 
 ## 完了条件
 
-- `uv sync && make test` で全テストが PASS する。
-- `tests/test_ice_udp_mux_listener.py::test_destruct_without_explicit_close` が、 明示 `stop()` を呼ばずに `listener` を destruct しても hang せず終了し、 weakref により `__del__` 発火が検証できる。
+- `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` (prek.toml の pytest フック = 既知の恒停テストを `--deselect` で除外) が PASS する。
+- `tests/test_ice_udp_mux_listener.py` の新規 3 テスト (`test_stop_releases_gil` / `test_destruct_without_explicit_close` / `test_del_calls_stop_on_python_subclass`) が PASS する。
+- `IceUdpMuxListener.stop()` が GIL 解放下で実行されること (GIL を待つ thread が停止中に進行することで実測)。
 - `CHANGES.md` の `## develop` に 0001 / 0002 / 0003 とは別の `[FIX]` エントリが追加されている。
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること。
 
@@ -77,7 +79,9 @@
 - 既存ブランチ (試行錯誤の履歴): `feature/fix-destructor-gil-release`
   - `f67b9ee` (`IceUdpMuxListener` を hang 対策の対象に追加) は wrapper 方式に基づく試行錯誤であり、 0001 の解決方法で撤回された。 cherry-pick せず、 develop に取り込まれた 0001 の実装 (`close_peer_connection` / `.def("__del__")` / `nb::is_weak_referenceable()`) を踏襲すること。
 - 関連 issue: [[0001-bug-fix-peer-connection-destructor-gil-release]] (`close_peer_connection` / `__del__` / `is_weak_referenceable` の実装元) / [[0002-bug-fix-websocket-destructor-gil-release]] / [[0003-bug-fix-websocketserver-destructor-gil-release]]
-- libdatachannel / libjuice 関連コード位置 (シンボル名で特定する):
+- 検証 (レビュー): `stop()` を GIL 解放下で実行しない場合は `test_stop_releases_gil` が失敗する (GIL を解放しない呼び出しを同形で回すと進行 0 になる)。 `__del__` を削除した場合は `super().__del__()` の `AttributeError` を、 `stop()` を呼ばない場合は停止後のポート bind 成功を検出して失敗する
+- 既知の制約: nanobind 3 の `tp_dealloc` は CPython の finalizer を呼ばないため、 基底クラスのインスタンスを破棄する経路では `__del__` は実行されない。 破棄時に GIL を保持したまま走る C++ 側の公開デストラクタ (`stop()` 呼び出し) の恒停は binding 側では解消できず、 根本対応は [[0005-bug-fix-destructor-callback-deadlock]] / [[0039-bug-fix-nanobind-del-not-called]] に集約する ([[0003-bug-fix-websocketserver-destructor-gil-release]] と同じ整理)
+- libdatachannel 関連コード位置 (シンボル名で特定する):
   - `_deps/libdatachannel/v0.24.0/source/deps/libjuice/src/conn_mux.c` の `conn_mux_registry_cleanup` (内部の `thread_join`)
   - `_deps/libdatachannel/v0.24.0/source/src/iceudpmuxlistener.cpp` の public `stop()`
 

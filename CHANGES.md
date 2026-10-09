@@ -45,6 +45,11 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] IceUdpMuxListener の stop() を GIL 解放下で実行するようにする
+  - 内部 thread の join が Python callback の GIL 待ちと噛み合って恒停し得るため、 GIL を解放して停止する
+  - `IceUdpMuxListener.__del__` からも GIL 解放下で stop() を呼ぶ (Python サブクラスでは破棄時に実行される)
+  - 明示 stop() を呼ばずに破棄する経路の恒停には未対応である (破棄時は GIL を保持したまま C++ 側の公開デストラクタが stop() を呼ぶ)
+  - @voluntas
 - [FIX] WebSocketServer の stop() を GIL 解放下で実行するようにする
   - 受け入れ thread が Python callback の GIL を待っている間に stop() が GIL を保持したまま走ると恒停し得るため、 GIL を解放して停止する
   - `WebSocketServer.__del__` からも GIL 解放下で stop() を呼ぶ (Python サブクラスでは破棄時に実行される)
