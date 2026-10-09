@@ -26,6 +26,12 @@
   - `size` は `len(data)` から導出できるため、 size を取らない版 (`send` は 1 引数、 `send_frame` は `data` と `info`) とスライス (`data[:size]`) で置き換えられる (`size` を渡して呼ぶと `TypeError` になる)
   - `Channel` 側の同じ版は binding の削除 (develop の `[FIX]` エントリ) で既に対応済み
   - @voluntas
+- [UPDATE] examples/whip.py と examples/whep.py が Trickle ICE の PATCH で local candidate を送るようにする
+  - 201 Created を受信するまで candidate を保持し、 受信後に 1 つの HTTP PATCH (`application/trickle-ice-sdpfrag`) でまとめて送る (RFC 9725 Section 4.3.2 / draft-ietf-wish-whep-03 Section 4.4.2)
+  - ICE server の有無にかかわらず gathering し、 host candidate も伝える
+  - PATCH body の組み立ては examples/trickle_ice.py の純関数に切り出し、 tests/test_trickle_ice.py で RFC 9725 Figure 3 と突き合わせる
+  - なお ICE restart は対象外
+  - @voluntas
 - [UPDATE] cmake の最小バージョンを 4.3 にする
   - @voluntas
 - [UPDATE] scikit-build-core の最小バージョンを 1.1.1 にする
