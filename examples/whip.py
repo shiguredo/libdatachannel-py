@@ -81,8 +81,56 @@ from libdatachannel import (
 
 logger = structlog.get_logger(__name__)
 
-# trickle ICE の PATCH を送るまでに candidate を待つ上限 (秒)
+# trickle ICE の PATCH を送るまでに gathering の完了を待つ上限 (秒)
 TRICKLE_ICE_TIMEOUT = 5.0
+
+
+def wait_for_ice_gathering(pc: PeerConnection, timeout: float = TRICKLE_ICE_TIMEOUT) -> bool:
+    """ICE gathering が完了するまで待つ
+
+    candidate が 1 つ届いた時点で送ってしまうと、 後から届く srflx / relay の candidate が
+    送られないままになる。 上限を超えた場合は False を返し、 呼び出し側はその時点の
+    candidate で送る。
+    """
+    deadline = time.monotonic() + timeout
+    while pc.gathering_state() is not PeerConnection.GatheringState.Complete:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def send_trickle_ice_patch(
+    client: httpx.Client,
+    session_url: str,
+    fragment: str,
+    etag: str | None,
+    bearer_token: str | None,
+) -> bool:
+    """Trickle ICE の PATCH を送る
+
+    RFC 9725 Section 4.3.1 / Section 4.3.2: `Content-Type` は
+    `application/trickle-ice-sdpfrag`、 entity-tag は 201 Created 応答の ETag を
+    `If-Match` に使う。 成功時は 204 No Content が返る。 trickle ICE は
+    RFC 9725 Section 4.4.5 で OPTIONAL のため、 対応しないサーバーが 4XX を返した場合は
+    False を返して呼び出し側が接続を継続できるようにする。
+    """
+    headers = {"Content-Type": "application/trickle-ice-sdpfrag"}
+    if etag:
+        headers["If-Match"] = etag
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+
+    response = client.patch(session_url, content=fragment, headers=headers)
+    if response.status_code != 204:
+        logger.warning(
+            "Trickle ICE PATCH was rejected",
+            status_code=response.status_code,
+            body=response.text,
+        )
+        return False
+    logger.info("Sent trickle ICE PATCH")
+    return True
 
 
 # ============================================================================
@@ -739,10 +787,9 @@ class WHIPClient:
                 logger.info("Starting ICE gathering without ICE servers (host candidates only)")
                 self.pc.gather_local_candidates()
 
-            # candidate が集まるのを待ってから 1 つの PATCH で送る
-            deadline = time.monotonic() + TRICKLE_ICE_TIMEOUT
-            while not self.pending_candidates and time.monotonic() < deadline:
-                time.sleep(0.05)
+            # gathering が完了するまで待ってから 1 つの PATCH で送る (候補が 1 つ届いた
+            # 時点で送ると、 後から届く srflx / relay の candidate が送られない)
+            wait_for_ice_gathering(self.pc)
             self._send_trickle_ice_patch(client, response)
 
         logger.info("WHIP signaling completed")
@@ -779,24 +826,14 @@ class WHIPClient:
         complete = pc.gathering_state() is PeerConnection.GatheringState.Complete
         fragment = build_sdp_fragment(str(local_sdp), self.pending_candidates, complete)
 
-        headers = {"Content-Type": "application/trickle-ice-sdpfrag"}
-        etag = response.headers.get("ETag")
-        if etag:
-            headers["If-Match"] = etag
-        if self.bearer_token:
-            headers["Authorization"] = f"Bearer {self.bearer_token}"
-
-        patch_response = client.patch(self.session_url, content=fragment, headers=headers)
-        if patch_response.status_code != 204:
-            # RFC 9725 Section 4.4.5 では trickle ICE は OPTIONAL のため、 対応しない
-            # サーバーは 4XX を返し得る。 接続は継続する
-            logger.warning(
-                "Trickle ICE PATCH was rejected",
-                status_code=patch_response.status_code,
-                body=patch_response.text,
-            )
-            return
-        logger.info("Sent trickle ICE PATCH", candidates=len(self.pending_candidates))
+        send_trickle_ice_patch(
+            client,
+            self.session_url,
+            fragment,
+            response.headers.get("ETag"),
+            self.bearer_token,
+        )
+        logger.info("Trickle ICE PATCH sent", candidates=len(self.pending_candidates))
 
     def _setup_video_encoder(self) -> None:
         """webcodecs-py ビデオエンコーダーをセットアップ"""

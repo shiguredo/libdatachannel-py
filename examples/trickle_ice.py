@@ -3,15 +3,19 @@
 WHIP (RFC 9725) / WHEP (draft-ietf-wish-whep) の PATCH リクエストで使う
 `application/trickle-ice-sdpfrag` の body を組み立てる。
 
-- RFC 9725 Section 4.3: 201 Created を受信するまで candidate をバッファし、 受信後に
+- RFC 9725 Section 4.3.2: 201 Created を受信するまで candidate をバッファし、 受信後に
   バッファした candidate を 1 つの HTTP PATCH でまとめて送る (SHOULD)。 PATCH body の
   組み立ては RFC 8840 Section 4.4 に従う
-- RFC 9725 Section 4.3: bundle ポリシーでは offerer-tagged の `m=` 行のみを含める
+- RFC 9725 Section 4.3.2: bundle ポリシーでは offerer-tagged の `m=` 行のみを含める
 """
 
 
 def normalize_candidate(candidate: str) -> str:
-    """candidate を SDP の属性行 (`a=candidate:...`) の形にする"""
+    """candidate を SDP の属性行 (`a=candidate:...`) の形にする
+
+    libdatachannel の `str(Candidate)` は `a=candidate:` を含む形で返すが、 candidate の
+    文字列だけを渡す呼び出しも受け付けられるようにしておく。
+    """
     if candidate.startswith("a="):
         return candidate
     return f"a={candidate}"
@@ -36,7 +40,7 @@ def build_sdp_fragment(
     # bundle ポリシーでは offerer-tagged の m= 行のみを含める
     media_index = next((i for i, line in enumerate(lines) if line.startswith("m=")), None)
     if media_index is None:
-        raise ValueError("SDP に m= 行がない")
+        raise ValueError("The SDP has no m= line")
     fragment.append(lines[media_index])
 
     # m= セクションの属性から mid と ICE 資格情報を取り出す
@@ -59,13 +63,14 @@ def build_sdp_fragment(
     if pwd is None:
         pwd = next((line for line in lines if line.startswith("a=ice-pwd:")), None)
     if ufrag is None or pwd is None:
-        raise ValueError("SDP に ICE 資格情報 (a=ice-ufrag / a=ice-pwd) がない")
+        raise ValueError("The SDP has no ICE credentials (a=ice-ufrag / a=ice-pwd)")
 
     if mid is not None:
         fragment.append(mid)
     fragment.append(ufrag)
     fragment.append(pwd)
     fragment.extend(normalize_candidate(candidate) for candidate in candidates)
+    # candidate の収集が終わっていない場合は付けない (対向の ICE を早期に完了させない)
     if end_of_candidates:
         fragment.append("a=end-of-candidates")
 
