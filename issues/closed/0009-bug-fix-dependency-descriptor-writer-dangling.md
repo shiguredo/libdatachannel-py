@@ -62,7 +62,7 @@ writer.get_size_bits()  # 解放済みメモリを読む → RuntimeError
 - テスト `tests/test_dependencydescriptor.py` を追加した (このモジュールにはテストが 1 件も無かった)
   - 正常系の期待値 (24 bit / 3 byte / `c00001`)、 テンプレートが無い場合の `RuntimeError`、 context 破棄後も正しい値になること、 writer が context を生存させること (参照カウント) を検証する
 - `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
-- 実測: 修正前は context 破棄後に `RuntimeError`。 修正後は `tests/test_dependencydescriptor.py` の 4 テストが PASS、 全体で 97 passed / 12 skipped / 1 deselected
+- 実測: 修正前は context 破棄後に `RuntimeError`。 修正後は `tests/test_dependencydescriptor.py` の 4 テストが PASS、 全体で 98 passed / 12 skipped / 1 deselected
 
 ## 完了条件
 
