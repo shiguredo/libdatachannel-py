@@ -27,6 +27,14 @@
   - @voluntas
 - [ADD] Python 3.12 に対応する
   - @voluntas
+- [FIX] WebSocket の close() / force_close() の GIL 保持による Python プロセスの停止を修正する
+  - 従来は GIL を保持したまま close 経路に入り、 受信 callback を実行中の内部 thread とロック順逆転して Python プロセスが停止していた
+  - `WebSocket.close()` / `WebSocket.force_close()` を GIL 解放下で実行し、 close() は close 処理の完了 (Closed 状態) まで待機するようにする
+  - 待機が 30 秒で完了しなかった場合は `RuntimeWarning` を出す
+  - `state` が `Closing` の場合は polling せず即 return する (対向の close handshake 完了は別 thread が行うため)
+  - 対向の応答によっては close() が 10 秒程度ブロックする場合がある
+  - なお、 明示 close() を呼ばずに破棄した場合の停止 (破棄時の C++ デストラクタが GIL 保持下で走るため) は解消していない (根本解消は今後の課題)
+  - @voluntas
 - [FIX] PeerConnection を明示的に close() せずに破棄したときに Python プロセスが停止する問題を修正する
   - 従来は破棄時の C++ デストラクタが GIL 保持下で内部処理を実行するため、 内部処理が呼ぶコールバックが GIL 待ちで止まり Python プロセスが永続停止していた
   - `PeerConnection.__del__` で `close()` を自動的に呼び、 close() 自身も GIL 解放下で close 処理の完了 (Closed 状態) まで待機するようにする
