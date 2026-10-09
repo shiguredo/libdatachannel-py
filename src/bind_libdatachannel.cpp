@@ -1101,7 +1101,11 @@ void bind_dependencydescriptor(nb::module_& m) {
 
   // DependencyDescriptorWriter class
   nb::class_<DependencyDescriptorWriter>(m, "DependencyDescriptorWriter")
-      .def(nb::init<const DependencyDescriptorContext&>(), "context"_a)
+      // writer は context 自体ではなく context のメンバへの参照
+      // (dependencydescriptor.hpp の mStructure / mDescriptor) を保持するため、
+      // context を生存させる
+      .def(nb::init<const DependencyDescriptorContext&>(), "context"_a,
+           nb::keep_alive<1, 2>())
       .def("get_size_bits", &DependencyDescriptorWriter::getSizeBits)
       .def("get_size", &DependencyDescriptorWriter::getSize)
       .def("write_to", [](const DependencyDescriptorWriter& self) {

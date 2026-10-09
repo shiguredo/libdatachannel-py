@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-dependency-descriptor-writer-dangling
 - Polished: 2026-10-09
 
@@ -12,7 +12,7 @@ DependencyDescriptorWriter は DependencyDescriptorContext 自体ではなく、
 
 ## 優先度根拠
 
-- 実測: 有効な context を作る一時関数から writer だけを返した場合、 context 破棄後の `get_size_bits()` が `RuntimeError: No matching template found` になる (解放済みメモリを読んでいる)
+- 実測: 有効な context を作る一時関数から writer だけを返した場合、 context 破棄後の `get_size_bits()` は `RuntimeError: No matching template found` になる。 ただし use-after-free のため結果は不定で、 例外にならず誤った値になる場合もある
 - なお、 既定の空の context でも同じ例外になる (テンプレートが見つからないため)。 寿命の問題を再現するには structure / descriptor を設定した有効な context が要る
 - 本リポジトリの公開 API として到達可能であり、テストが 1 件もない
 
@@ -46,7 +46,7 @@ writer.get_size_bits()  # 解放済みメモリを読む → RuntimeError
 ```
 
 - `bind_dependencydescriptor` の DependencyDescriptorWriter は `nb::init<const DependencyDescriptorContext&>()` で context を受け、keep_alive を付けていない
-- libdatachannel の `DependencyDescriptorWriter` (`include/rtc/dependencydescriptor.hpp`) は `const FrameDependencyStructure &mStructure` と `const DependencyDescriptor &mDescriptor` を保持する (context 自体は保持しない)
+- libdatachannel の `DependencyDescriptorWriter` (`include/rtc/dependencydescriptor.hpp`) は `const FrameDependencyStructure &mStructure` と `const DependencyDescriptor &mDescriptor` を保持する (context 自体は保持しない)。 `context.activeChains` だけは構築時に値コピーされる
 
 ## 設計方針
 
@@ -54,6 +54,15 @@ writer.get_size_bits()  # 解放済みメモリを読む → RuntimeError
   - writer は const 参照のみを保持する不変オブジェクトで、 context を後から差し替える用途が無いため、 binding 側で shared_ptr を持つ必要はない
   - `DependencyDescriptorContext` のメンバを書き換えても参照自体は有効なままで、 寿命の問題は context の破棄だけが原因
 - context を生存させても、 writer を破棄した後に context が残る (リーク) ことが無いことを確認する
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp` の `DependencyDescriptorWriter.__init__` に `nb::keep_alive<1, 2>()` を追加し、 writer が context を生存させるようにした
+  - writer は const 参照のみを保持する不変オブジェクトで、 context を後から差し替える用途が無いため、 binding 側で shared_ptr を持つ必要はない
+- テスト `tests/test_dependencydescriptor.py` を追加した (このモジュールにはテストが 1 件も無かった)
+  - 正常系の期待値 (24 bit / 3 byte / `c00001`)、 テンプレートが無い場合の `RuntimeError`、 context 破棄後も正しい値になること、 writer が context を生存させること (参照カウント) を検証する
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+- 実測: 修正前は context 破棄後に `RuntimeError`。 修正後は `tests/test_dependencydescriptor.py` の 4 テストが PASS、 全体で 98 passed / 12 skipped / 1 deselected
 
 ## 完了条件
 
