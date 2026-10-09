@@ -60,7 +60,7 @@
 ## 完了条件
 
 - `prek run --all-files pytest` (prek.toml の pytest フック = `uv run pytest -v --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close`) が PASS する。 拡張モジュールを install 済みであること (`make develop` 相当)
-- CI (wheel.yml の 24 leg / prek.yml の `ty` ジョブ) の pytest が PASS する (恒停テストは CI でも `--deselect` で除外されている)
+- CI (wheel.yml の 24 leg / prek.yml の `ty` ジョブ) の pytest が PASS する。 既知の恒停テスト (`tests/test_peerconnection.py::test_destruct_without_explicit_close`) は CI でも `--deselect` で除外されている。 本 issue で追加する恒停再現テストは子プロセスで実行するため CI でも実行される
 - `close()` と `force_close()` の恒停再現テスト (子プロセス + timeout) が、 **修正前は恒停して timeout で失敗し、 修正後は完走する** こと (実測済み: 未修正のビルドでは 2 テストとも timeout、 修正後は 6 テストすべて PASS)
 - 既知の恒停テスト ([[0005-bug-fix-destructor-callback-deadlock]]) は対象外とする。 `make test` は `make develop` (フルビルド) を実行し恒停テストを除外しないため、 完了条件には使わない
 - C++ 側の public `~WebSocket()` の恒停 (callback 実行中に破棄が走る場合) は本 issue の対象外とする (スコープ外を参照)。 `close()` が `Closed` に到達するのは Connecting / Open から呼んだ場合で、 `Closing` の場合は polling せず即 return する
