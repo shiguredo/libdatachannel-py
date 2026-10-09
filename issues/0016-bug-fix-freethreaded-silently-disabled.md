@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-09
 - Branch: feature/fix-freethreaded-silently-disabled
 - Polished: 2026-10-09
 
@@ -41,6 +41,19 @@ CMakeLists.txt は FREE_THREADED を無条件に指定しているが、 nanobin
 - CI (wheel.yml の全 leg / prek.yml の `ty` ジョブ) が PASS する
 - `CHANGES.md` の `## develop` に変更内容が記録されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `CMakeLists.txt` で Free-Threading 対応の Python かどうかを判定し、 `FREE_THREADED` を条件付きで指定するようにした
+  - 判定は nanobind と同じく Python の ABI (`Python_SOABI` / `SKBUILD_SOABI`) が `[0-9]t` かどうかで行い、 nanobind が独自に free-threading と判定した場合はそれに従う
+  - `nanobind_add_module` はフラグ変数で 1 回呼びにまとめ、 ソース一覧の二重管理を避けた
+  - 判定と nanobind の判定 (`NB_FREE_THREADED`) が食い違った場合は `message(WARNING)` を出す。 SOABI を偽装した configure で再現できる
+  - `message(FATAL_ERROR)` は入れない (GIL あり leg とローカルの `make develop` は GIL ありビルドが正規の構成のため)
+  - CMake のメッセージは英語、 コメントで配布方針 (Free-Threading 版は 3.14t、 GIL あり版は 3.12 / 3.13 / 3.14、 3.13t 向けは配布しない) を明記した
+- issue の記述を実態に合わせた (3.14t leg での `tests/test_free_threading.py` 実行は [[0022-test-enable-ci-tests]] で対応済み、 現行の配布は wheel のみ、 GIL あり wheel を Free-Threading の Python に入れると import 時に GIL が再有効化されて skip に戻る)
+- `CHANGES.md` の `## develop` に `[FIX]` エントリを追加した
+- 併せて [[0033-bug-fix-request-keyframe-gil-release]] で追加した `test_request_media_control_releases_gil` の CI flaky を修正した (待機 thread が動き始める前に測ると `released=0` になるため、 起動を待ってから測るようにした)
+- 実測: ローカル (3.12 / GIL あり) は `FREE_THREADED` を指定せず `NB_FREE_THREADED=0`、 Free-Threading (3.14t) では指定して 1 (レビューで最小プロジェクトを configure して実測)、 SOABI 偽装時のみ警告が出る。 全体で 107 passed / 12 skipped / 1 deselected、 CI は全 leg PASS
 
 ## 参考
 

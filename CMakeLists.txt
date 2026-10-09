@@ -166,7 +166,7 @@ set(LIBDATACHANNEL_FREE_THREADED OFF)
 if(Python_SOABI MATCHES "[0-9]t" OR SKBUILD_SOABI MATCHES "[0-9]t")
   set(LIBDATACHANNEL_FREE_THREADED ON)
 endif()
-# nanobind が free-threading と判定した場合はそれに従う (SOABI に t が現れない環境がある)
+# nanobind が独自に free-threading と判定した場合はそれに従う
 if(NB_FREE_THREADED)
   set(LIBDATACHANNEL_FREE_THREADED ON)
 endif()
