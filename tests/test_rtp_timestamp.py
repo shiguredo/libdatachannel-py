@@ -1,0 +1,106 @@
+"""examples/rtp_timestamp.py のテスト
+
+RTP timestamp が 32 bit で wrap すること、 初期値 (乱数) が維持されること、
+毎フレームの差分を足し込む方式のように丸め誤差が累積しないことを確認する。
+"""
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+_MODULE_PATH = Path(__file__).resolve().parent.parent / "examples" / "rtp_timestamp.py"
+_SPEC = importlib.util.spec_from_file_location("rtp_timestamp", _MODULE_PATH)
+assert _SPEC is not None
+rtp_timestamp = importlib.util.module_from_spec(_SPEC)
+assert _SPEC.loader is not None
+_SPEC.loader.exec_module(rtp_timestamp)
+
+compute_rtp_timestamp = rtp_timestamp.compute_rtp_timestamp
+
+# 映像のクロックレート (90 kHz) と Opus のクロックレート (48 kHz)
+VIDEO_CLOCK_RATE = 90000
+AUDIO_CLOCK_RATE = 48000
+
+
+@pytest.mark.parametrize(
+    ("start_timestamp", "dts_usec", "clock_rate", "expected"),
+    [
+        # 最初のフレーム (経過時間 0) は初期値のまま
+        (12345, 0, VIDEO_CLOCK_RATE, 12345),
+        # 初期値が大きくても 0 にはならない
+        (0xFFFFFFFF, 0, VIDEO_CLOCK_RATE, 0xFFFFFFFF),
+        # 1 秒で 1 クロックレート分だけ進む
+        (1000, 1_000_000, VIDEO_CLOCK_RATE, 91000),
+        # 音声 (48 kHz) も同じ計算になる
+        (1000, 1_000_000, AUDIO_CLOCK_RATE, 49000),
+        # 2 秒で 2 クロックレート分だけ進む
+        (0, 2_000_000, VIDEO_CLOCK_RATE, 180000),
+        # 端数は四捨五入する (0.45 クロックは 0)
+        (0, 5_000, VIDEO_CLOCK_RATE, 450),
+        # 初期値から 32 bit を超えると wrap する
+        (0xFFFFFFFF, 1_000_000, VIDEO_CLOCK_RATE, 89999),
+        # 32 bit の上限を超えても例外にならず 32 bit に収まる
+        (0xFFFFFF00, 1_000_000, VIDEO_CLOCK_RATE, 0x15E90),
+        # 音声でも wrap する
+        (0xFFFFFFFF, 1_000_000, AUDIO_CLOCK_RATE, 47999),
+    ],
+    ids=[
+        "first_frame_keeps_start",
+        "first_frame_with_large_start",
+        "one_second_video",
+        "one_second_audio",
+        "two_seconds_elapsed",
+        "truncate_fraction",
+        "wrap_video",
+        "wrap_with_large_start",
+        "wrap_audio",
+    ],
+)
+def test_compute_rtp_timestamp(
+    start_timestamp: int,
+    dts_usec: int,
+    clock_rate: int,
+    expected: int,
+) -> None:
+    """最初の dts からの経過時間から 32 bit に収まる RTP timestamp を返すこと
+
+    初期値を維持したまま wrap させ、 常に 32 bit の範囲に収まる値を返す。
+    """
+    assert compute_rtp_timestamp(start_timestamp, 0, dts_usec, clock_rate) == expected
+
+
+def test_compute_rtp_timestamp_with_non_zero_first_dts() -> None:
+    """最初の dts が 0 でない場合も、 そこからの経過時間で計算すること
+
+    dts は 0 から始まるとは限らないため、 最初の dts を基準にする。
+    """
+    first_dts_usec = 5_000_000
+
+    # 1 秒経過で 90000 進む (初期値 1000 を維持する)
+    assert compute_rtp_timestamp(1000, first_dts_usec, 6_000_000, VIDEO_CLOCK_RATE) == 91000
+    # 最初のフレームでは初期値のまま
+    assert compute_rtp_timestamp(1000, first_dts_usec, first_dts_usec, VIDEO_CLOCK_RATE) == 1000
+
+
+def test_compute_rtp_timestamp_does_not_accumulate_rounding_error() -> None:
+    """差分を足し込む方式と違い、 丸め誤差が累積しないこと
+
+    33.333 ms 間隔のフレームを 1000 枚送ると、 1 枚ごとに 90 kHz 換算で
+    2999.97 クロックとなり 0.97 クロックを切り捨てる。 1000 枚で 970 クロックの
+    ずれが累積するため、 経過時間から直接計算する (30 fps では 100 秒あたり
+    約 22 ms のずれになる)。
+    """
+    frame_interval_usec = 33_333
+    frames = 1000
+    first_dts_usec = 0
+    last_dts_usec = frame_interval_usec * frames
+
+    # 毎フレームの差分を切り捨てて足し込む方式 (従来の計算)
+    accumulated = frame_interval_usec * VIDEO_CLOCK_RATE // 1_000_000 * frames
+    # 最初の dts からの経過時間から直接計算する方式
+    computed = compute_rtp_timestamp(0, first_dts_usec, last_dts_usec, VIDEO_CLOCK_RATE)
+
+    assert accumulated == 2_999_000
+    assert computed == 2_999_970
+    assert computed - accumulated == 970

@@ -40,6 +40,9 @@ import uvc
 # blend2d-py
 from blend2d import CompOp, Context, Image, Path
 
+# このファイルを直接実行すると examples ディレクトリが sys.path に入る
+from rtp_timestamp import compute_rtp_timestamp
+
 # libdatachannel-py
 from trickle_ice import build_sdp_fragment, wait_for_ice_gathering
 
@@ -842,14 +845,12 @@ class WHIPClient:
                 if self.first_video_dts_usec is None:
                     self.first_video_dts_usec = dts_usec
                 if self.video_config is not None:
-                    elapsed_seconds = (dts_usec - self.first_video_dts_usec) / 1_000_000.0
-                    elapsed_timestamp = RtpPacketizationConfig.get_timestamp_from_seconds(
-                        elapsed_seconds, 90000
+                    self.video_config.timestamp = compute_rtp_timestamp(
+                        self.video_config.start_timestamp,
+                        self.first_video_dts_usec,
+                        dts_usec,
+                        90000,
                     )
-                    # 初期値 (乱数) に経過時間を足して 32 bit で wrap させる
-                    self.video_config.timestamp = (
-                        self.video_config.start_timestamp + elapsed_timestamp
-                    ) & 0xFFFFFFFF
 
                 # 送信
                 self.video_track.send(bytes(data))
@@ -1416,14 +1417,12 @@ class WHIPClient:
             if self.first_audio_dts_usec is None:
                 self.first_audio_dts_usec = timestamp_us
             if self.audio_config is not None:
-                elapsed_seconds = (timestamp_us - self.first_audio_dts_usec) / 1_000_000.0
-                elapsed_timestamp = RtpPacketizationConfig.get_timestamp_from_seconds(
-                    elapsed_seconds, 48000
+                self.audio_config.timestamp = compute_rtp_timestamp(
+                    self.audio_config.start_timestamp,
+                    self.first_audio_dts_usec,
+                    timestamp_us,
+                    48000,
                 )
-                # 初期値 (乱数) に経過時間を足して 32 bit で wrap させる
-                self.audio_config.timestamp = (
-                    self.audio_config.start_timestamp + elapsed_timestamp
-                ) & 0xFFFFFFFF
 
             self.audio_track.send(data)
 
