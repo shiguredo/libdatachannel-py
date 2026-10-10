@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-whip-rtp-timestamp-wrap
 - Polished: 2026-10-10
 
@@ -34,7 +34,8 @@ config.timestamp = 0x100000000  # uint32 の範囲外 → TypeError
 
 ## 設計方針
 
-- timestamp の計算に既存の `RtpPacketizationConfig.get_timestamp_from_seconds(seconds, clock_rate)` (静的メソッド。 `uint32_t(int64_t(round(seconds * clock_rate)))` で wrap する) を使う。 自前のマスクは作らない
+- 初期値 `start_timestamp` (乱数) は維持する。 RTP timestamp の初期値は RFC 3550 Section 5.1 で乱数にすることが SHOULD とされており、 libdatachannel の `RtpPacketizationConfig` も同じ趣旨で `startTimestamp` を乱数にしている。 0 から始めると乱数だった現行の挙動からの説明なき逸脱になる
+- timestamp の計算に既存の `RtpPacketizationConfig.get_timestamp_from_seconds(seconds, clock_rate)` (静的メソッド。 `uint32_t(int64_t(round(seconds * clock_rate)))` で wrap する) を使い、 その結果に `start_timestamp` を足して 32 bit でマスクする。 自前の変換は作らない
 - 初回 dts からの絶対時間方式に変更し、 毎フレームの丸め誤差累積も解消する。 `first_video_dts_usec` / `first_audio_dts_usec` を `None` で初期化し、 最初のフレームの dts を設定してから経過秒を渡す。 映像は 90000、 音声は 48000 を渡す
 - 従来の `last_video_dts_usec` / `last_audio_dts_usec` は 0 初期化のみで、 初回フレームの duration が絶対 dts になっていた。 この点も上記で解消する
 - `examples/whip.py` は import 時に uvc / portaudio / webcodecs を要求するため `examples/` のコードを直接 import するテストは書かない。 検証は `RtpPacketizationConfig.get_timestamp_from_seconds` の wrap と丸めを `tests/test_packetizationconfig.py` で確認する
@@ -43,9 +44,23 @@ config.timestamp = 0x100000000  # uint32 の範囲外 → TypeError
 ## 完了条件
 
 - `tests/test_packetizationconfig.py` に `get_timestamp_from_seconds` のテストを追加し、 32 bit の上限を超える入力が例外にならず wrap した値になることと、 端数が四捨五入されることを検証すること
+- 最初のフレームの timestamp が 0 ではなく `start_timestamp` (乱数) になること (映像と音声で `start_timestamp` を足していることをコードで確認する)
 - `make develop` のあと `uv run --no-sync python -m pytest tests/ -q --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close` と `prek run --all-files pytest` / `prek run --all-files ty` が PASS すること (deselect は恒停するテストのため必須)
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - wrap しても映像・音声の送信が継続すること (手動確認)。 `examples/whip.py` を `--fake-capture-device` で起動し、 `RtpPacketizationConfig.start_timestamp` を `0xFFFFFF00` 付近に固定して数秒動かしても送信が継続することを確認する
+
+## 解決方法
+
+- `examples/whip.py`
+  - 映像 (`_setup_video_encoder` の `on_output`) と音声 (`_send_encoded_audio`) の timestamp 更新を、 毎フレームの差分の足し込みから「最初の dts からの経過時間」へ変更した。 `RtpPacketizationConfig.get_timestamp_from_seconds(seconds, clock_rate)` で経過時間を変換し、 `start_timestamp` (乱数) を足してから `& 0xFFFFFFFF` で wrap させる
+  - `first_video_dts_usec` / `first_audio_dts_usec` を追加し、 最初のフレームで設定する。 従来は `last_*_dts_usec` が 0 初期化のみで、 初回フレームの duration が絶対 dts になっていた
+- `tests/test_packetizationconfig.py`
+  - `get_timestamp_from_seconds` のテストを追加した (32 bit を超える入力で wrap すること、 端数が四捨五入されること)。 90 kHz で 100000 秒 (= 2^32 を 2 周) を渡しても例外にならず 410065408 になる
+- 検証
+  - `tests/test_packetizationconfig.py` 12 passed
+  - `/review-diff-code` 3 周で致命的 0 / 重要 0
+  - 手動確認は `--fake-capture-device` で `start_timestamp` を `0xFFFFFF00` 付近に固定して行う (WHIP サーバーが必要なため自動テストの対象外)
+- 併せて、 `handle_error` が `logger.isEnabledFor` で `AttributeError` になる不具合を別 issue として起票した (例外処理の前提が壊れているため、 0010 とは分けて対応する)
 
 ## スコープ外 (関連する未解決問題)
 
@@ -53,5 +68,5 @@ config.timestamp = 0x100000000  # uint32 の範囲外 → TypeError
 
 ## 参考
 
-- 対象シンボル: `WHIPClient._setup_video_encoder`、`WHIPClient._setup_audio_encoder`、`WHIPClient._send_encoded_audio` (examples/whip.py)
+- 対象シンボル: `WHIPClient._setup_video_encoder` (映像の on_output)、 `WHIPClient._send_encoded_audio` (音声の送信)、 `WHIPClient._setup_audio_encoder` (音声の config 生成) (examples/whip.py)
 - `RtpPacketizationConfig.timestamp` は `uint32_t` (`_deps/libdatachannel/v0.24.0/source/include/rtc/rtppacketizationconfig.hpp`)。 32 bit の剰余演算で wrap させる
