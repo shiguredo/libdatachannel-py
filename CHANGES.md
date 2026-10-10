@@ -131,6 +131,10 @@
   - README は未対応 (優先実装) としているため、 表明を README に合わせる
   - @voluntas
 
+- [FIX] examples/whip.py と whep.py で共有する handle_error が structlog の logger に存在しない isEnabledFor を呼び AttributeError になる問題を修正する
+  - レベル判定をやめ、 スタックトレースの出力は logger.debug に任せる
+  - @voluntas
+
 ### misc
 
 - [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する
