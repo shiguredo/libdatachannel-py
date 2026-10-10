@@ -35,8 +35,12 @@ def test_add_application_track():
     app = desc.application()
     assert isinstance(app, Description.Application)
 
+    # application() はコピーを返すため、 書き換えはコピー自身にだけ反映される
     app.set_sctp_port(5000)
     assert app.sctp_port() == 5000
+    current = desc.application()
+    assert isinstance(current, Description.Application)
+    assert current.sctp_port() is None
 
 
 def test_rtpmap_add_remove():
@@ -202,8 +206,8 @@ def test_add_rtp_map_before_add_media_adds_codec() -> None:
     """codec を足した media を add_media() すると SDP に反映されること
 
     Description に追加済みの media はコピーとしてしか取得できないため、 codec は
-    add_media() する前に足す。 as_audio() / as_video() が例外になる Description.Media でも
-    この順なら codec を足せる。
+    add_media() する前に足す。 add_media() された media は Description.Media に
+    スライスされるため、 as_audio() / as_video() で codec を足すことはできない。
     """
     desc = Description("v=0...")
     media = Description.Video("video", Description.Direction.SendOnly)
@@ -227,16 +231,22 @@ def test_media_copy_is_not_invalidated_by_clear_media() -> None:
     プロセスが落ちる。
     """
     desc = Description("v=0...")
-    desc.add_audio("audio", Description.Direction.SendOnly)
+    # mid は SSO (短い文字列の最適化) に収まらない長さにして、 解放済みの領域を
+    # 読んだ場合に落ちやすくする
+    mid = "audio-" + "x" * 64
+    desc.add_audio(mid, Description.Direction.SendOnly)
     media = desc.media(0)
     assert isinstance(media, Description.Media)
-    assert media.mid() == "audio"
+    assert media.mid() == mid
 
     desc.clear_media()
+    # 解放された領域が再利用されるようヒープを撹拌する
+    churn = [bytearray(4096) for _ in range(256)]
 
     # 破壊的操作のあとに触っても落ちず、 取得時の値を保つ
-    assert media.mid() == "audio"
+    assert media.mid() == mid
     assert desc.media_count() == 0
+    assert len(churn) == 256
 
 
 def test_media_copy_does_not_change_description() -> None:
@@ -255,12 +265,34 @@ def test_media_copy_does_not_change_description() -> None:
     # コピーへの追加になるため SDP は変わらない
     assert media.has_payload_type(96)
     assert "a=rtpmap:96 H264/90000" not in str(desc)
+    # 戻り値は毎回別のオブジェクト (参照返しへの回帰を直接検出する)
+    assert desc.media(0) is not desc.media(0)
+
+
+def test_application_copy_is_not_invalidated_by_add_media_application() -> None:
+    """add_media(Application) のあとでも、 それ以前に取得した application() の戻り値が使えること
+
+    add_media(Application) も内部で removeApplication() を呼ぶため、 参照を返して
+    いれば旧ハンドルが無効になる。 コピーのため取得時の値を保つ。
+    """
+    desc = Description("v=0...")
+    desc.add_application("data")
+    application = desc.application()
+    assert isinstance(application, Description.Application)
+    assert application.mid() == "data"
+
+    desc.add_media(Description.Application("app2"))
+
+    assert application.mid() == "data"
+    current = desc.application()
+    assert isinstance(current, Description.Application)
+    assert current.mid() == "app2"
 
 
 def test_application_copy_is_not_invalidated_by_add_application() -> None:
     """add_application() のあとでも、 それ以前に取得した application() の戻り値が使えること
 
-    application() もコピーを返すため、 remove_application() で実体が解放されても
+    application() もコピーを返すため、 add_application() が内部で実体を解放しても
     無効にならない。 取得時の値を保つ点も確認する。
     """
     desc = Description("v=0...")
@@ -275,3 +307,5 @@ def test_application_copy_is_not_invalidated_by_add_application() -> None:
     current = desc.application()
     assert isinstance(current, Description.Application)
     assert current.mid() == "data2"
+    # 戻り値は毎回別のオブジェクト (参照返しへの回帰を直接検出する)
+    assert desc.application() is not desc.application()

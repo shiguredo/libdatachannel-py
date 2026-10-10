@@ -473,18 +473,14 @@ void bind_description(nb::module_& m) {
            "戻り値はコピーのため、 書き換えても Description には反映されない。 "
            "clear_media() や add_media(Application) で無効化されることもない")
       .def("media_count", &Description::mediaCount)
-      // get_media と同じくコピーを返す (内部の Application は remove_application() で
-      // 解放されるため、 参照を返すと無効化後に触って SIGSEGV になる)。
-      // application() は const / 非 const の overload があり、 Application* を返す非 const 版を使う
-      .def(
-          "application",
-          [](Description& desc) -> nb::object {
-            if (auto* application = desc.application()) {
-              return nb::cast(*application, nb::rv_policy::copy);
-            }
-            return nb::none();
-          },
-          "戻り値はコピーのため、 書き換えても Description には反映されない");
+      // get_media と同じくコピーを返す (内部の Application は add_media(Application) /
+      // add_application() が内部で呼ぶ removeApplication() で解放されるため、 参照を
+      // 返すと無効化後に触って SIGSEGV になる)。 application が無いときは nullptr の
+      // ため None になる。 application() は const / 非 const の overload があり、
+      // Application* を返す非 const 版を使う
+      .def("application", nb::overload_cast<>(&Description::application),
+           nb::rv_policy::copy,
+           "戻り値はコピーのため、 書き換えても Description には反映されない");
 }
 
 // ---- candidate.hpp ----

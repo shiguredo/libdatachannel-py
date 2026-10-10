@@ -14,10 +14,10 @@
 - [CHANGE] `Media.as_audio()` / `Media.as_video()` が参照を返すようにする
   - 従来は値コピーを返しており、 戻り値への codec 追加が元の `Media` に反映されなかった
   - 動的型が一致する場合は同じオブジェクトを返し、 一致しない場合は `TypeError` になる (従来は未定義動作)
-  - `Description` は media を `Description.Media` として保持するため (`add_media()` / `add_audio()` / SDP の parse はすべて `Media` にスライスされる)、 `Description` から取得した media では `TypeError` になる。 codec は `Description.Audio` / `Description.Video` に追加してから `add_media()` する (add_media 後の media はコピーとしてしか取得できないため、 後から足しても `Description` には反映されない)
+  - `Description` は media を `Description.Media` として保持するため (`add_media()` / `add_audio()` / SDP の parse はすべて `Media` にスライスされる)、 `Description` から取得した media では `TypeError` になる。 codec は `Description.Audio` / `Description.Video` に追加してから `add_media()` する (add_media 後の media に後から足す方法は `[CHANGE]` のエントリを参照)
   - @voluntas
 - [CHANGE] `Description.media()` / `Description.application()` が値 (コピー) を返すようにする
-  - `clear_media()` / `add_media(Application)` / `add_application()` は内部の media / application を解放するため、 参照を返すと取得済みの戻り値が無効になり、 触ると SIGSEGV になっていた
+  - `clear_media()` / `add_media(Application)` / `add_application()` は内部の media / application を解放するため、 参照を返していると取得済みの戻り値が無効になり、 触ると use-after-free で落ちていた (実測: exit 139)
   - 戻り値を書き換えても `Description` に反映されなくなる。 codec などを足す場合は media を組み立ててから `add_media()` する (`add_rtp_map()` / `remove_rtp_map()` / `remove_format()` は `Description.Media` のメソッドで、 `Description` には無い)
   - @voluntas
 - [CHANGE] `Media.rtp_map()` が値 (コピー) を返すようにする
@@ -74,7 +74,7 @@
   - @voluntas
 - [FIX] PeerConnection.config() の戻り値が親の寿命に紐付かない問題を修正する
   - 親を先に破棄してから戻り値を使うと use-after-free で落ちていた (実測: exit 139)
-  - 戻り値が親を生存させるようにする (`Description.media()` / `Description.application()` は値 (コピー) を返すようにしたため、 `[CHANGE]` のエントリを参照)
+  - `config()` の戻り値が親を生存させるようにする (`Description.media()` / `Description.application()` は値 (コピー) を返すようにしたため、 `[CHANGE]` のエントリを参照)
   - @voluntas
 - [FIX] MediaHandler の chain に cycle を作ると SEGV する問題を修正する
   - `add_to_chain` / `set_next` / `Track.chain_media_handler` で cycle を検出し、 連結する前に例外にする
