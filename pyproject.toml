@@ -8,7 +8,6 @@ license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
 authors = [{ name = "Shiguredo Inc.", email = "contact+pypi@shiguredo.jp" }]
 classifiers = [
   "Operating System :: MacOS :: MacOS X",
-  "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: C++",
   "Programming Language :: Python :: 3",
