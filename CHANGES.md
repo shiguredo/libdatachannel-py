@@ -148,6 +148,9 @@
   - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
   - @voluntas
+- [FIX] examples/whip.py の RTP timestamp が長時間の配信で wrap せず、 送信が停止する問題を修正する
+  - 毎フレームの差分の足し込みをやめ、 最初の dts からの経過時間から計算する (32 bit で wrap させ、 丸め誤差の累積も解消する)
+  - @voluntas
 - [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
   - @voluntas
 
