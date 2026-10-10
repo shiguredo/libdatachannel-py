@@ -129,6 +129,11 @@
 
 ### misc
 
+- [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する
+  - `CMakeLists.txt` の `_deps` を捨てる条件が、 無効化されたままの行 (//#define) に誤マッチしていた
+  - `wheel.yml` と `prek.yml` の `_deps` キャッシュキーに世代を付け、 修正前のキャッシュを復元させない
+  - @voluntas
+
 - [FIX] CI の pytest リトライを削除する
   - リトライに頼らず、 pytest の失敗をそのまま job の失敗として扱う (mbedTLS のスレッド対応で不安定要因を解消したため)
   - @voluntas

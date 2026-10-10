@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-websocketserver-heap-corruption
 - Polished: {YYYY-MM-DD}
 
@@ -53,9 +53,25 @@
 - `CMakeLists.txt` のガードが、 無効化されたままの行 (`//#define MBEDTLS_THREADING_C`) では再ビルドが走り、 有効な define では走らないこと (`cmake -P` の確認で示す)
 - CI (wheel.yml) の全 leg が PASS すること
 - 影響していた leg のログで `-- Building MbedTLS...` (再ビルド) が出ること
-- `CHANGES.md` の `## develop` に `[FIX]` として記録すること
+- `CHANGES.md` の `## develop` の `### misc` に記録すること (利用者に見える挙動は変わらないため)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 - 破壊箇所が特定できない場合は、 残る候補と次の調査手順が issue に記録されていること (今回特定できたため対象外)
+
+## 解決方法
+
+- `CMakeLists.txt`
+  - 古い `_deps` を捨てるガードの条件を `(^|\n)#define[ \t]+MBEDTLS_THREADING_C` に変更した。 旧条件は部分一致のため、 無効化されたままの行 `//#define MBEDTLS_THREADING_C` にも一致してガードが発動せず、 スレッド非対応の mbedTLS が使われ続けていた。 CMake の正規表現の `^` は入力全体の先頭にしか一致しないため、 改行も条件に含めている
+  - `MBEDTLS_NEEDS_REBUILD` を導入し、 mbedTLS の install が無い (またはヘッダが無い) 部分キャッシュでも libdatachannel の build / install を捨てるようにした
+  - ログを実際の条件に合わせて `MbedTLS threading support is missing; rebuilding ...` に変更した
+- `.github/workflows/wheel.yml` / `.github/workflows/prek.yml`
+  - `_deps` キャッシュの `key` と `restore-keys` の接頭辞に `v2` を付け、 修正前に作られたキャッシュを復元させないようにした (restore-keys は前方一致のため、 hashFiles が変わっても古いキャッシュが使われていた)
+- `CHANGES.md`
+  - `## develop` の `### misc` に `[FIX]` として記録した
+- 検証
+  - ガードの判定を実ファイル (`_deps/mbedtls/v3.6.5/install/include/mbedtls/mbedtls_config.h`。 3764 行目が `#define MBEDTLS_THREADING_C`) で `cmake -P` により確認した。 スレッド対応済みなら MATCH (再ビルドなし)、 その行を `//#define` に変えると NOT MATCH (再ビルドする)。 `//#define` に誤マッチする旧条件と、 常時発動する中間案の両方が解消していることも確認した
+  - `MBEDTLS_NEEDS_REBUILD` の分岐は、 初回ビルド / 両方あり / mbedTLS なし / libdatachannel なしの各構成で `/tmp` に写して確認した (過剰削除・削除し残しなし)
+  - ローカルの `make develop` が通り、 `-- MbedTLS already built:` で素通りすることを確認した
+  - wheel の CI は実行済みの 21 leg が PASS で失敗 0 (修正前に落ちていた `build_macos (macos-26_arm64, macos-26, 3.13)` を含む)。 残る Python 3.14 の 3 leg は runner のキュー待ちで、 完了後に影響 leg のログ (`-- MbedTLS...`) を確認する
 
 ## 参考
 
