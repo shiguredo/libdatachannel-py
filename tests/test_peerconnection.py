@@ -713,3 +713,64 @@ def test_config_outlives_peer_connection() -> None:
     del pc
     gc.collect()
     assert isinstance(config.ice_servers, list)
+
+
+def test_data_channel_close_releases_gil() -> None:
+    """DataChannel.close() が GIL を解放して実行されること
+
+    close() は SctpTransport::closeStream() で送信経路と同じ mutex を取るため、 GIL を
+    保持したまま待つと、 送信経路の Python callback が GIL を取れずに循環待ちになる。
+    close() の呼び出し中に GIL を待つ thread が進行するかで判定する。
+    """
+    # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
+    if not getattr(sys, "_is_gil_enabled", lambda: True)():
+        pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
+
+    _pc1, _pc2, _t1, _t2, data_channel = make_loopback_with_pli(lambda: None)
+
+    counter = 0
+    stop = False
+
+    def spin() -> None:
+        nonlocal counter
+        while not stop:
+            counter += 1
+
+    original_interval = sys.getswitchinterval()
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        # 待機 thread が実際に動き始めるまで待つ。 起動前に測ると、 GIL を解放しても
+        # 受け取る thread がおらず進行が 0 のままになる
+        deadline = time.monotonic() + 5
+        while counter == 0 and time.monotonic() < deadline:
+            time.sleep(0)
+        assert counter > 0, "GIL を待つ thread が動き始めなかった"
+
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
+        sys.setswitchinterval(1.0)
+        # 待機 thread に新しい switch interval で GIL を待たせ直す (上のコメント参照)
+        time.sleep(0)
+
+        # 解放窓は µs 程度なので、 1 回の計測では偽陰性になり得る。 50 ms のあいだ
+        # 呼び続け、 その間に待機 thread が進行すれば解放されていると判定する。
+        # 2 回目以降の close() は内部では no-op になるが、 call_guard は毎回通る
+        released = 0
+        released_start = counter
+        deadline = time.monotonic() + 0.05
+        while time.monotonic() < deadline:
+            data_channel.close()
+            released = counter - released_start
+            if released:
+                break
+    finally:
+        stop = True
+        sys.setswitchinterval(original_interval)
+        thread.join(timeout=5)
+        # ループバックは相互参照を持つため、 明示的に回収する。 閉じた DataChannel が
+        # 残ると nanobind のリーク警告がインタプリタ終了時に出る
+        del data_channel
+        del _pc1, _pc2, _t1, _t2
+        gc.collect()
+
+    assert released > 0, "close() が GIL を解放していない"

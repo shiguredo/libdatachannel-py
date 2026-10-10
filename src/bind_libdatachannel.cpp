@@ -1590,7 +1590,11 @@ void bind_datachannel(nb::module_& m) {
       // あるために Channel 側の binding 経由では基底オフセットが加算されず SIGSEGV
       // していた。 派生クラス側に binding して正しいポインタで呼ぶ。
       .def("buffered_amount", &Channel::bufferedAmount)
-      .def("close", &DataChannel::close)
+      // close() は SctpTransport::closeStream() で送信経路と同じ mutex を取る。
+      // GIL を保持したまま待つと、 送信経路の Python callback が GIL を取れずに
+      // 循環待ちになるため、 GIL を解放して実行する (bind_channel のコメント参照)
+      .def("close", &DataChannel::close,
+           nb::call_guard<nb::gil_scoped_release>())
       // (data, size) 版は size が data の長さを超えると範囲外を読み、 その内容を
       // 送信していた。 size は len(data) から導出できるため削除した
       .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
@@ -1613,7 +1617,10 @@ void bind_track(nb::module_& m) {
       .def("max_message_size", &Track::maxMessageSize)
       // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
       .def("buffered_amount", &Channel::bufferedAmount)
-      .def("close", &Track::close)
+      // close() は resetCallbacks() で callback の mutex を取る。 callback の実行中は
+      // 同じ mutex が保持され、 その callback が GIL を待つため、 GIL を保持したまま
+      // close() を呼ぶと循環待ちになる (bind_channel のコメント参照)
+      .def("close", &Track::close, nb::call_guard<nb::gil_scoped_release>())
       // (data, size) 版は削除した (DataChannel.send のコメントを参照)
       .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a,
            nb::call_guard<nb::gil_scoped_release>())
