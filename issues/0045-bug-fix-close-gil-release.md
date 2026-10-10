@@ -4,7 +4,7 @@
 - Created: 2026-10-09
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-close-gil-release
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-10
 
 ## 目的
 
@@ -20,7 +20,7 @@
 
 - `bind_datachannel` の `.def("close", ...)` と `bind_track` の `.def("close", ...)` に call_guard が無い
 - `DataChannel::close()` → `impl()->close()` → `SctpTransport::closeStream()` (`mSendMutex` を取得)
-- `Track::close()` が同じ mutex を取るかは未確認 (実装を確認してから対象を確定する)
+- `Track::close()` は送信経路の mutex は取らないが、 `resetCallbacks()` で callback の mutex を取る。 callback の実行中は同じ mutex が保持されるため、 こちらも同じ循環待ちになり得る (実装は `source/src/impl/track.cpp` の `Track::close()`)
 - 恒久デッドロックの再現は未確認
 
 ## 設計方針
@@ -35,7 +35,7 @@
 - close の完了待ちが必要な場合は、 [[0002-bug-fix-websocket-destructor-gil-release]] と同じ扱い (状態が Closed になるまで待つ、 タイムアウトで `RuntimeWarning`) を検討する
 - `make develop` で拡張モジュールをインストールしたうえで、 `prek run --all-files pytest` が PASS する
 - CI (wheel.yml の leg / prek.yml の `ty` ジョブ) が PASS する
-- `CHANGES.md` の `## develop` に変更内容が記録されている
+- `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
