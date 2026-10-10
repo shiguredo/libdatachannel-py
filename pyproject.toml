@@ -4,7 +4,7 @@ description = "libdatachannel-py is a Python binding for libdatachannel."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
 authors = [{ name = "Shiguredo Inc.", email = "contact+pypi@shiguredo.jp" }]
 classifiers = [
   "Operating System :: MacOS :: MacOS X",
