@@ -627,6 +627,9 @@ class WHIPClient:
         # タイムスタンプ用（前フレームからの duration でインクリメント）
         self.last_video_dts_usec: int = 0
         self.last_audio_dts_usec: int = 0
+        # 最初の dts (経過時間の基準)。 最初のフレームで設定する
+        self.first_video_dts_usec: int | None = None
+        self.first_audio_dts_usec: int | None = None
 
         # Key frame interval（90秒ごと、ただし最初のフレームと PLI 応答時はキーフレーム）
         self.key_frame_interval_frames = self.video_fps * 90
@@ -833,13 +836,20 @@ class WHIPClient:
                 dts_usec = chunk.timestamp
                 duration = dts_usec - self.last_video_dts_usec
 
-                # duration を秒に変換
-                elapsed_seconds = float(duration) / 1_000_000.0
-
-                # クロックレートに変換してタイムスタンプをインクリメント
-                elapsed_timestamp = int(elapsed_seconds * 90000)
+                # 最初の dts からの経過時間でタイムスタンプを計算する。
+                # 毎フレームの差分を足し込むと丸め誤差が累積するため、 基準からの
+                # 経過時間から直接計算する (RTP の timestamp は 32 bit で wrap する)
+                if self.first_video_dts_usec is None:
+                    self.first_video_dts_usec = dts_usec
                 if self.video_config is not None:
-                    self.video_config.timestamp = self.video_config.timestamp + elapsed_timestamp
+                    elapsed_seconds = (dts_usec - self.first_video_dts_usec) / 1_000_000.0
+                    elapsed_timestamp = RtpPacketizationConfig.get_timestamp_from_seconds(
+                        elapsed_seconds, 90000
+                    )
+                    # 初期値 (乱数) に経過時間を足して 32 bit で wrap させる
+                    self.video_config.timestamp = (
+                        self.video_config.start_timestamp + elapsed_timestamp
+                    ) & 0xFFFFFFFF
 
                 # 送信
                 self.video_track.send(bytes(data))
@@ -1402,16 +1412,18 @@ class WHIPClient:
         try:
             timestamp_us, data = self.encoded_audio_queue.get_nowait()
 
-            # duration を計算（前フレームとの差分）
-            duration = timestamp_us - self.last_audio_dts_usec
-
-            # duration を秒に変換
-            elapsed_seconds = float(duration) / 1_000_000.0
-
-            # クロックレートに変換してタイムスタンプをインクリメント
-            elapsed_timestamp = int(elapsed_seconds * 48000)
+            # 最初の dts からの経過時間でタイムスタンプを計算する (映像と同じ理由)
+            if self.first_audio_dts_usec is None:
+                self.first_audio_dts_usec = timestamp_us
             if self.audio_config is not None:
-                self.audio_config.timestamp = self.audio_config.timestamp + elapsed_timestamp
+                elapsed_seconds = (timestamp_us - self.first_audio_dts_usec) / 1_000_000.0
+                elapsed_timestamp = RtpPacketizationConfig.get_timestamp_from_seconds(
+                    elapsed_seconds, 48000
+                )
+                # 初期値 (乱数) に経過時間を足して 32 bit で wrap させる
+                self.audio_config.timestamp = (
+                    self.audio_config.start_timestamp + elapsed_timestamp
+                ) & 0xFFFFFFFF
 
             self.audio_track.send(data)
 
