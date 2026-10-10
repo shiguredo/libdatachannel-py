@@ -144,6 +144,10 @@
   - libdatachannel の operator!= は foundation のみを比較しており == と非対称だったため、 __ne__ のバインドを外す
   - @voluntas
 
+- [FIX] DataChannel.close() と Track.close() を GIL 解放下で実行するようにする
+  - close() は送信経路や callback と同じ mutex を取るため、 GIL を保持したまま呼ぶと循環待ちになり得る
+  - @voluntas
+
 ### misc
 
 - [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する
