@@ -193,17 +193,18 @@ void bind_configuration(nb::module_& m) {
 
 nb::object get_media(Description& desc, int index) {
   auto var = desc.media(index);
-  // 戻り値は Description 内部への参照のため、 親 (Description) を生存させる
-  // (nanobind の reference_internal + parent が keep_alive 相当になる)。
-  // desc は Python から渡されたインスタンスのため、 nb::find で Python 側の実体を取得できる
-  nb::object parent = nb::find(desc);
+  // 実体は Description 内部の Entry が持つため、 clear_media() や
+  // add_media(Application) で解放されると生ポインタが無効になり、 触ると
+  // SIGSEGV になる。 呼び出し側が無効化を気にせず使えるよう値 (コピー) を返す。
+  // コピーのため書き換えは Description に反映されない (反映させるには codec などを
+  // 足した media を組み立ててから add_media() する)
   if (std::holds_alternative<Description::Media*>(var)) {
     if (auto* media = std::get<Description::Media*>(var)) {
-      return nb::cast(media, nb::rv_policy::reference_internal, parent);
+      return nb::cast(*media, nb::rv_policy::copy);
     }
   } else if (std::holds_alternative<Description::Application*>(var)) {
     if (auto* application = std::get<Description::Application*>(var)) {
-      return nb::cast(application, nb::rv_policy::reference_internal, parent);
+      return nb::cast(*application, nb::rv_policy::copy);
     }
   }
   return nb::none();
@@ -338,7 +339,8 @@ void bind_description(nb::module_& m) {
       // v0.24.0 の description.cpp は createEntry / addMedia で常に base の Media を
       // 作る (addMedia は値渡しでスライスする) ため、 Description から取得した media の
       // 動的型は Media になり、 この経路では例外になる。 codec は add_media する前に
-      // 追加するか、 既存の media には add_rtp_map で追加する
+      // 追加する (add_media 後の media はコピーとしてしか取得できず、 後から足しても
+      // Description には反映されない)
       .def(
           "as_audio",
           [](Description::Media& media) -> Description::Audio* {
@@ -465,13 +467,22 @@ void bind_description(nb::module_& m) {
            "dir"_a = Description::Direction::SendOnly)
       .def("add_audio", &Description::addAudio, "mid"_a = "audio",
            "dir"_a = Description::Direction::SendOnly)
-      .def("clear_media", &Description::clearMedia)
-      .def("media", &get_media)
+      .def("clear_media", &Description::clearMedia,
+           "media() / application() が返すコピーには影響しない")
+      .def("media", &get_media, "index"_a,
+           "戻り値はコピーのため、 書き換えても Description には反映されない。 "
+           "clear_media() や add_media(Application) で無効化されることもない")
       .def("media_count", &Description::mediaCount)
-      // 戻り値は Description 内部への参照のため、 reference_internal で親を生存させる。
-      // application() は const / 非 const の overload があり、 Application* を返す非 const 版を使う
+      // get_media と同じくコピーを返す (内部の Application は add_media(Application) /
+      // add_application() が内部で呼ぶ removeApplication() で解放されるため、 参照を
+      // 返すと無効化後に触って SIGSEGV になる)。 application が無いときは nullptr の
+      // ため None になる。 application() は const / 非 const の overload があり、
+      // Application* を返す非 const 版を使う
       .def("application", nb::overload_cast<>(&Description::application),
-           nb::rv_policy::reference_internal);
+           nb::rv_policy::copy,
+           nb::sig("def application(self) -> Description.Application | None"),
+           "戻り値はコピーのため、 書き換えても Description には反映されない。 "
+           "application が無いときは None になる");
 }
 
 // ---- candidate.hpp ----
