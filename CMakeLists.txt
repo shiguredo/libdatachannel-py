@@ -80,7 +80,10 @@ endif()
 # (libdatachannel も同じ設定でコンパイルされている必要があるため、 併せて捨てる)
 if(NOT WIN32 AND EXISTS ${MBEDTLS_LIB})
   file(READ ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h MBEDTLS_CONFIG_CONTENT)
-  if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "#define MBEDTLS_THREADING_C")
+  # 部分一致にすると、 無効化されたままの行 (//#define MBEDTLS_THREADING_C) にも一致して
+  # ガードが発動せず、 スレッド非対応のままビルドされた _deps を使い続けてしまう。
+  # 行頭から一致させることで、 実際に有効な define があるときだけ素通りさせる
+  if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "^#define[ \t]+MBEDTLS_THREADING_C")
     message(STATUS "MbedTLS was built without threading support; rebuilding MbedTLS and libdatachannel")
     file(REMOVE_RECURSE ${MBEDTLS_BUILD_DIR} ${MBEDTLS_INSTALL_DIR})
     # libdatachannel はこの時点ではパス変数が未定義のため、 タグから直接組み立てる

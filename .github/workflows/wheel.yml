@@ -51,10 +51,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _deps
-          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          key: ${{ runner.os }}-deps-v2-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          # restore-keys は前方一致で復元するため、 スレッド対応前のキャッシュを
+          # 引かないようキーの接頭辞に世代 (v2) を付ける
           restore-keys: |
-            ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-
-            ${{ runner.os }}-deps-${{ matrix.platform.name }}-
+            ${{ runner.os }}-deps-v2-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-
+            ${{ runner.os }}-deps-v2-${{ matrix.platform.name }}-
 
       - name: Build wheel
         run: uv build --wheel
@@ -150,10 +152,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _deps
-          key: ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          key: ${{ runner.os }}-deps-v2-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          # restore-keys は前方一致で復元するため、 スレッド対応前のキャッシュを
+          # 引かないようキーの接頭辞に世代 (v2) を付ける
           restore-keys: |
-            ${{ runner.os }}-deps-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-
-            ${{ runner.os }}-deps-${{ matrix.platform.name }}-
+            ${{ runner.os }}-deps-v2-${{ matrix.platform.name }}-python-${{ matrix.python_version }}-
+            ${{ runner.os }}-deps-v2-${{ matrix.platform.name }}-
 
       - name: Build wheel
         run: uv build --wheel --out-dir wheelhouse
