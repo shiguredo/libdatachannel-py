@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-ice-udp-mux-listener-callback-exception
 - Polished: 2026-10-10
 
@@ -37,6 +37,24 @@ IceUdpMuxListener の callback は libjuice のパケット受信スレッドか
 - `make develop` のあと `uv run --no-sync python -m pytest tests/ -q --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close`、 `prek run --all-files pytest`、 `prek run --all-files ty` が PASS すること (`uv sync && make test` は install を壊し、 恒停するテストも実行するため使わない)
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp`
+  - `on_unhandled_stun_request` の binding を、 callback を try/catch で包む wrapper に置き換えた。 callback は libjuice の C callback (`conn_mux.c`) から `src/impl/iceudpmuxlistener.cpp` を経て直接呼ばれるため、 Python の例外が C のフレームを横断すると `std::terminate` になっていた (実測: exit 134)
+  - 例外は `catch (...)` で受け止め、 `PyErr_WarnEx(PyExc_RuntimeWarning, ...)` で記録する (binding に既存の握り潰しと同じ方式)。 filterwarnings で warning が例外に昇格した場合も C のフレームへ例外を出さないよう `PyErr_Clear()` する
+  - callback は mux の registry mutex を保持した状態で呼ばれるため、 callback から `stop()` を呼ぶとデッドロックし得る。 テストは例外を投げるだけにしている
+- `tests/crash_reproduction_iceudpmuxlistener.py` (新規)
+  - STUN Binding Request (USERNAME に `:` を含む値と 20 byte の MESSAGE-INTEGRITY) を mux の port へ送り、 例外を投げる callback が呼ばれたうえでプロセスが正常終了することを確かめるスクリプト
+- `tests/test_iceudpmuxlistener.py`
+  - 上記スクリプトを `subprocess.run` + timeout で起動し、 終了コード 0 と callback が呼ばれたことを検証するテストを追加した (`tests/hang_reproduction_websocket.py` と同じ方式。 `std::terminate` は pytest プロセスごと落とすため in-process では観測できない)
+- `CHANGES.md`
+  - `## develop` に `[FIX]` として記録した
+- 検証
+  - `tests/test_iceudpmuxlistener.py` 4 passed、 全体 152 passed / 12 skipped / 1 deselected
+  - `prek run --all-files pytest` と `prek run --all-files ty` が PASS
+  - 修正前は同じ手順で exit 134 (`libc++abi: terminating due to uncaught exception of type nanobind::python_error`) になることをレビューで実測済み
+  - ログレベルと文言の統一 ([[0015-bug-fix-callback-exception-handling]]) は本 issue の範囲外で、 0015 側の作業として残る
 
 ## 参考
 

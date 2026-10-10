@@ -1968,8 +1968,38 @@ void bind_iceudpmuxlistener(nb::module_& m) {
           },
           nb::call_guard<nb::gil_scoped_release>())
       .def("port", &IceUdpMuxListener::port)
-      .def("on_unhandled_stun_request",
-           &IceUdpMuxListener::OnUnhandledStunRequest, "callback"_a);
+      // この callback は libjuice の C callback から直接呼ばれるため、 Python の例外が
+      // C のフレームを横断すると std::terminate になる (実測: exit 134)。 ここで受け止めて
+      // RuntimeWarning として記録し、 呼び出し元へは伝播させない。
+      // callback は mux の registry mutex を保持した状態で呼ばれるため、 ここから
+      // stop() などを呼ぶとデッドロックし得る (テストでは例外を投げるだけにする)
+      .def(
+          "on_unhandled_stun_request",
+          [](IceUdpMuxListener& self, nb::callable callback) {
+            self.OnUnhandledStunRequest([callback](IceUdpMuxRequest request) {
+              try {
+                nb::gil_scoped_acquire gil;
+                callback(std::move(request));
+              } catch (...) {
+                nb::gil_scoped_acquire gil;
+                // interpreter 停止中は Python API を触らずに握り潰す
+                if (!gil.is_valid()) {
+                  return;
+                }
+                PyErr_WarnEx(PyExc_RuntimeWarning,
+                             "IceUdpMuxListener.on_unhandled_stun_request: "
+                             "callback raised an exception",
+                             1);
+                // filterwarnings=error 等で warning が例外に昇格された場合も
+                // C のフレームへ例外を出さないよう握り潰す
+                if (PyErr_Occurred())
+                  PyErr_Clear();
+              }
+            });
+          },
+          "callback"_a,
+          "callback の例外は RuntimeWarning として記録し、 "
+          "呼び出し元へは伝播しない");
 }
 
 // ---- websocketserver.hpp ----

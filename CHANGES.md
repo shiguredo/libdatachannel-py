@@ -153,6 +153,10 @@
   - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
   - @voluntas
+- [FIX] IceUdpMuxListener の callback で例外を投げてもプロセスが落ちないようにする
+  - callback は libjuice の C callback から直接呼ばれるため、 Python の例外が C のフレームを横断すると std::terminate になっていた (実測: exit 134)
+  - binding 側で受け止めて RuntimeWarning として記録し、 STUN の未処理 request を送る実測テストを追加する
+  - @voluntas
 - [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
   - @voluntas
 
