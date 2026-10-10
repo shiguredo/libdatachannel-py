@@ -150,6 +150,10 @@
 
 ### misc
 
+- [FIX] CI の wheel テスト環境に structlog を追加する
+  - tests/test_error_logging.py が examples/error_logging.py を読み込むため、 test グループだけを入れる CI で collection が失敗していた
+  - @voluntas
+
 - [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する
   - `CMakeLists.txt` の `_deps` を捨てる条件が、 無効化されたままの行 (//#define) に誤マッチしていた
   - `wheel.yml` と `prek.yml` の `_deps` キャッシュキーに世代を付け、 修正前のキャッシュを復元させない

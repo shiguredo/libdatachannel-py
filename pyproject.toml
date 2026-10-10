@@ -44,6 +44,8 @@ test = [
   "pytest",
   "pytest-aiohttp",
   "pytest-timeout",
+  # tests/test_error_logging.py が examples/error_logging.py (structlog) を読み込む
+  "structlog",
 ]
 
 [build-system]
