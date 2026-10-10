@@ -4,7 +4,7 @@
 - Created: 2026-08-30
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-windows-platform-metadata
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-10
 
 ## 目的
 
@@ -33,6 +33,7 @@ pyproject.toml の classifiers は Windows を含み、CMakeLists.txt のプラ�
 - classifiers と CMakeLists.txt の表明が README と一致すること
 - WIN32 分岐の位置付けがコメントで明示されていること
 - `make wheel` が成功すること
+- `CHANGES.md` の `## develop` に `[FIX]` として記録すること (PyPI の classifiers は利用者に見える情報のため)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
