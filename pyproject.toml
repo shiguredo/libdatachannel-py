@@ -512,7 +512,7 @@ input = "VERSION"
 regex = "^(?P<value>.+)$"
 
 [tool.ty.src]
-exclude = ["src/libdatachannel/__init__.py", "src/libdatachannel/_stub_aliases.pyi"]
+exclude = ["src/libdatachannel/__init__.py"]
 
 [tool.uv]
 package = false

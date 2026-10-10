@@ -7,8 +7,6 @@ dist/
 wheels/
 *.egg-info
 *.pyi
-# 型スタブに追記するエイリアスの断片は手で管理する
-!src/libdatachannel/_stub_aliases.pyi
 .venv/
 .venv-test/
 .pytest_cache/

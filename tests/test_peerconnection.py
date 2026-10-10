@@ -752,8 +752,9 @@ def test_data_channel_close_releases_gil() -> None:
         # 待機 thread に新しい switch interval で GIL を待たせ直す (上のコメント参照)
         time.sleep(0)
 
-        # 解放窓は µs 程度なので、 1 回の計測では偽陰性になり得る。 50 ms のあいだ
-        # 呼び続け、 その間に待機 thread が進行すれば解放されていると判定する。
+        # close() は呼び出し全体で GIL を解放するが、 呼び出し自体が短いため 1 回の
+        # 計測では待機 thread が動き出せず偽陰性になり得る。 50 ms のあいだ呼び続け、
+        # その間に進行すれば解放されていると判定する。
         # 2 回目以降の close() は内部では no-op になるが、 call_guard は毎回通る
         released = 0
         released_start = counter

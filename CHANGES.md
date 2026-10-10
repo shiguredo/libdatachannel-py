@@ -150,6 +150,10 @@
 
 ### misc
 
+- [FIX] 型スタブのエイリアスを __init__.py から生成するようにする
+  - エイリアスの断片ファイルを手で持たずに済み、 エイリアスを増やしたときの追従漏れが無くなる
+  - @voluntas
+
 - [FIX] CI の wheel テスト環境に structlog を追加する
   - tests/test_error_logging.py が examples/error_logging.py を読み込むため、 test グループだけを入れる CI で collection が失敗していた
   - @voluntas

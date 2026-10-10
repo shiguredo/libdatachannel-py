@@ -27,17 +27,15 @@ def test_candidate_change_address():
     c.change_address("127.0.0.1", "80")
 
 
-def test_candidate_resolution_and_equality():
-    c1 = Candidate("candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host")
-    c2 = Candidate("candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host")
-    c3 = Candidate("candidate:2 1 UDP 2122260223 192.168.0.1 12345 typ host")
+def test_candidate_resolve_returns_bool():
+    """Candidate.resolve() が真偽値を返し、 例外を出さないこと
 
-    assert c1 == c2
-    assert c1 != c3
+    ダミーの IP なので実際に解決できるかどうかは環境次第のため、 戻り値の型だけを見る
+    (等価性は test_equal_candidates_have_same_hash などで検証する)。
+    """
+    candidate = Candidate("candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host")
 
-    resolved = c1.resolve()
-    # ダミーの IP なので実際に解決できるかどうかは気にしない
-    assert isinstance(resolved, bool)
+    assert isinstance(candidate.resolve(), bool)
 
 
 # SDP の candidate 行が同じ 2 つの Candidate

@@ -5,12 +5,13 @@ __init__.py が定義するエイリアスが __init__.pyi にも含まれるこ
 利用者の import が型チェックで失敗する (実行時は成功するため気づきにくい)。
 """
 
+import re
 from pathlib import Path
 
-import pytest
+import libdatachannel
 
-# 実行時に同じクラスを指すことの確認と、 型チェッカーがこの import を解決できることの
-# 確認を兼ねる (上の import が通ること自体がスタブの検証になる)
+# 型チェッカーがこれらの import を解決できること自体が検証になる。
+# エイリアスを増やしたときに漏れないよう、 一覧を直接持たず __init__.py から取り出す
 from libdatachannel import (
     AACRtpDepacketizer,
     AACRtpPacketizer,
@@ -24,15 +25,18 @@ from libdatachannel import (
     PCMURtpPacketizer,
 )
 
-# スタブに含まれているべきエイリアス (エイリアス名, 参照先)
-_STUB_ALIASES = (
-    ("AACRtpPacketizer", "OpusRtpPacketizer"),
-    ("PCMURtpPacketizer", "PCMARtpPacketizer"),
-    ("G722RtpPacketizer", "PCMARtpPacketizer"),
-    ("AACRtpDepacketizer", "OpusRtpDepacketizer"),
-    ("PCMURtpDepacketizer", "PCMARtpDepacketizer"),
-    ("G722RtpDepacketizer", "PCMARtpDepacketizer"),
-)
+# __init__.py のエイリアス定義 (名前 = 参照先) を取り出す
+_ALIAS_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*) = ([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
+
+
+def _init_aliases() -> dict[str, str]:
+    """__init__.py が定義するエイリアスの一覧を返す
+
+    スタブに追記される内容と同じものを __init__.py から取り出す。 手で一覧を持つと、
+    エイリアスを増やしたときにテストの更新が漏れて検出できないままになる。
+    """
+    source = Path(libdatachannel.__file__).read_text()
+    return dict(_ALIAS_PATTERN.findall(source))
 
 
 def test_aliases_are_the_same_classes() -> None:
@@ -52,14 +56,13 @@ def test_stub_contains_aliases() -> None:
     """インストールされた __init__.pyi にエイリアスが含まれること
 
     wheel に入るのは生成されたスタブなので、 追記が漏れると型チェッカーだけが失敗する。
-    生成物の中身を直接確認する。
+    コメントアウトされた行を検出できるよう、 部分一致ではなく行単位で比較する。
     """
-    import libdatachannel
-
     stub = Path(libdatachannel.__file__).with_name("__init__.pyi")
-    if not stub.exists():
-        pytest.skip("型スタブがインストールされていない")
+    assert stub.exists(), "型スタブがインストールされていない"
 
-    content = stub.read_text()
-    for name, alias in _STUB_ALIASES:
-        assert f"{name} = {alias}" in content, f"{name} が型スタブに無い"
+    aliases = _init_aliases()
+    assert aliases, "__init__.py にエイリアスが無い"
+    stub_lines = {line.strip() for line in stub.read_text().splitlines()}
+    for name, target in aliases.items():
+        assert f"{name} = {target}" in stub_lines, f"{name} が型スタブに無い"
