@@ -85,9 +85,8 @@ def test_certificate_fingerprint_operations():
 def test_media_outlives_description() -> None:
     """Description を破棄しても media() の戻り値が使えること
 
-    media() の戻り値は Description 内部への参照のため、 親を生存させないと
-    use-after-free になる。 値を読むときに C++ オブジェクトを参照するため、
-    回帰した場合はこのテストの実行中にプロセスが落ちる。
+    media() はコピーを返すため親の生存に依存しない。 回帰して参照を返すように
+    なった場合は、 ここで use-after-free になりプロセスが落ちる。
     """
 
     desc = Description("v=0...")
@@ -102,8 +101,8 @@ def test_media_outlives_description() -> None:
 def test_application_outlives_description() -> None:
     """Description を破棄しても application() の戻り値が使えること
 
-    application() の戻り値は Description 内部への参照のため、 親を生存させないと
-    use-after-free になる。 isinstance だけでなく内部の値を読んで検証する。
+    application() はコピーを返すため親の生存に依存しない。 isinstance だけでなく
+    内部の値を読んで検証する。
     """
 
     desc = Description("v=0...")
@@ -199,10 +198,51 @@ def test_as_audio_raises_for_media_in_description() -> None:
             media.as_video()
 
 
-def test_add_rtp_map_adds_codec_to_media() -> None:
-    """Description から取得した media に add_rtp_map() で codec を追加できること
+def test_add_rtp_map_before_add_media_adds_codec() -> None:
+    """codec を足した media を add_media() すると SDP に反映されること
 
-    as_audio() / as_video() が例外になる media へ codec を足す唯一の手段。
+    Description に追加済みの media はコピーとしてしか取得できないため、 codec は
+    add_media() する前に足す。 as_audio() / as_video() が例外になる Description.Media でも
+    この順なら codec を足せる。
+    """
+    desc = Description("v=0...")
+    media = Description.Video("video", Description.Direction.SendOnly)
+    assert isinstance(media, Description.Media)
+
+    rtpmap = Description.RtpMap("96 H264/90000")
+    rtpmap.add_feedback("nack")
+    media.add_rtp_map(rtpmap)
+    desc.add_media(media)
+
+    assert media.has_payload_type(96)
+    assert "a=rtpmap:96 H264/90000" in str(desc)
+    assert "a=rtcp-fb:96 nack" in str(desc)
+
+
+def test_media_copy_is_not_invalidated_by_clear_media() -> None:
+    """clear_media() のあとでも、 それ以前に取得した media() の戻り値が使えること
+
+    media() は Description 内部の実体への参照ではなくコピーを返すため、 実体が
+    解放されても無効にならない。 回帰した場合はこのテストの実行中に SIGSEGV で
+    プロセスが落ちる。
+    """
+    desc = Description("v=0...")
+    desc.add_audio("audio", Description.Direction.SendOnly)
+    media = desc.media(0)
+    assert isinstance(media, Description.Media)
+    assert media.mid() == "audio"
+
+    desc.clear_media()
+
+    # 破壊的操作のあとに触っても落ちず、 取得時の値を保つ
+    assert media.mid() == "audio"
+    assert desc.media_count() == 0
+
+
+def test_media_copy_does_not_change_description() -> None:
+    """media() の戻り値への書き換えが Description に反映されないこと
+
+    反映させるには、 codec を足した media を組み立ててから add_media() する。
     """
     desc = Description("v=0...")
     desc.add_video("video", Description.Direction.SendOnly)
@@ -210,9 +250,28 @@ def test_add_rtp_map_adds_codec_to_media() -> None:
     assert isinstance(media, Description.Media)
 
     rtpmap = Description.RtpMap("96 H264/90000")
-    rtpmap.add_feedback("nack")
     media.add_rtp_map(rtpmap)
 
+    # コピーへの追加になるため SDP は変わらない
     assert media.has_payload_type(96)
-    assert "a=rtpmap:96 H264/90000" in str(desc)
-    assert "a=rtcp-fb:96 nack" in str(desc)
+    assert "a=rtpmap:96 H264/90000" not in str(desc)
+
+
+def test_application_copy_is_not_invalidated_by_add_application() -> None:
+    """add_application() のあとでも、 それ以前に取得した application() の戻り値が使えること
+
+    application() もコピーを返すため、 remove_application() で実体が解放されても
+    無効にならない。 取得時の値を保つ点も確認する。
+    """
+    desc = Description("v=0...")
+    desc.add_application("data")
+    application = desc.application()
+    assert isinstance(application, Description.Application)
+    assert application.mid() == "data"
+
+    desc.add_application("data2")
+
+    assert application.mid() == "data"
+    current = desc.application()
+    assert isinstance(current, Description.Application)
+    assert current.mid() == "data2"
