@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-10-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: develop (直接コミット)
 - Polished: 2026-10-10
 
@@ -37,3 +37,12 @@
 
 - 関連: [[0021-test-fix-flaky-concurrent-datachannel]] (同じく断続的に失敗していたテスト)
 - 実測ログ: run 38029029277 の `build_macos (macos-15_arm64, macos-15, 3.13)` leg
+
+## 解決方法
+
+- `tests/test_peerconnection.py`
+  - `_CONNECT_TIMEOUT = 60` を追加し、 接続確立 (Track / DataChannel の open) の待ち時間を 20 秒から 60 秒にした
+  - `make_loopback_with_pli` の失敗時のメッセージに `state` と `ice_state` を含めた
+- 検証
+  - 全体 172 passed / 12 skipped / 1 deselected、 `prek run --all-files ty` が PASS
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件

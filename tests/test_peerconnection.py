@@ -25,6 +25,10 @@ from libdatachannel import (
     Track,
 )
 
+# 接続確立 (ICE / DTLS のハンドシェイク) の待ち時間。 負荷の高い CI ランナーでは
+# ループバックでも 20 秒を超えることがあり、 断続的に失敗していた
+_CONNECT_TIMEOUT = 60
+
 
 def test_data_channel_init():
     init = DataChannelInit()
@@ -175,8 +179,8 @@ def test_track():
 
     # callback から通知されるまで待つ (ポーリングしない)。 旧実装は 1 秒 × 10 回の
     # ポーリングだったため、 待ち時間の上限はそれより余裕を持たせた 20 秒とする。
-    assert t1_opened.wait(timeout=20), "送信側の Track が open しなかった"
-    assert t2_opened.wait(timeout=20), "受信側の Track が open しなかった"
+    assert t1_opened.wait(timeout=_CONNECT_TIMEOUT), "送信側の Track が open しなかった"
+    assert t2_opened.wait(timeout=_CONNECT_TIMEOUT), "受信側の Track が open しなかった"
 
     assert pc1.state() == PeerConnection.State.Connected
     assert pc2.state() == PeerConnection.State.Connected
@@ -209,8 +213,12 @@ def test_track():
     t2 = None
     pc1.set_local_description()
 
-    assert t1_opened.wait(timeout=20), "再ネゴシエーション後の送信側の Track が open しなかった"
-    assert t2_opened.wait(timeout=20), "再ネゴシエーション後の受信側の Track が open しなかった"
+    assert t1_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        "再ネゴシエーション後の送信側の Track が open しなかった"
+    )
+    assert t2_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        "再ネゴシエーション後の受信側の Track が open しなかった"
+    )
 
     assert t1.is_open()
     assert t2 is not None
@@ -492,9 +500,15 @@ def make_loopback_with_pli(
     pc1.set_remote_description(Description(answer))
 
     # 接続確立とトラック / DataChannel のオープンを callback で待つ。
-    assert t1_opened.wait(timeout=20), "送信側の Track が open しなかった"
-    assert t2_opened.wait(timeout=20), "受信側の Track が open しなかった"
-    assert dc1_opened.wait(timeout=20), "DataChannel が open しなかった"
+    assert t1_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        f"送信側の Track が open しなかった (state={pc1.state()}, ice_state={pc1.ice_state()})"
+    )
+    assert t2_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        f"受信側の Track が open しなかった (state={pc2.state()}, ice_state={pc2.ice_state()})"
+    )
+    assert dc1_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        f"DataChannel が open しなかった (state={pc1.state()}, ice_state={pc1.ice_state()})"
+    )
 
     assert t1.is_open(), "送信側の Track が open しなかった"
     assert t2 is not None, "受信側の Track が取得できなかった"
