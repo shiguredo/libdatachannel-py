@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-10-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/update-slack-channel
 - Polished: 2026-10-10
 
@@ -29,6 +29,17 @@ CI・リリースの結果を通知する Slack のチャンネルが `sora-pyth
 - `.github/workflows/wheel.yml` の `slack_notify` ジョブの `slack_channel` が `python-oss` であること
 - `prek run --all-files check-yaml` が PASS すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `.github/workflows/wheel.yml`
+  - `slack_notify` ジョブ (build_ubuntu / build_macos の完了後に実行) の `slack_channel` を `sora-python-sdk` から `python-oss` に変更した
+  - タグ push 時のリリース失敗通知 (`if: failure()` のジョブ) の `slack_channel` も同様に変更した
+- 検証
+  - `prek run --all-files check-yaml` が PASS
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
+  - Slack へ実際に届くことは、 リポジトリの secrets に `SLACK_WEBHOOK` が設定された状態で develop / main へ push して目視で確認する (本 issue では確認できない)
+- 通知ジョブは `wheel.yml` にのみあり、 `prek.yml` (pull_request / push の CI) には無い。 CI の失敗も通知したい場合は別 issue で追加する
 
 ## 参考
 
