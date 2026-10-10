@@ -29,28 +29,33 @@
 - 手元 (macOS 26 arm64 / Python 3.12) では 0038 の修正以降に再現していない
 - `tests/test_websocketserver.py` の `test_websocketserver` は `port = 0` で動的確保し、 callback の完了をイベントで待つ形になっている (0038 で変更済み)
 
-### 原因 (未特定)
+### 原因 (特定済み)
 
-ヒープ破壊が起きていることはスタックから裏付けられるが、 破壊している箇所は特定できていない。 候補は次のとおり。
+`CMakeLists.txt` の「古い `_deps` を捨てる」ガードが、 無効化されたままの行に誤マッチして発動しないため、 スレッド非対応の mbedTLS が CI で使われ続けていた。
 
-- libdatachannel の WebSocketServer の経路 (受け入れ thread から呼ぶ Python callback、 サーバー側 WebSocket の寿命)
-- 0038 で mbedTLS をスレッドセーフにした後も残る並行初期化の経路
-- Python と C++ をまたぐ参照の取り扱い (callback のクロージャと C++ の WebSocket の循環)
+- ガードは `if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "#define MBEDTLS_THREADING_C")` で、 部分一致のため無効化されたままの行 `//#define MBEDTLS_THREADING_C` にも一致する。 `cmake -P` で誤マッチを再現した
+- `wheel.yml` は `restore-keys` の前方一致で `_deps` を復元するため、 `hashFiles('CMakeLists.txt')` が変わっていても古いキャッシュが使われる
+- 決定的な証拠: 同じコミット (`c5ea89b` = 0037 の mbedTLS スレッド対応をマージ済み) の wheel run で、 leg によって挙動が分かれた
+  - `build_ubuntu (ubuntu-24.04_x86_64, ubuntu-24.04, 3.14)`: ログが `-- MbedTLS already built` (再ビルドなし) → `tests/test_websocketserver.py` の `server.stop()` で exit 134
+  - `build_ubuntu (ubuntu-24.04_armv8, ubuntu-24.04-arm, 3.13)`: ログが `-- Building MbedTLS...` (新規ビルド) → `test_websocketserver` を含む 4 件が PASSED
+- 経路: libdatachannel の `impl/tlstransport.cpp` が複数 thread から `psa_crypto_init()` を呼び、 スレッド対応の無い mbedTLS では内部状態 (PSA / entropy) が壊れてヒープ破壊になる。 0038 の crash report の `mbedtls_entropy_func` / `mbedtls_ctr_drbg_seed` 経路と一致する
+- 手元 (macOS 26 arm64) の `_deps` には `#define MBEDTLS_THREADING_C` があるため再現しない
 
 ## 設計方針
 
-- まず再現条件を絞る。 手元で再現しないため、 glibc の malloc 検査を強めた状態 (`MALLOC_CHECK_=3` と `MALLOC_PERTURB_`) で `tests/test_websocketserver.py` を繰り返し実行し、 Linux で再現するかどうかを確かめる
-- 再現したら、 破壊を検出した時点の全 thread のスタック (`faulthandler.enable()` と `faulthandler.dump_traceback_later()`) と malloc のエラーメッセージ (`free(): invalid pointer` / `corrupted size vs. prev_size` など) を取得する
-- 0038 と同じ観点 (mbedTLS のスレッド対応、 WebSocketServer の停止と破棄の順序、 callback の実行 thread) を一次資料で確認し、 破壊箇所を絞り込む
-- 原因が binding 側にある場合は binding で、 libdatachannel 側にある場合は upstream への報告を前提にした回避を入れる
-- 再現率が低いため、 修正後は再現条件で繰り返し実行して安定を確認する (試行回数と 0/N の 95% 上側限界を報告する)
+- `CMakeLists.txt` のガードを、 コメント行に誤マッチしない形にする (行頭から `#define MBEDTLS_THREADING_C` を探す)
+- `wheel.yml` の `_deps` キャッシュキーと `restore-keys` の接頭辞に世代を付け (v2)、 修正前に作られたキャッシュを復元させない
+- 修正後は、 影響していた leg のログで `-- Building MbedTLS...` (再ビルド) が出ることと、 `_deps` の mbedTLS ライブラリにスレッド用の mutex シンボルがあることを確認する
+- Linux で `tests/test_websocketserver.py` をヒープ検査付きで繰り返す検証は、 環境が用意できる場合に補助的に行う
 
 ## 完了条件
 
-- 破壊箇所が特定されていること (特定できない場合は、 残る候補と次の調査手順が issue に記録されていること)
-- 修正によって、 再現条件で繰り返し実行してもクラッシュしないこと (試行回数と 0/N の 95% 上側限界を報告する)
-- CI (wheel.yml の leg) が PASS すること
+- `CMakeLists.txt` のガードが、 無効化されたままの行 (`//#define MBEDTLS_THREADING_C`) では再ビルドが走り、 有効な define では走らないこと (`cmake -P` の確認で示す)
+- CI (wheel.yml) の全 leg が PASS すること
+- 影響していた leg のログで `-- Building MbedTLS...` (再ビルド) が出ること
+- `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+- 破壊箇所が特定できない場合は、 残る候補と次の調査手順が issue に記録されていること (今回特定できたため対象外)
 
 ## 参考
 
