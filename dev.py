@@ -1,10 +1,9 @@
 import argparse
 import subprocess
-from typing import Optional
 
 
 # ファイルを読み込み、バージョンを更新
-def update_version(file_path: str, dry_run: bool) -> Optional[str]:
+def update_version(file_path: str, dry_run: bool) -> str | None:
     with open(file_path, "r", encoding="utf-8") as f:
         current_version: str = f.read().strip()
 
@@ -18,7 +17,7 @@ def update_version(file_path: str, dry_run: bool) -> Optional[str]:
         parts = current_version.split(".")
         if len(parts) != 3:
             raise ValueError("Version format in VERSION file is not X.Y.Z")
-        major, minor, patch = map(int, parts)
+        major, minor, _ = map(int, parts)
         new_version = f"{major}.{minor + 1}.0.dev0"
 
     print(f"Current version: {current_version}")
@@ -35,7 +34,9 @@ def update_version(file_path: str, dry_run: bool) -> Optional[str]:
         print(new_version)
     else:
         with open(file_path, "w", encoding="utf-8") as f:
-            f.write(new_version)
+            # 末尾に改行を入れる。 改行が無いと commit 時に prek の end-of-file-fixer が
+            # ファイルを書き換え、 フックが失敗して commit が中断される
+            f.write(f"{new_version}\n")
         print(f"Version updated in {file_path} to {new_version}")
 
     return new_version
@@ -86,7 +87,7 @@ def main() -> None:
     version_file_path: str = "VERSION"
 
     # バージョン更新
-    new_version: Optional[str] = update_version(version_file_path, args.dry_run)
+    new_version: str | None = update_version(version_file_path, args.dry_run)
 
     if not new_version:
         return  # ユーザーが確認をキャンセルした場合、処理を中断

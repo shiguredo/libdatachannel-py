@@ -1,9 +1,9 @@
-cmake_minimum_required(VERSION 4.1)
+cmake_minimum_required(VERSION 4.2)
 project(libdatachannel_py LANGUAGES CXX)
 
 # プラットフォームチェック
 if(NOT APPLE AND NOT UNIX AND NOT WIN32)
-  message(FATAL_ERROR "This package supports macOS, Linux (Ubuntu), and Windows.")
+  message(FATAL_ERROR "This package supports macOS and Linux (Ubuntu).")
 endif()
 
 # ExternalProject の依存関係は _deps 配下で管理
@@ -27,14 +27,14 @@ include(ExternalProject)
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/deps.json DEPS_JSON)
 
 # MbedTLS の設定を解析
-string(JSON MBEDTLS_VERSION GET ${DEPS_JSON} mbedtls version)
-string(JSON MBEDTLS_GIT_REPOSITORY GET ${DEPS_JSON} mbedtls repository)
-set(MBEDTLS_GIT_TAG "v${MBEDTLS_VERSION}")
+string(JSON MBEDTLS_TAG GET ${DEPS_JSON} mbedtls tag)
+string(JSON MBEDTLS_GIT_URL GET ${DEPS_JSON} mbedtls url)
+set(MBEDTLS_GIT_TAG "${MBEDTLS_TAG}")
 
 # libdatachannel の設定を解析
-string(JSON LIBDATACHANNEL_VERSION GET ${DEPS_JSON} libdatachannel version)
-string(JSON LIBDATACHANNEL_GIT_REPOSITORY GET ${DEPS_JSON} libdatachannel repository)
-set(LIBDATACHANNEL_GIT_TAG "v${LIBDATACHANNEL_VERSION}")
+string(JSON LIBDATACHANNEL_TAG GET ${DEPS_JSON} libdatachannel tag)
+string(JSON LIBDATACHANNEL_GIT_URL GET ${DEPS_JSON} libdatachannel url)
+set(LIBDATACHANNEL_GIT_TAG "${LIBDATACHANNEL_TAG}")
 
 # ExternalProject ビルド用の並列ビルドジョブ数を決定
 if(DEFINED ENV{CMAKE_BUILD_PARALLEL_LEVEL})
@@ -50,15 +50,62 @@ endif()
 
 # ========== MbedTLS ==========
 message(STATUS "Setting up MbedTLS...")
-set(MBEDTLS_SOURCE_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_VERSION}/source")
-set(MBEDTLS_BUILD_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_VERSION}/build")
-set(MBEDTLS_INSTALL_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_VERSION}/install")
+set(MBEDTLS_SOURCE_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/source")
+set(MBEDTLS_BUILD_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/build")
+set(MBEDTLS_INSTALL_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/install")
 
+# Windows は現状未対応。 優先実装として受注した際に使う分岐
+# (対応時は classifiers と README も更新する)
 # Windows では .lib、それ以外では .a
 if(WIN32)
   set(MBEDTLS_LIB ${MBEDTLS_INSTALL_DIR}/lib/mbedtls.lib)
 else()
   set(MBEDTLS_LIB ${MBEDTLS_INSTALL_DIR}/lib/libmbedtls.a)
+endif()
+
+# mbedTLS をスレッドセーフにする設定コマンド。
+# libdatachannel は複数の thread から psa_crypto_init() を呼ぶため、 MBEDTLS_THREADING_C が
+# 無いと mbedTLS 内部の状態が壊れてヒープ破壊 (SIGTRAP / SIGSEGV) を起こす。
+# Windows には pthread が無いため対象外にする (スレッド対応が必要になったら
+# MBEDTLS_THREADING_ALT を使う)。
+set(MBEDTLS_THREADING_CONFIG_COMMANDS "")
+if(NOT WIN32)
+  set(MBEDTLS_THREADING_CONFIG_COMMANDS
+    COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_THREADING_C
+    COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_THREADING_PTHREAD
+  )
+endif()
+
+# 設定が古いビルド済みライブラリを使わないようにする。
+# スレッド対応 (MBEDTLS_THREADING_C) は mbedTLS の構造体レイアウトを変えるため、
+# 対応前にビルドした _deps が残っていると、 そのまま使われてクラッシュが再発する。
+# (libdatachannel も同じ設定でコンパイルされている必要があるため、 併せて捨てる)
+if(NOT WIN32)
+  set(MBEDTLS_NEEDS_REBUILD FALSE)
+  if(NOT EXISTS ${MBEDTLS_LIB})
+    # mbedTLS が無いのに libdatachannel だけ残っている部分キャッシュも捨てる
+    set(MBEDTLS_NEEDS_REBUILD TRUE)
+  elseif(EXISTS ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h)
+    file(READ ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h MBEDTLS_CONFIG_CONTENT)
+    # 部分一致にすると、 無効化されたままの行 (//#define MBEDTLS_THREADING_C) にも一致して
+    # ガードが発動せず、 スレッド非対応のままビルドされた _deps を使い続けてしまう。
+    # CMake の正規表現の ^ は入力全体の先頭にしか一致しないため、 改行も条件に含める
+    if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "(^|\n)#define[ \t]+MBEDTLS_THREADING_C")
+      set(MBEDTLS_NEEDS_REBUILD TRUE)
+    endif()
+  else()
+    # ヘッダが無い部分 install も作り直す
+    set(MBEDTLS_NEEDS_REBUILD TRUE)
+  endif()
+  if(MBEDTLS_NEEDS_REBUILD)
+    message(STATUS "MbedTLS threading support is missing; rebuilding MbedTLS and libdatachannel")
+    file(REMOVE_RECURSE ${MBEDTLS_BUILD_DIR} ${MBEDTLS_INSTALL_DIR})
+    # libdatachannel はこの時点ではパス変数が未定義のため、 タグから直接組み立てる
+    file(REMOVE_RECURSE
+      ${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/build
+      ${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/install
+    )
+  endif()
 endif()
 
 # ビルド済みかチェック
@@ -69,7 +116,7 @@ else()
   message(STATUS "Building MbedTLS...")
   ExternalProject_Add(
     mbedtls_build
-    GIT_REPOSITORY ${MBEDTLS_GIT_REPOSITORY}
+    GIT_REPOSITORY ${MBEDTLS_GIT_URL}
     GIT_TAG ${MBEDTLS_GIT_TAG}
     GIT_SHALLOW TRUE
     SOURCE_DIR ${MBEDTLS_SOURCE_DIR}
@@ -79,6 +126,7 @@ else()
     UPDATE_COMMAND ""
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E chdir ${MBEDTLS_SOURCE_DIR} ${Python_EXECUTABLE} scripts/config.py set MBEDTLS_SSL_DTLS_SRTP
+      ${MBEDTLS_THREADING_CONFIG_COMMANDS}
       COMMAND ${CMAKE_COMMAND}
         -S ${MBEDTLS_SOURCE_DIR}
         -B ${MBEDTLS_BUILD_DIR}
@@ -98,9 +146,9 @@ endif()
 
 # ========== libdatachannel ==========
 message(STATUS "Setting up libdatachannel...")
-set(LIBDATACHANNEL_SOURCE_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_VERSION}/source")
-set(LIBDATACHANNEL_BUILD_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_VERSION}/build")
-set(LIBDATACHANNEL_INSTALL_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_VERSION}/install")
+set(LIBDATACHANNEL_SOURCE_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/source")
+set(LIBDATACHANNEL_BUILD_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/build")
+set(LIBDATACHANNEL_INSTALL_DIR "${DEPS_DIR}/libdatachannel/${LIBDATACHANNEL_TAG}/install")
 
 # Windows では .lib、それ以外では .a
 if(WIN32)
@@ -117,7 +165,7 @@ else()
   message(STATUS "Building libdatachannel...")
   ExternalProject_Add(
     libdatachannel_build
-    GIT_REPOSITORY ${LIBDATACHANNEL_GIT_REPOSITORY}
+    GIT_REPOSITORY ${LIBDATACHANNEL_GIT_URL}
     GIT_TAG ${LIBDATACHANNEL_GIT_TAG}
     GIT_SHALLOW TRUE
     GIT_SUBMODULES_RECURSE TRUE
@@ -151,11 +199,49 @@ else()
 endif()
 
 # nanobind モジュール
+#
+# Free-Threading 対応の Python (3.13t / 3.14t) かどうかをここで判定し、 FREE_THREADED を
+# 明示的に指定する。 nanobind は GIL ありの Python では ARG_FREE_THREADED をエラーも
+# 警告もなく FALSE に上書きするため、 黙って方針と食い違わないようにする。
+#
+# 方針: Free-Threading 版の wheel は 3.14t の leg でビルドし、 GIL あり版は従来どおり
+# 3.12 / 3.13 / 3.14 の leg でビルドする (requires-python >= 3.12 と classifiers は
+# どちらの wheel も配布する前提)。 3.13t 向けの wheel は配布しない。
+#
+# 判定は nanobind と同じく Python の ABI が Free-Threading かどうか (`[0-9]t`) で行う。
+# nanobind は SKBUILD_SOABI を優先するため、 こちらも同じ順で見る。
+set(LIBDATACHANNEL_FREE_THREADED OFF)
+if(Python_SOABI MATCHES "[0-9]t" OR SKBUILD_SOABI MATCHES "[0-9]t")
+  set(LIBDATACHANNEL_FREE_THREADED ON)
+endif()
+# nanobind が独自に free-threading と判定した場合はそれに従う
+if(NB_FREE_THREADED)
+  set(LIBDATACHANNEL_FREE_THREADED ON)
+endif()
+
+set(LIBDATACHANNEL_FREE_THREADED_FLAG)
+if(LIBDATACHANNEL_FREE_THREADED)
+  set(LIBDATACHANNEL_FREE_THREADED_FLAG FREE_THREADED)
+  message(STATUS "Free-threaded Python detected; enabling FREE_THREADED")
+else()
+  message(STATUS "GIL-enabled Python detected; FREE_THREADED is not used (GIL wheels are published)")
+endif()
+
 nanobind_add_module(libdatachannel_ext
   NB_DOMAIN "libdatachannel"
+  ${LIBDATACHANNEL_FREE_THREADED_FLAG}
   src/bind_libdatachannel.cpp
   src/libdatachannel_ext.cpp
 )
+
+# ABI から見た判定と nanobind の判定が食い違っていないことを確認する。
+# SOABI を上書きした場合は再現できる (例: -DSKBUILD_SOABI=cpython-312-darwin を
+# free-threading の Python で指定する)。
+if(Python_SOABI MATCHES "[0-9]t" OR SKBUILD_SOABI MATCHES "[0-9]t")
+  if(NOT NB_FREE_THREADED)
+    message(WARNING "Free-threaded ABI detected, but nanobind disabled FREE_THREADED")
+  endif()
+endif()
 
 # ビルド順序を保証するため依存関係を追加
 add_dependencies(libdatachannel_ext mbedtls_build libdatachannel_build)
@@ -222,14 +308,33 @@ endif()
 set_target_properties(libdatachannel_ext PROPERTIES OUTPUT_NAME "libdatachannel_ext")
 
 # 型スタブ (.pyi) ファイルの自動生成
+# 生成されるのは extension module (libdatachannel_ext) のスタブなので、 名前もそれに合わせる
 nanobind_add_stub(
   libdatachannel_stub
   MODULE libdatachannel_ext
-  OUTPUT __init__.pyi
+  OUTPUT libdatachannel_ext.pyi
   PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
   DEPENDS libdatachannel_ext
   MARKER_FILE py.typed
 )
+
+# nanobind_add_stub が生成するスタブは extension module のもので、 __init__.py が定義する
+# エイリアス (AACRtpPacketizer など 6 件) を含まない。 型チェッカーは .pyi を .py より
+# 優先するため、 エイリアスを追記した __init__.pyi を作る (wheel にもこれが入る)
+set(LIBDATACHANNEL_STUB_RAW ${CMAKE_CURRENT_BINARY_DIR}/libdatachannel_ext.pyi)
+set(LIBDATACHANNEL_STUB ${CMAKE_CURRENT_BINARY_DIR}/__init__.pyi)
+set(LIBDATACHANNEL_INIT_PY ${CMAKE_CURRENT_SOURCE_DIR}/src/libdatachannel/__init__.py)
+add_custom_command(
+  OUTPUT ${LIBDATACHANNEL_STUB}
+  COMMAND ${CMAKE_COMMAND}
+          -DRAW=${LIBDATACHANNEL_STUB_RAW}
+          -DINIT_PY=${LIBDATACHANNEL_INIT_PY}
+          -DOUTPUT=${LIBDATACHANNEL_STUB}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/append_stub_aliases.cmake
+  DEPENDS ${LIBDATACHANNEL_STUB_RAW} ${LIBDATACHANNEL_INIT_PY}
+  VERBATIM
+)
+add_custom_target(libdatachannel_stub_aliases ALL DEPENDS ${LIBDATACHANNEL_STUB})
 
 # Wheel に配置するためのインストール先を指定
 set(PY_PACKAGE "libdatachannel")

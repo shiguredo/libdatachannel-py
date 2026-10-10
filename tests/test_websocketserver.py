@@ -1,4 +1,11 @@
+import gc
+import socket
+import sys
+import threading
 import time
+import weakref
+
+import pytest
 
 from libdatachannel import (
     WebSocket,
@@ -12,36 +19,46 @@ from libdatachannel import (
 # を Python に直したもの
 def test_websocketserver():
     server_config = WebSocketServerConfiguration()
-    server_config.port = 48080
+    # port に 0 を指定して OS に空きポートを割り当てさせ、 前のテストや残存プロセスとの
+    # bind 衝突を避ける (実際に割り当てられたポートは server.port() で取得する)
+    server_config.port = 0
     server_config.enable_tls = True
     server_config.bind_address = "127.0.0.1"
     server_config.max_message_size = 1000
     server = WebSocketServer(server_config)
+    port = server.port()
 
     client = None
 
+    # サーバー側 callback の完了を待つためのイベント (sleep によるポーリングをしない)
+    client_opened = threading.Event()
+    client_closed = threading.Event()
+    client_message_received = threading.Event()
+
     def server_on_client(incoming):
         nonlocal client
-        print("WebSocketServer: Client connection received")
         client = incoming
 
         addr = client.remote_address()
         if addr is not None:
-            print(f"WebSocketServer: Client remote address is {addr}")
+            pass
 
         def client_on_open():
             nonlocal client
-            print("WebSocketServer: Client connection open")
+            assert client is not None
             path = client.path()
             if path is not None:
-                print(f"WebSocketServer: Requested path is {path}")
+                pass
+            client_opened.set()
 
         def client_on_closed():
-            print("WebSocketServer: Client connection closed")
+            client_closed.set()
 
         def client_on_message(message):
             nonlocal client
+            assert client is not None
             client.send(message)
+            client_message_received.set()
 
         client.on_open(client_on_open)
         client.on_closed(client_on_closed)
@@ -55,13 +72,20 @@ def test_websocketserver():
 
     my_message = "Hello world from client"
 
+    # クライアント側 callback の完了を待つためのイベント (sleep によるポーリングをしない)
+    ws_opened = threading.Event()
+    ws_closed = threading.Event()
+    message_received = threading.Event()
+    max_size_received_event = threading.Event()
+
     def ws_on_open():
-        print("WebSocket: Open")
+        assert ws is not None
         ws.send(b"\x00" * 1001)
         ws.send(my_message)
+        ws_opened.set()
 
     def ws_on_closed():
-        print("WebSocket: Closed")
+        ws_closed.set()
 
     ws.on_open(ws_on_open)
     ws.on_closed(ws_on_closed)
@@ -75,38 +99,187 @@ def test_websocketserver():
         if isinstance(message, str):
             received = message == my_message
             if received:
-                print("WebSocket: Received expected message")
+                message_received.set()
             else:
-                print("WebSocket: Received UNEXPECTED message")
+                pass
         else:
             max_size_received = len(message) == 1000
             if max_size_received:
-                print("WebSocket: Received large message truncated at max size")
+                max_size_received_event.set()
             else:
-                print("WebSocket: Received large message NOT TRUNCATED")
+                pass
 
     ws.on_message(ws_on_message)
 
-    ws.open("wss://localhost:48080/")
+    ws.open(f"wss://localhost:{port}/")
 
-    attempts = 15
-    while (not ws.is_open() or not received) and attempts > 0:
-        attempts -= 1
-        time.sleep(1)
+    # callback から通知されるまで待つ (ポーリングしない)
+    assert ws_opened.wait(timeout=15), "クライアントの WebSocket が open にならなかった"
+    assert client_opened.wait(timeout=15), "サーバー側のクライアント接続が open にならなかった"
+    assert client_message_received.wait(timeout=15), "サーバーがメッセージを受信しなかった"
+    assert message_received.wait(timeout=15), "エコーされたテキストメッセージを受信しなかった"
+    assert max_size_received_event.wait(timeout=15), (
+        "上限で切り詰められたバイナリメッセージを受信しなかった"
+    )
 
     assert ws.is_open()
     assert max_size_received
     assert received
 
     ws.close()
-    time.sleep(1)
+    assert ws_closed.wait(timeout=15), "クライアントの WebSocket が close にならなかった"
 
     server.stop()
-    time.sleep(1)
+    assert client_closed.wait(timeout=15), "サーバー側のクライアント接続が close にならなかった"
 
     # これが無いとリークする
     ws = None
     server = None
     client = None
 
-    print("Success")
+
+def test_stop_releases_gil() -> None:
+    """WebSocketServer.stop() が GIL を解放して実行されること
+
+    受け入れ thread が Python callback の GIL を待っている間に stop() が GIL を
+    保持したまま走ると、 Python プロセス全体が恒停し得る。 stop() の呼び出し中に
+    GIL を待つ thread が進行するかで判定する。
+    """
+    # free-threading ビルドには GIL が無いため、 GIL 解放そのものを測れない
+    # (sys._is_gil_enabled は 3.13 以降にしか無い)
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", lambda: True)
+    if not is_gil_enabled():
+        pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
+
+    config = WebSocketServerConfiguration()
+    # 固定ポートだと前のテストや残存プロセスと衝突するため動的確保にする
+    config.port = 0
+    config.bind_address = "127.0.0.1"
+    server = WebSocketServer(config)
+
+    counter = 0
+    stopping = threading.Event()
+
+    def spin() -> None:
+        nonlocal counter
+        while not stopping.is_set():
+            counter += 1
+
+    original_interval = sys.getswitchinterval()
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        # 待機 thread が実際に動き始めるまで待つ (起動前に測ると 0 のままになる)
+        deadline = time.monotonic() + 5
+        while counter == 0 and time.monotonic() < deadline:
+            time.sleep(0)
+        assert counter > 0, "GIL を待つ thread が動き始めなかった"
+
+        # 定期切替を止め、 GIL を解放しない限り待機 thread が動けないようにする
+        sys.setswitchinterval(1.0)
+        # 待機 thread に新しい switch interval で GIL を待たせ直す。 ここで一度 GIL を
+        # 手放して保留中の受け渡しを解消する。 これをしないと、 待機 thread は変更前の
+        # 短い interval (既定 5 ms) で待ち続けているため、 計測中に周期的な受け渡しが
+        # 起きて、 GIL を解放しない呼び出しでも進行が観測されてしまう
+        time.sleep(0)
+
+        # GIL を解放しない呼び出し (port()) は待機 thread に GIL を渡さない。
+        # この baseline は失敗時の診断用で、 判定には使わない (待機 thread の待ち直しが
+        # 効かない環境では baseline 中にも受け渡しが起き得るため)
+        baseline_start = time.monotonic()
+        for _ in range(20):
+            server.port()
+        baseline_elapsed = time.monotonic() - baseline_start
+
+        # GIL を解放しない限り、 待機 thread は switch interval (1 秒) のあいだ GIL を
+        # 得られない。 1 秒より十分短い 50 ms のあいだ呼び続け、 その間に待機 thread が
+        # 進行すれば解放されていると判定する (stop は冪等)
+        stopped = 0
+        stopped_start = counter
+        deadline = time.monotonic() + 0.05
+        while time.monotonic() < deadline:
+            server.stop()
+            stopped = counter - stopped_start
+            if stopped:
+                break
+
+        assert stopped > 0, (
+            f"stop() が GIL を解放しなかった "
+            f"(stopped={stopped}, baseline_elapsed={baseline_elapsed:.6f})"
+        )
+    finally:
+        sys.setswitchinterval(original_interval)
+        stopping.set()
+        thread.join(timeout=5)
+        # 失敗時もサーバーを確実に停止する (stop は冪等)
+        server.stop()
+
+
+def test_destruct_without_explicit_close() -> None:
+    """明示 stop() を呼ばずに破棄しても恒停せず終了すること
+
+    破棄経路では libdatachannel 本体の公開デストラクタが stop() を呼ぶ。 ここでは
+    クライアントを接続しない状態で破棄し、 破棄が完了すること (Python オブジェクトが
+    解放され weakref が死ぬこと) を確認する。
+
+    クライアントが接続しておらず Python callback が GIL を待っていないため、 この
+    テストは破棄経路の恒停を検出しない (恒停が起きればテスト自体が停止する)。 恒停の
+    検出には GIL を待つ callback を動かす必要があり、 破棄経路の恒停の根本対応は
+    別 issue で扱う。
+    """
+    config = WebSocketServerConfiguration()
+    # 固定ポートだと前のテストや残存プロセスと衝突するため動的確保にする
+    config.port = 0
+    config.bind_address = "127.0.0.1"
+    server = WebSocketServer(config)
+    ref = weakref.ref(server)
+
+    assert ref() is not None
+
+    # 明示 stop() を呼ばずに破棄する
+    del server
+    gc.collect()
+
+    assert ref() is None, "WebSocketServer が破棄されなかった"
+
+
+def test_del_calls_stop_on_python_subclass() -> None:
+    """Python サブクラスでは __del__ から binding の stop が呼ばれること
+
+    nanobind の tp_dealloc は C++ destructor を直接呼ぶため基底クラスのインスタンスでは
+    __del__ は実行されないが、 Python サブクラスでは __del__ が実行される。 __del__ が
+    正常に動くこと (GIL 解放下の stop を呼べること) を確認する。
+    """
+    del_called = []
+    del_errors = []
+
+    class Server(WebSocketServer):
+        def __del__(self) -> None:
+            del_called.append(True)
+            # binding の __del__ (GIL 解放下の stop) が例外を投げても CPython は
+            # unraisable として記録するだけでテストは PASS してしまうため、 ここで
+            # 捕まえて検証する
+            try:
+                super().__del__()
+            except BaseException as e:  # noqa: BLE001 (破棄経路の例外を検証する)
+                del_errors.append(repr(e))
+            # stop() が実際に呼ばれたことを、 停止後に接続できないことで確認する
+            # (binding の __del__ は C++ の stop を直接呼ぶため、 Python 側の
+            #  stop override では検出できない)
+            try:
+                with socket.create_connection(("127.0.0.1", self.port()), timeout=1):
+                    del_errors.append("stop 後も接続できた")
+            except OSError:
+                pass
+
+    config = WebSocketServerConfiguration()
+    # 固定ポートだと前のテストや残存プロセスと衝突するため動的確保にする
+    config.port = 0
+    config.bind_address = "127.0.0.1"
+    server = Server(config)
+
+    del server
+    gc.collect()
+
+    assert del_called == [True]
+    assert del_errors == [], f"binding の __del__ が例外を投げた: {del_errors}"

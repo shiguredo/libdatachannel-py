@@ -1,0 +1,77 @@
+# Configuration file for `prek`, a git hook framework written in Rust.
+# See https://prek.j178.dev for more information.
+#:schema https://www.schemastore.org/prek.json
+
+exclude = { glob = ["_deps/**", "_build/**", ".venv/**"] }
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace", priority = 0 },
+  { id = "end-of-file-fixer", priority = 0 },
+  { id = "check-toml", priority = 0 },
+  { id = "check-yaml", priority = 0, exclude = { glob = [".clang-format"] } },
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.16.10"
+hooks = [
+  { id = "ruff-format", priority = 0 },
+  { id = "ruff-check", args = ["--fix"], priority = 10 },
+]
+
+[[repos]]
+repo = "https://github.com/tombi-toml/tombi-pre-commit"
+rev = "v1.7.3"
+hooks = [
+  { id = "tombi-lint", exclude = { glob = "**/uv.lock" } },
+  { id = "tombi-format", exclude = { glob = "**/uv.lock" } },
+]
+
+# ty: 静的型チェッカ
+# ty のバイナリはフックが自前で用意するため、 pyproject.toml の依存には含めない
+# rev がそのまま ty のバージョンになる。 更新は prek auto-update で行う
+# --isolated で uv.lock / .venv を変更せずに実行する
+[[repos]]
+repo = "https://github.com/astral-sh/ty-pre-commit"
+rev = "v0.0.85"
+hooks = [{ id = "ty", args = ["--isolated"], priority = 20 }]
+
+[[repos]]
+repo = "local"
+hooks = [
+  {
+    id = "clang-format",
+    name = "clang-format",
+    entry = "clang-format -i",
+    language = "system",
+    types_or = ["c", "c++", "objective-c"],
+    priority = 10,
+  },
+  {
+    # pytest: 拡張モジュールを install した .venv が必要になる (make develop 相当を
+    # 実行するまでこのフックは失敗する)。
+    # --no-sync を付けるのは、 uv run が uv sync を実行すると [tool.uv] の
+    # package = false により make develop で install した拡張モジュールが削除され、
+    # フックが必ず失敗するため (uv run は --no-sync でも既存の .venv を使う)。
+    # tests/test_peerconnection.py::test_destruct_without_explicit_close は GIL と
+    # libdatachannel の mutex のデッドロックで停止し、 pytest-timeout も発火しないため
+    # 除外する (tests/test_websocketserver.py の同名テストは除外対象ではない)。
+    id = "pytest",
+    name = "pytest",
+    entry = "uv run --no-sync pytest",
+    args = [
+      "-v",
+      "--deselect",
+      "tests/test_peerconnection.py::test_destruct_without_explicit_close",
+      # test_track も一部の環境でネイティブに恒停する (issue 0051)
+      "--deselect",
+      "tests/test_peerconnection.py::test_track",
+    ],
+    language = "system",
+    types = ["python"],
+    pass_filenames = false,
+    priority = 30,
+  },
+]

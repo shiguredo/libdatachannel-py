@@ -1,0 +1,56 @@
+# Windows 対応表明の 3 重矛盾 (classifiers / README / CMakeLists) を解消する
+
+- Priority: Low
+- Created: 2026-08-30
+- Completed: 2026-10-10
+- Branch: feature/fix-windows-platform-metadata
+- Polished: 2026-10-10
+
+## 目的
+
+pyproject.toml の classifiers は Windows を含み、CMakeLists.txt のプラットフォームチェックのメッセージは「supports ... and Windows」と表明し、README は Windows 未対応 (優先実装として有償対応) と表明している。3 者の矛盾を解消する。
+
+## 優先度根拠
+
+- PyPI の classifiers は配布物の対応プラットフォームの表明であり、誤った表明は利用者の誤解を招く
+- Windows 用コード (WIN32 分岐) は CI で一度も検証されていない
+
+## 現状
+
+- pyproject.toml の classifiers に "Operating System :: Microsoft :: Windows" が含まれる
+- README.md のプラットフォーム一覧に Windows はなく、優先実装として「Windows 11 対応」を有償で提示している
+- CMakeLists.txt は Windows 向け設定 (MSVC_RUNTIME_LIBRARY、/utf-8 /bigobj 等) を持ち、プラットフォームチェックの FATAL_ERROR メッセージに Windows を含む
+- wheel.yml は Windows をビルドしない
+
+## 設計方針
+
+- 現在の対応範囲に合わせて、classifiers から Windows を外し、CMakeLists.txt のメッセージから Windows を外す
+- WIN32 分岐は「優先実装受注時の準備」であることをコメントで明示する (削除するかは維持コストを考慮して判断する)
+- README は現状どおり未対応表明のため変更しない
+
+## 完了条件
+
+- classifiers と CMakeLists.txt の表明が README と一致すること
+- WIN32 分岐の位置付けがコメントで明示されていること
+- `make wheel` が成功すること
+- `CHANGES.md` の `## develop` に `[FIX]` として記録すること (PyPI の classifiers は利用者に見える情報のため)
+- `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `pyproject.toml`
+  - classifiers から `Operating System :: Microsoft :: Windows` を削除した。 Windows の wheel は 1 つもビルドしておらず、 README も未対応 (優先実装) としているため
+- `CMakeLists.txt`
+  - プラットフォームチェックのメッセージを `This package supports macOS and Linux (Ubuntu).` に変更した
+  - 最初の `WIN32` 分岐に「Windows は現状未対応。 優先実装として受注した際に使う分岐」とコメントを追加した (分岐自体は残す)
+- `CHANGES.md`
+  - `## develop` に `[FIX]` として記録した
+- 検証
+  - `make wheel` が成功し、 生成した wheel の `METADATA` の `Classifier: Operating System` が macOS と Linux のみになることを確認した
+  - `prek run --all-files` が PASS
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
+- README は未対応表明のため変更していない
+
+## 参考
+
+- 対象: pyproject.toml (classifiers)、CMakeLists.txt (プラットフォームチェック)

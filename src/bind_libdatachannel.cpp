@@ -25,6 +25,17 @@
 // libdatachannel
 #include <rtc/rtc.hpp>
 
+// 標準ライブラリ
+#include <algorithm>
+#include <chrono>
+#include <functional>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <type_traits>
+#include <vector>
+
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace rtc;
@@ -36,7 +47,9 @@ template <>
 struct type_caster<std::vector<std::byte>> {
   NB_TYPE_CASTER(std::vector<std::byte>, const_name("bytes"));
 
-  bool from_python(handle src, uint8_t flags, cleanup_list* cleanup) {
+  // nanobind 3 で flags が uint32_t に広がったため合わせる。
+  // noexcept は nanobind 側の宣言に合わせる (組み込み caster も同じ前提)
+  bool from_python(handle src, uint32_t flags, cleanup_list* cleanup) noexcept {
     if (PyBytes_Check(src.ptr()) == 0) {
       PyErr_Clear();
       return false;
@@ -50,7 +63,7 @@ struct type_caster<std::vector<std::byte>> {
 
   static handle from_cpp(const std::vector<std::byte>& vec,
                          rv_policy policy,
-                         cleanup_list* cleanup) {
+                         cleanup_list* cleanup) noexcept {
     return PyBytes_FromStringAndSize(reinterpret_cast<const char*>(vec.data()),
                                      vec.size());
   }
@@ -59,6 +72,166 @@ struct type_caster<std::vector<std::byte>> {
 }  // namespace nanobind
 
 namespace {
+
+// ---- callback のライフタイム管理 ----
+
+// Python オブジェクト (callback の弱参照) を保持するホルダー。
+// libdatachannel は worker thread で callback を破棄することがあるため、 nb::object を
+// そのまま捕捉すると GIL を持たない thread で Py_DECREF することになる。 nanobind の
+// std::function caster (nanobind/stl/function.h の pyfunc_wrapper) と同じ方針で、 参照
+// カウントを操作する前に cleanup_guard で GIL を取得する。 interpreter が停止済みの
+// 場合に cleanup_guard は false になるため、 その場合は参照カウントを操作しない。
+class weakref_holder {
+ public:
+  // 呼び出し側は GIL を保持している前提 (binding の実行中に作る)
+  explicit weakref_holder(nb::handle weakref) : m_ptr(weakref.ptr()) {
+    Py_INCREF(m_ptr);
+  }
+
+  weakref_holder(const weakref_holder& other) : m_ptr(other.m_ptr) {
+    // nanobind の pyfunc_wrapper と同じく null を弾く (move 済みの holder を copy しても
+    // Py_INCREF(nullptr) で落ちないようにする)
+    if (!m_ptr)
+      return;
+    if (nb::detail::cleanup_guard guard{})
+      Py_INCREF(m_ptr);
+    else
+      m_ptr = nullptr;
+  }
+
+  // std::function に copy ではなく move で保持させる (move なら GIL を必要としない)
+  weakref_holder(weakref_holder&& other) noexcept : m_ptr(other.m_ptr) {
+    other.m_ptr = nullptr;
+  }
+
+  weakref_holder& operator=(const weakref_holder&) = delete;
+  weakref_holder& operator=(weakref_holder&&) = delete;
+
+  ~weakref_holder() {
+    if (!m_ptr)
+      return;
+    // 条件として宣言する (guard の生存期間をこの if 文に閉じ込める)
+    if (nb::detail::cleanup_guard guard{})
+      Py_DECREF(m_ptr);
+  }
+
+  // 弱参照の参照先 (callback) を返す。 参照先が破棄済みの場合は None が返る
+  nb::object target() const {
+    if (!m_ptr)
+      return nb::object();
+    return nb::borrow<nb::object>(m_ptr)();
+  }
+
+ private:
+  PyObject* m_ptr = nullptr;
+};
+
+// callback を Python 側 (インスタンスの __dict__) で強参照し、 C++ 側では弱参照で持つ。
+// 両側で強参照すると nb_inst → C++ → std::function → callable → nb_inst の循環ができ、
+// C++ 側が Python の GC の対象外であるために解放されない (issue 0053)。
+// Python 側に強参照を置くことで instance → __dict__ → callable → instance という GC から
+// 見える循環になり、 C++ 側が参照カウントに寄与しないため回収される。
+// そのために callback を登録する型は nb::dynamic_attr() を指定して __dict__ を持たせる
+// (nanobind は __dict__ を持つ型のインスタンスを GC の対象にする)。
+//
+// self には nb::find() で引いた Python オブジェクトを渡す。 nanobind は基底クラスの
+// ポインタに基底オフセットを加算しないため、 Channel のように派生クラスの 2 番目の基底で
+// ある型でも self のアドレスはインスタンス登録時のポインタと一致し、 nb::find() で引ける。
+// Python 側に強参照を置けた場合は true を返す。
+bool register_python_callback(nb::handle self,
+                              nb::callable callback,
+                              const char* name) {
+  if (!self.is_valid())
+    return false;
+
+  nb::object dict = self.attr("__dict__");
+  std::string key = std::string("_rdc_callback_") + name;
+  dict[nb::str(key.c_str())] = callback;
+
+  return true;
+}
+
+// register_python_callback で保持した callback を弱参照で呼ぶ std::function を作る。
+// C++ 側は弱参照なので callback の寿命を延ばさず、 Python 側の参照が消えれば循環も消える。
+template <typename R, typename... Args>
+std::function<R(Args...)> weak_python_callback(nb::callable callback) {
+  // weakref.ref(callback) を作る。 弱参照を作れない callable に対しては TypeError になる
+  nb::object weakref;
+  try {
+    weakref = nb::module_::import_("weakref").attr("ref")(callback);
+  } catch (nb::python_error&) {
+    // 弱参照を作れない callable (メソッド記述子など) は、 従来どおり C++ 側で強参照して
+    // 呼べるようにする (この場合だけ循環が残るが、 callback が呼ばれなくなるよりはよい)
+    return nb::cast<std::function<R(Args...)>>(callback);
+  }
+
+  return [holder = weakref_holder(weakref)](Args... args) -> R {
+    // libdatachannel の thread から呼ばれるため GIL を取得する
+    nb::gil_scoped_acquire acquire;
+    if (!acquire.is_valid()) {
+      // interpreter 停止中は Python API を触らない
+      if constexpr (!std::is_void_v<R>)
+        return R();
+      else
+        return;
+    }
+
+    nb::object target = holder.target();
+    if (!target.is_valid() || target.is_none()) {
+      // Python 側の参照が消えて callback が破棄済み
+      if constexpr (!std::is_void_v<R>)
+        return R();
+      else
+        return;
+    }
+
+    // 引数の Python 側への変換は nanobind の std::function caster と同じ経路
+    // (Python オブジェクトの呼び出し) に任せる
+    if constexpr (std::is_void_v<R>) {
+      target(std::forward<Args>(args)...);
+      return;
+    } else {
+      return nb::cast<R>(target(std::forward<Args>(args)...));
+    }
+  };
+}
+
+// register_python_callback と weak_python_callback をまとめて呼ぶ。 Python 側に強参照を
+// 置けなかった場合 (= nb::find() でインスタンスを特定できなかった場合) だけ、 従来どおり
+// C++ 側で強参照し、 callback が呼ばれることを優先する。
+template <typename R, typename... Args, typename Self>
+std::function<R(Args...)> python_callback(Self& self,
+                                          nb::callable callback,
+                                          const char* name) {
+  if (!register_python_callback(nb::find(self), callback, name))
+    return nb::cast<std::function<R(Args...)>>(callback);
+
+  return weak_python_callback<R, Args...>(callback);
+}
+
+// reset_callbacks で Python 側に保持した callback を削除する。 C++ 側は弱参照なので削除
+// しなくても呼ばれなくなるが、 callback が捕捉しているオブジェクトを早く解放できるように
+// する。
+template <typename Self>
+void reset_python_callbacks(Self& self) {
+  nb::object found = nb::find(self);
+  if (!found.is_valid())
+    return;
+
+  constexpr char kPrefix[] = "_rdc_callback_";
+  nb::dict dict = found.attr("__dict__");
+
+  // 反復中は削除できないため、 削除するキーを先に集める
+  std::vector<std::string> keys;
+  for (const auto& item : dict) {
+    std::string key = nb::cast<std::string>(item.first);
+    if (key.compare(0, sizeof(kPrefix) - 1, kPrefix) == 0)
+      keys.push_back(key);
+  }
+
+  for (const std::string& key : keys)
+    nb::del(dict[nb::str(key.c_str())]);
+}
 
 // ---- configuration.hpp ----
 
@@ -184,10 +357,19 @@ void bind_configuration(nb::module_& m) {
 
 nb::object get_media(Description& desc, int index) {
   auto var = desc.media(index);
+  // 実体は Description 内部の Entry が持つため、 clear_media() や
+  // add_media(Application) で解放されると生ポインタが無効になり、 触ると
+  // SIGSEGV になる。 呼び出し側が無効化を気にせず使えるよう値 (コピー) を返す。
+  // コピーのため書き換えは Description に反映されない (反映させるには codec などを
+  // 足した media を組み立ててから add_media() する)
   if (std::holds_alternative<Description::Media*>(var)) {
-    return nb::cast(std::get<Description::Media*>(var));
+    if (auto* media = std::get<Description::Media*>(var)) {
+      return nb::cast(*media, nb::rv_policy::copy);
+    }
   } else if (std::holds_alternative<Description::Application*>(var)) {
-    return nb::cast(std::get<Description::Application*>(var));
+    if (auto* application = std::get<Description::Application*>(var)) {
+      return nb::cast(*application, nb::rv_policy::copy);
+    }
   }
   return nb::none();
 }
@@ -299,21 +481,68 @@ void bind_description(nb::module_& m) {
       .def("parse_sdp_line", &Description::Media::parseSdpLine)
       .def("has_payload_type", &Description::Media::hasPayloadType)
       .def("payload_types", &Description::Media::payloadTypes)
-      .def("rtp_map", nb::overload_cast<int>(&Description::Media::rtpMap),
-           "payload_type"_a, nb::rv_policy::reference)
+      .def(
+          "rtp_map",
+          [](Description::Media& media, int payload_type) {
+            // 内部の RtpMap への参照は remove_rtp_map / remove_format で無効になるため、
+            // 値 (コピー) を返す。 存在しない payload type では rtpMap が例外を投げる
+            return *media.rtpMap(payload_type);
+          },
+          "payload_type"_a,
+          "戻り値はコピーのため、 書き換えても Media には反映されない")
       .def("add_rtp_map", &Description::Media::addRtpMap, "map"_a)
       .def("remove_rtp_map", &Description::Media::removeRtpMap,
            "payload_type"_a)
       .def("remove_format", &Description::Media::removeFormat, "format"_a)
       .def("add_rtx_codec", &Description::Media::addRtxCodec, "payload_type"_a,
            "orig_payload_type"_a, "clock_rate"_a)
-      .def("as_audio",
-           [](Description::Media* p) {
-             return *static_cast<Description::Audio*>(p);
-           })
-      .def("as_video", [](Description::Media* p) {
-        return *static_cast<Description::Video*>(p);
-      });
+      // 値コピーを返すと戻り値への加工が元の Media に反映されず、 static_cast で
+      // 兄弟クラスへ変換すると未定義動作になる。 dynamic_cast で動的型を確認し、
+      // 一致した場合は元のオブジェクト自身を返す (戻り値が同じオブジェクトのため
+      // keep_alive は不要。 reference_internal にすると自己参照のリークになる)。
+      // v0.24.0 の description.cpp は createEntry / addMedia で常に base の Media を
+      // 作る (addMedia は値渡しでスライスする) ため、 Description から取得した media の
+      // 動的型は Media になり、 この経路では例外になる。 codec は add_media する前に
+      // 追加する (add_media 後の media はコピーとしてしか取得できず、 後から足しても
+      // Description には反映されない)
+      .def(
+          "as_audio",
+          [](Description::Media& media) -> Description::Audio* {
+            auto* audio = dynamic_cast<Description::Audio*>(&media);
+            if (!audio) {
+              throw nb::type_error(
+                  "as_audio: the media is not a Description.Audio; codecs are "
+                  "added "
+                  "to a Description.Audio before it is added to a Description "
+                  "(a Description keeps media as Description.Media)");
+            }
+            return audio;
+          },
+          nb::rv_policy::reference,
+          "Audio として同じオブジェクトへの参照を返す。 動的型が Audio "
+          "でない場合は "
+          "TypeError になる (Description は media を Description.Media として "
+          "保持するため、 Description から取得した media は常に TypeError "
+          "になる)")
+      .def(
+          "as_video",
+          [](Description::Media& media) -> Description::Video* {
+            auto* video = dynamic_cast<Description::Video*>(&media);
+            if (!video) {
+              throw nb::type_error(
+                  "as_video: the media is not a Description.Video; codecs are "
+                  "added "
+                  "to a Description.Video before it is added to a Description "
+                  "(a Description keeps media as Description.Media)");
+            }
+            return video;
+          },
+          nb::rv_policy::reference,
+          "Video として同じオブジェクトへの参照を返す。 動的型が Video "
+          "でない場合は "
+          "TypeError になる (Description は media を Description.Media として "
+          "保持するため、 Description から取得した media は常に TypeError "
+          "になる)");
 
   // RtpMap
   nb::class_<Description::Media::RtpMap> rtpmap(desc, "RtpMap");
@@ -347,8 +576,8 @@ void bind_description(nb::module_& m) {
            "payload_type"_a, "profile"_a = std::nullopt)
       .def("add_aac_codec", &Description::Audio::addAACCodec, "payload_type"_a,
            "profile"_a = std::nullopt)
-      .def("add_g722_codec", &Description::Audio::addG722Codec, "payload_type"_a,
-           "profile"_a = std::nullopt);
+      .def("add_g722_codec", &Description::Audio::addG722Codec,
+           "payload_type"_a, "profile"_a = std::nullopt);
 
   // Media 継承: Video
   nb::class_<Description::Video, Description::Media>(desc, "Video")
@@ -383,7 +612,8 @@ void bind_description(nb::module_& m) {
       .def("hint_type", &Description::hintType)
       .def("add_ice_option", &Description::addIceOption)
       .def("remove_ice_option", &Description::removeIceOption)
-      .def("set_ice_attribute", &Description::setIceAttribute, "ufrag"_a, "pwd"_a)
+      .def("set_ice_attribute", &Description::setIceAttribute, "ufrag"_a,
+           "pwd"_a)
       .def("set_fingerprint", &Description::setFingerprint)
       .def("__str__",
            [](const Description& d) { return static_cast<std::string>(d); })
@@ -401,15 +631,22 @@ void bind_description(nb::module_& m) {
            "dir"_a = Description::Direction::SendOnly)
       .def("add_audio", &Description::addAudio, "mid"_a = "audio",
            "dir"_a = Description::Direction::SendOnly)
-      .def("clear_media", &Description::clearMedia)
-      .def("media", &get_media)
+      .def("clear_media", &Description::clearMedia,
+           "media() / application() が返すコピーには影響しない")
+      .def("media", &get_media, "index"_a,
+           "戻り値はコピーのため、 書き換えても Description には反映されない。 "
+           "clear_media() や add_media(Application) で無効化されることもない")
       .def("media_count", &Description::mediaCount)
-      .def(
-          "application",
-          [](Description& desc) -> Description::Application* {
-            return desc.application();
-          },
-          nb::rv_policy::reference);
+      // get_media と同じくコピーを返す (内部の Application は add_media(Application) /
+      // add_application() が内部で呼ぶ removeApplication() で解放されるため、 参照を
+      // 返すと無効化後に触って SIGSEGV になる)。 application が無いときは nullptr の
+      // ため None になる。 application() は const / 非 const の overload があり、
+      // Application* を返す非 const 版を使う
+      .def("application", nb::overload_cast<>(&Description::application),
+           nb::rv_policy::copy,
+           nb::sig("def application(self) -> Description.Application | None"),
+           "戻り値はコピーのため、 書き換えても Description には反映されない。 "
+           "application が無いときは None になる");
 }
 
 // ---- candidate.hpp ----
@@ -464,10 +701,26 @@ void bind_candidate(nb::module_& m) {
       .def("family", &Candidate::family)
       .def("address", &Candidate::address)
       .def("port", &Candidate::port)
-      .def(nb::self == nb::self,
-           nb::sig("def __eq__(self, arg: object, /) -> bool"))
-      .def(nb::self != nb::self,
-           nb::sig("def __ne__(self, arg: object, /) -> bool"))
+      // Python の規約では __eq__ を定義したクラスは __hash__ も必要で、 __ne__ は
+      // __eq__ の否定でなければならない。 libdatachannel の operator== は
+      // (foundation / service / node) を、 operator!= は foundation のみを比較しており
+      // 非対称なため、 binding は SDP の candidate 行 (candidate()) で比較する。
+      // __ne__ はバインドせず、 Python に __eq__ の否定を導出させる
+      .def(
+          "__eq__",
+          [](const Candidate& self, nb::handle other) {
+            if (!nb::isinstance<Candidate>(other))
+              return false;
+            return self.candidate() ==
+                   nb::cast<const Candidate&>(other).candidate();
+          },
+          "other"_a, nb::sig("def __eq__(self, other: object, /) -> bool"))
+      // __eq__ と同じ値 (SDP の candidate 行) から作る
+      .def("__hash__",
+           [](const Candidate& self) {
+             return static_cast<size_t>(
+                 std::hash<std::string>{}(self.candidate()));
+           })
       .def("__str__",
            [](const Candidate& c) { return static_cast<std::string>(c); });
 }
@@ -588,6 +841,53 @@ void bind_message(nb::module_& m) {
 
 // ---- nalunit.hpp ----
 
+// NAL ユニットのヘッダサイズは libdatachannel の定数 (H264_NAL_HEADER_SIZE /
+// H265_NAL_HEADER_SIZE) をそのまま使う。 確保したバッファがこれ未満だと header() /
+// payload() / setPayload() が範囲外を読み書きする (Release ビルドでは assert が
+// 消えるため libdatachannel 本体の防御が働かない)
+
+// size 版コンストラクタの検証。 including_header のときコンストラクタは size を
+// そのまま確保するため、 そのクラスのヘッダアクセスが読むサイズ (min_size) を
+// 要求する。 そうでないときはヘッダサイズ (header_size) を加算するため、 桁あふれ
+// でヘッダサイズ未満になる場合を拒否する
+void check_nalunit_size(size_t size,
+                        bool including_header,
+                        size_t min_size,
+                        size_t header_size,
+                        const char* name) {
+  if (including_header) {
+    if (size < min_size) {
+      throw nb::value_error((std::string(name) + ": size must be at least " +
+                             std::to_string(min_size) +
+                             " when including_header is true, got " +
+                             std::to_string(size))
+                                .c_str());
+    }
+    return;
+  }
+  const size_t max_size = std::numeric_limits<size_t>::max() - header_size;
+  if (size > max_size) {
+    throw nb::value_error((std::string(name) + ": size must be at most " +
+                           std::to_string(max_size) +
+                           " when including_header is false, got " +
+                           std::to_string(size))
+                              .c_str());
+  }
+}
+
+// bytes 版コンストラクタの検証。 ヘッダサイズを加算せず data をそのままバッファに
+// するため、 data 自体がヘッダサイズ以上を必要とする
+void check_nalunit_buffer(const binary& data,
+                          size_t header_size,
+                          const char* name) {
+  if (data.size() < header_size) {
+    throw nb::value_error((std::string(name) + ": data size must be at least " +
+                           std::to_string(header_size) + ", got " +
+                           std::to_string(data.size()))
+                              .c_str());
+  }
+}
+
 void bind_nalunit(nb::module_& m) {
   // --- NalUnitHeader ---
   nb::class_<NalUnitHeader>(m, "NalUnitHeader")
@@ -635,9 +935,27 @@ void bind_nalunit(nb::module_& m) {
       .value("StartSequence", NalUnit::Separator::StartSequence);
 
   nalunit.def(nb::init<>())
-      .def(nb::init<size_t, bool, NalUnit::Type>(), "size"_a,
-           "including_header"_a = true, "type"_a = NalUnit::Type::H264)
-      .def(nb::init<binary&&>())
+      .def(
+          "__init__",
+          [](NalUnit* self, size_t size, bool including_header,
+             NalUnit::Type type) {
+            // NalUnit のヘッダアクセスは type に関わらず 1 バイトしか読まないため、
+            // min_size は型で切り替えない
+            check_nalunit_size(size, including_header, H264_NAL_HEADER_SIZE,
+                               type == NalUnit::Type::H264
+                                   ? H264_NAL_HEADER_SIZE
+                                   : H265_NAL_HEADER_SIZE,
+                               "NalUnit");
+            new (self) NalUnit(size, including_header, type);
+          },
+          "size"_a, "including_header"_a = true, "type"_a = NalUnit::Type::H264)
+      .def(
+          "__init__",
+          [](NalUnit* self, binary&& data) {
+            check_nalunit_buffer(data, H264_NAL_HEADER_SIZE, "NalUnit");
+            new (self) NalUnit(std::move(data));
+          },
+          "data"_a)
       .def("forbidden_bit", &NalUnit::forbiddenBit)
       .def("nri", &NalUnit::nri)
       .def("unit_type", &NalUnit::unitType)
@@ -704,8 +1022,21 @@ void bind_h265nalunit(nb::module_& m) {
   // --- H265NalUnit ---
   nb::class_<H265NalUnit, NalUnit>(m, "H265NalUnit")
       .def(nb::init<>())
-      .def(nb::init<size_t, bool>(), "size"_a, "including_header"_a = true)
-      .def(nb::init<binary&&>(), "data"_a)
+      .def(
+          "__init__",
+          [](H265NalUnit* self, size_t size, bool including_header) {
+            check_nalunit_size(size, including_header, H265_NAL_HEADER_SIZE,
+                               H265_NAL_HEADER_SIZE, "H265NalUnit");
+            new (self) H265NalUnit(size, including_header);
+          },
+          "size"_a, "including_header"_a = true)
+      .def(
+          "__init__",
+          [](H265NalUnit* self, binary&& data) {
+            check_nalunit_buffer(data, H265_NAL_HEADER_SIZE, "H265NalUnit");
+            new (self) H265NalUnit(std::move(data));
+          },
+          "data"_a)
       .def("forbidden_bit", &H265NalUnit::forbiddenBit)
       .def("unit_type", &H265NalUnit::unitType)
       .def("nuh_layer_id", &H265NalUnit::nuhLayerId)
@@ -745,7 +1076,8 @@ void bind_h265nalunit(nb::module_& m) {
 class PyMediaHandler : public MediaHandler {};
 class PyMediaHandlerImpl : public PyMediaHandler {
  public:
-  NB_TRAMPOLINE(PyMediaHandler, 5);
+  // nanobind 3 で size 引数は不要になった (指定すると deprecation warning が出る)
+  NB_TRAMPOLINE(PyMediaHandler);
   void media(const Description::Media& desc) override {
     NB_OVERRIDE(media, desc);
   }
@@ -765,6 +1097,100 @@ class PyMediaHandlerImpl : public PyMediaHandler {
     NB_OVERRIDE_NAME("request_bitrate", requestBitrate, bitrate, send);
   }
 };
+
+// MediaHandler のチェーンに cycle を作らせないための検査。
+// libdatachannel の MediaHandler::last() は next() を再帰でたどるため、 cycle があると
+// 戻らずにスタックオーバーフローで SEGV する。 Python から到達できる連結操作の時点で
+// 検出して例外にする。
+// 走査の上限。 libdatachannel 側に長さ制限は無いため、 入力チェーンの走査がこの値までに
+// 終端へ到達しなかった場合は長さ超過として拒否する (検査自体が無限再帰しないようにする
+// ため。 既に cycle がある場合もここで止まる)
+constexpr size_t kMaxMediaHandlerChainLength = 1024;
+
+enum class MediaHandlerChainCheck {
+  kOk,
+  kCycle,
+  kTooLong,
+};
+
+// handler から next() をたどって到達できるノードを集める。
+// 上限を超えた場合 (cycle の可能性がある場合) は kTooLong を返す
+MediaHandlerChainCheck collect_media_handler_chain(
+    const std::shared_ptr<MediaHandler>& handler,
+    std::vector<MediaHandler*>& nodes) {
+  auto current = handler;
+  for (size_t i = 0; i < kMaxMediaHandlerChainLength; ++i) {
+    if (!current) {
+      return MediaHandlerChainCheck::kOk;
+    }
+    nodes.push_back(current.get());
+    current = current->next();
+  }
+  // 上限までたどっても終端に到達しなかった
+  return current ? MediaHandlerChainCheck::kTooLong
+                 : MediaHandlerChainCheck::kOk;
+}
+
+// handler が self のチェーンへ戻る場合 (add_to_chain で cycle になる場合) を判定する。
+// add_to_chain は last(self) -> handler の辺を張るため、 両チェーンのノードが交われば cycle。
+// 検査と addToChain の間は非原子のため、 free-threading 環境で同じチェーンを並行して
+// 連結する用途は想定しない (GIL 下では安全)
+MediaHandlerChainCheck media_handler_add_to_chain_check(
+    const std::shared_ptr<MediaHandler>& self,
+    const std::shared_ptr<MediaHandler>& handler) {
+  std::vector<MediaHandler*> own;
+  if (auto check = collect_media_handler_chain(self, own);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
+  }
+  std::vector<MediaHandler*> added;
+  if (auto check = collect_media_handler_chain(handler, added);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
+  }
+  const bool has_cycle =
+      std::any_of(added.begin(), added.end(), [&own](MediaHandler* node) {
+        return std::find(own.begin(), own.end(), node) != own.end();
+      });
+  return has_cycle ? MediaHandlerChainCheck::kCycle
+                   : MediaHandlerChainCheck::kOk;
+}
+
+// handler が self 自身へ戻る場合 (set_next で cycle になる場合) を判定する。
+// set_next は置換なので、 handler のチェーンに self が含まれれば cycle
+MediaHandlerChainCheck media_handler_set_next_check(
+    const std::shared_ptr<MediaHandler>& self,
+    const std::shared_ptr<MediaHandler>& handler) {
+  std::vector<MediaHandler*> added;
+  if (auto check = collect_media_handler_chain(handler, added);
+      check != MediaHandlerChainCheck::kOk) {
+    return check;
+  }
+  const bool has_cycle =
+      std::find(added.begin(), added.end(), self.get()) != added.end();
+  return has_cycle ? MediaHandlerChainCheck::kCycle
+                   : MediaHandlerChainCheck::kOk;
+}
+
+// 検査結果を Python の例外にして返す。 cycle でなければ何もしない
+void throw_media_handler_chain_error(MediaHandlerChainCheck check,
+                                     const char* operation) {
+  switch (check) {
+    case MediaHandlerChainCheck::kCycle:
+      throw std::invalid_argument(std::string(operation) +
+                                  " would create a cycle in the MediaHandler "
+                                  "chain");
+    case MediaHandlerChainCheck::kTooLong:
+      // 終端までの長さは分からないため、 分かっている事実だけを伝える
+      throw std::invalid_argument(
+          std::string(operation) +
+          ": the MediaHandler chain did not reach its end within " +
+          std::to_string(kMaxMediaHandlerChainLength) +
+          " nodes (too long, or already contains a cycle)");
+    case MediaHandlerChainCheck::kOk:
+      return;
+  }
+}
 
 void bind_mediahandler(nb::module_& m) {
   nb::class_<MediaHandler>(m, "MediaHandler")
@@ -801,10 +1227,23 @@ void bind_mediahandler(nb::module_& m) {
           "add_to_chain",
           [](std::shared_ptr<MediaHandler> self,
              std::shared_ptr<MediaHandler> handler) {
+            // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
+            throw_media_handler_chain_error(
+                media_handler_add_to_chain_check(self, handler),
+                "add_to_chain");
             self->addToChain(handler);
           },
           "handler"_a)
-      .def("set_next", &MediaHandler::setNext, "next"_a)
+      .def(
+          "set_next",
+          [](std::shared_ptr<MediaHandler> self,
+             std::shared_ptr<MediaHandler> handler) {
+            // cycle を作ると last() の無限再帰で SEGV するため、 連結する前に検出する
+            throw_media_handler_chain_error(
+                media_handler_set_next_check(self, handler), "set_next");
+            self->setNext(handler);
+          },
+          "next"_a)
       .def("next",
            [](std::shared_ptr<MediaHandler> self) { return self->next(); })
       .def("last",
@@ -864,7 +1303,8 @@ void bind_dependencydescriptor(nb::module_& m) {
   nb::class_<FrameDependencyStructure>(m, "FrameDependencyStructure")
       .def(nb::init<>())
       .def_rw("template_id_offset", &FrameDependencyStructure::templateIdOffset)
-      .def_rw("decode_target_count", &FrameDependencyStructure::decodeTargetCount)
+      .def_rw("decode_target_count",
+              &FrameDependencyStructure::decodeTargetCount)
       .def_rw("chain_count", &FrameDependencyStructure::chainCount)
       .def_rw("decode_target_protected_by",
               &FrameDependencyStructure::decodeTargetProtectedBy)
@@ -891,16 +1331,19 @@ void bind_dependencydescriptor(nb::module_& m) {
 
   // DependencyDescriptorWriter class
   nb::class_<DependencyDescriptorWriter>(m, "DependencyDescriptorWriter")
-      .def(nb::init<const DependencyDescriptorContext&>(), "context"_a)
+      // writer は context 自体ではなく context のメンバへの参照
+      // (dependencydescriptor.hpp の mStructure / mDescriptor) を保持するため、
+      // context を生存させる
+      .def(nb::init<const DependencyDescriptorContext&>(), "context"_a,
+           nb::keep_alive<1, 2>())
       .def("get_size_bits", &DependencyDescriptorWriter::getSizeBits)
       .def("get_size", &DependencyDescriptorWriter::getSize)
-      .def("write_to",
-           [](const DependencyDescriptorWriter& self) {
-             size_t size = self.getSize();
-             std::vector<std::byte> buf(size);
-             self.writeTo(buf.data(), size);
-             return buf;
-           });
+      .def("write_to", [](const DependencyDescriptorWriter& self) {
+        size_t size = self.getSize();
+        std::vector<std::byte> buf(size);
+        self.writeTo(buf.data(), size);
+        return buf;
+      });
 }
 
 // ---- rtppacketizationconfig.hpp ----
@@ -968,29 +1411,79 @@ void bind_rtppacketizer(nb::module_& m) {
   nb::class_<RtpPacketizer, MediaHandler>(m, "RtpPacketizer")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
       .def("media", &RtpPacketizer::media)
-      .def("outgoing", &RtpPacketizer::outgoing)
+      .def("outgoing", &RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
       .def_prop_ro("rtp_config",
                    [](const RtpPacketizer& self) { return self.rtpConfig; })
-      .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
-        return RtpPacketizer::DefaultMaxFragmentSize;
-      })
-      .def_prop_ro_static("VIDEO_CLOCK_RATE",
-                          [](nb::handle) { return RtpPacketizer::VideoClockRate; });
+      .def_prop_ro_static(
+          "DEFAULT_MAX_FRAGMENT_SIZE",
+          [](nb::handle) { return RtpPacketizer::DefaultMaxFragmentSize; })
+      .def_prop_ro_static("VIDEO_CLOCK_RATE", [](nb::handle) {
+        return RtpPacketizer::VideoClockRate;
+      });
 
   // OpusRtpPacketizer と AACRtpPacketizer は同じ型 (AudioRtpPacketizer<48000>)
   nb::class_<OpusRtpPacketizer, RtpPacketizer>(m, "OpusRtpPacketizer")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
-      .def_prop_ro_static(
-          "DEFAULT_CLOCK_RATE",
-          [](nb::handle) { return OpusRtpPacketizer::DefaultClockRate; });
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return OpusRtpPacketizer::DefaultClockRate;
+      });
 
   // PCMARtpPacketizer, PCMURtpPacketizer, G722RtpPacketizer は同じ型 (AudioRtpPacketizer<8000>)
   // 一つだけ登録し、Python 側で別名を定義する
   nb::class_<PCMARtpPacketizer, RtpPacketizer>(m, "PCMARtpPacketizer")
       .def(nb::init<std::shared_ptr<RtpPacketizationConfig>>(), "rtp_config"_a)
-      .def_prop_ro_static(
-          "DEFAULT_CLOCK_RATE",
-          [](nb::handle) { return PCMARtpPacketizer::DefaultClockRate; });
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return PCMARtpPacketizer::DefaultClockRate;
+      });
+}
+
+// ---- RtpPacketizer 系の max_fragment_size の検証 ----
+//
+// NalUnit::generateFragments / H265NalUnit::generateFragments は、 分割が必要なときに
+// フラグメント数 c = ceil(size / max_fragment_size) とフラグメント長
+// m1 = ceil(size / c) を求めたあと、 FU ヘッダの分 (H264 は 2、 H265 は 3) を引く。
+// 引いた値が 0 のときは offset が進まず空のフラグメントを確保し続け、 ヘッダ長より
+// 小さいときは size_t がアンダーフローして範囲外のイテレータ対を作る (Release ビルド
+// では assert が消えるため libdatachannel 側の防御が働かない)。
+// 引いた値がヘッダ長以下になるのは、 m1 が max_fragment_size の半分以下に落ちるときだけで、
+// max_fragment_size がヘッダ長の 2 倍以上なら size > max_fragment_size の範囲で起きない。
+// そのため下限はヘッダ長の 2 倍 (H264 は 4、 H265 は 6) になる。
+// 上限は、 m1 が max_fragment_size 以下であることから、 uint16_t に切り詰められない 65535
+constexpr size_t kMinH264MaxFragmentSize = 4;
+constexpr size_t kMinH265MaxFragmentSize = 6;
+constexpr size_t kMaxFragmentSizeUpperBound = 65535;
+
+// AV1RtpPacketizer::fragmentObu は payload を
+// min(max_fragment_size, remaining + metadataSize) で確保するため、
+// max_fragment_size が 0 のときは payload.at(0) が範囲外になり、 1 のときは
+// payloadRemaining が 0 になってループが進まない。 上限は無い (uint16_t への切り詰めが
+// 無く、 payload の大きさは入力サイズで頭打ちになる)。
+// SequenceHeader をキャッシュしているときは payloadOffset が 2 + SequenceHeader 長 に
+// なるため、 その長さ未満でも payload をはみ出すが、 キャッシュの有無は binding からは
+// 判定できない (libdatachannel 側の修正が必要)
+constexpr size_t kMinAV1MaxFragmentSize = 2;
+
+// max_fragment_size の範囲を検証する。 unit は "an H264 NAL unit" のような対象の呼び名
+void check_max_fragment_size(size_t max_fragment_size,
+                             size_t min_size,
+                             size_t max_size,
+                             const char* unit,
+                             const char* name) {
+  if (max_fragment_size < min_size) {
+    throw nb::value_error((std::string(name) +
+                           ": max_fragment_size must be at least " +
+                           std::to_string(min_size) + " to fragment " + unit +
+                           ", got " + std::to_string(max_fragment_size))
+                              .c_str());
+  }
+  if (max_fragment_size > max_size) {
+    throw nb::value_error((std::string(name) +
+                           ": max_fragment_size must be at most " +
+                           std::to_string(max_size) + " to fragment " + unit +
+                           ", got " + std::to_string(max_fragment_size))
+                              .c_str());
+  }
 }
 
 // ---- av1rtppacketizer.hpp ----
@@ -1004,13 +1497,24 @@ void bind_av1rtppacketizer(nb::module_& m) {
       .value("TemporalUnit", AV1RtpPacketizer::Packetization::TemporalUnit);
 
   av1pkt
-      .def(nb::init<AV1RtpPacketizer::Packetization,
-                    std::shared_ptr<RtpPacketizationConfig>, size_t>(),
-           "packetization"_a, "rtp_config"_a,
-           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
-      .def("outgoing", &AV1RtpPacketizer::outgoing)
-      .def_prop_ro_static("CLOCK_RATE",
-                          [](nb::handle) { return AV1RtpPacketizer::ClockRate; })
+      .def(
+          "__init__",
+          [](AV1RtpPacketizer* self,
+             AV1RtpPacketizer::Packetization packetization,
+             std::shared_ptr<RtpPacketizationConfig> rtp_config,
+             size_t max_fragment_size) {
+            check_max_fragment_size(max_fragment_size, kMinAV1MaxFragmentSize,
+                                    std::numeric_limits<size_t>::max(),
+                                    "an AV1 OBU", "AV1RtpPacketizer");
+            new (self) AV1RtpPacketizer(packetization, std::move(rtp_config),
+                                        max_fragment_size);
+          },
+          "packetization"_a, "rtp_config"_a,
+          "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
+      .def("outgoing", &AV1RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def_prop_ro_static(
+          "CLOCK_RATE", [](nb::handle) { return AV1RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
         return RtpPacketizer::DefaultMaxFragmentSize;
       });
@@ -1020,13 +1524,23 @@ void bind_av1rtppacketizer(nb::module_& m) {
 
 void bind_h264rtppacketizer(nb::module_& m) {
   nb::class_<H264RtpPacketizer, RtpPacketizer>(m, "H264RtpPacketizer")
-      .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
-                    size_t>(),
-           "separator"_a, "rtp_config"_a,
-           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
-      .def("outgoing", &H264RtpPacketizer::outgoing)
-      .def_prop_ro_static("CLOCK_RATE",
-                          [](nb::handle) { return H264RtpPacketizer::ClockRate; })
+      .def(
+          "__init__",
+          [](H264RtpPacketizer* self, NalUnit::Separator separator,
+             std::shared_ptr<RtpPacketizationConfig> rtp_config,
+             size_t max_fragment_size) {
+            check_max_fragment_size(max_fragment_size, kMinH264MaxFragmentSize,
+                                    kMaxFragmentSizeUpperBound,
+                                    "an H264 NAL unit", "H264RtpPacketizer");
+            new (self) H264RtpPacketizer(separator, std::move(rtp_config),
+                                         max_fragment_size);
+          },
+          "separator"_a, "rtp_config"_a,
+          "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
+      .def("outgoing", &H264RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def_prop_ro_static(
+          "CLOCK_RATE", [](nb::handle) { return H264RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
         return RtpPacketizer::DefaultMaxFragmentSize;
       });
@@ -1036,13 +1550,23 @@ void bind_h264rtppacketizer(nb::module_& m) {
 
 void bind_h265rtppacketizer(nb::module_& m) {
   nb::class_<H265RtpPacketizer, RtpPacketizer>(m, "H265RtpPacketizer")
-      .def(nb::init<NalUnit::Separator, std::shared_ptr<RtpPacketizationConfig>,
-                    size_t>(),
-           "separator"_a, "rtp_config"_a,
-           "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
-      .def("outgoing", &H265RtpPacketizer::outgoing)
-      .def_prop_ro_static("CLOCK_RATE",
-                          [](nb::handle) { return H265RtpPacketizer::ClockRate; })
+      .def(
+          "__init__",
+          [](H265RtpPacketizer* self, NalUnit::Separator separator,
+             std::shared_ptr<RtpPacketizationConfig> rtp_config,
+             size_t max_fragment_size) {
+            check_max_fragment_size(max_fragment_size, kMinH265MaxFragmentSize,
+                                    kMaxFragmentSizeUpperBound,
+                                    "an H265 NAL unit", "H265RtpPacketizer");
+            new (self) H265RtpPacketizer(separator, std::move(rtp_config),
+                                         max_fragment_size);
+          },
+          "separator"_a, "rtp_config"_a,
+          "max_fragment_size"_a = RtpPacketizer::DefaultMaxFragmentSize)
+      .def("outgoing", &H265RtpPacketizer::outgoing,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def_prop_ro_static(
+          "CLOCK_RATE", [](nb::handle) { return H265RtpPacketizer::ClockRate; })
       .def_prop_ro_static("DEFAULT_MAX_FRAGMENT_SIZE", [](nb::handle) {
         return RtpPacketizer::DefaultMaxFragmentSize;
       });
@@ -1058,16 +1582,20 @@ void bind_rtpdepacketizer(nb::module_& m) {
 
   // OpusRtpDepacketizer と AACRtpDepacketizer は同じ型 (AudioRtpDepacketizer<48000>)
   nb::class_<OpusRtpDepacketizer, RtpDepacketizer>(m, "OpusRtpDepacketizer")
-      .def(nb::init<uint32_t>(), "clock_rate"_a = OpusRtpDepacketizer::DefaultClockRate)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE",
-                          [](nb::handle) { return OpusRtpDepacketizer::DefaultClockRate; });
+      .def(nb::init<uint32_t>(),
+           "clock_rate"_a = OpusRtpDepacketizer::DefaultClockRate)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return OpusRtpDepacketizer::DefaultClockRate;
+      });
 
   // PCMARtpDepacketizer, PCMURtpDepacketizer, G722RtpDepacketizer は同じ型 (AudioRtpDepacketizer<8000>)
   // 一つだけ登録し、Python 側で別名を定義する
   nb::class_<PCMARtpDepacketizer, RtpDepacketizer>(m, "PCMARtpDepacketizer")
-      .def(nb::init<uint32_t>(), "clock_rate"_a = PCMARtpDepacketizer::DefaultClockRate)
-      .def_prop_ro_static("DEFAULT_CLOCK_RATE",
-                          [](nb::handle) { return PCMARtpDepacketizer::DefaultClockRate; });
+      .def(nb::init<uint32_t>(),
+           "clock_rate"_a = PCMARtpDepacketizer::DefaultClockRate)
+      .def_prop_ro_static("DEFAULT_CLOCK_RATE", [](nb::handle) {
+        return PCMARtpDepacketizer::DefaultClockRate;
+      });
 }
 
 // ---- h264rtpdepacketizer.hpp ----
@@ -1131,8 +1659,10 @@ void bind_rtcpnackresponder(nb::module_& m) {
 void bind_rtcpreceivingsession(nb::module_& m) {
   // SyncTimestamps struct
   nb::class_<RtcpReceivingSession::SyncTimestamps>(m, "SyncTimestamps")
-      .def_ro("rtp_timestamp", &RtcpReceivingSession::SyncTimestamps::rtpTimestamp)
-      .def_ro("ntp_timestamp", &RtcpReceivingSession::SyncTimestamps::ntpTimestamp);
+      .def_ro("rtp_timestamp",
+              &RtcpReceivingSession::SyncTimestamps::rtpTimestamp)
+      .def_ro("ntp_timestamp",
+              &RtcpReceivingSession::SyncTimestamps::ntpTimestamp);
 
   nb::class_<RtcpReceivingSession, MediaHandler>(m, "RtcpReceivingSession")
       .def(nb::init<>())
@@ -1158,62 +1688,113 @@ void bind_rtcpsrreporter(nb::module_& m) {
 
 // ---- channel.hpp ----
 
+// 送信系 binding (DataChannel / Track / WebSocket) は GIL を解放して
+// 実行する。 送信経路は各トランスポート (SCTP / DTLS / TCP など) の内部ロックを
+// 取得するため、 GIL を保持したまま待機すると受信経路の Python callback
+// (PliHandler など) が GIL を取得できず恒久デッドロックする。
+//
+// - call_guard は引数の変換後に評価されるため、 GIL 解放中に Python
+//   オブジェクトへ触れることはない。
+// - 送信経路から同期的に呼ばれる callback (on_buffered_amount_low など) は送信
+//   経路のロックを保持したまま呼ばれるが、 nanobind が GIL を取得してから呼ぶため
+//   GIL の観点では安全である。
+// - 同一 Track への並行 send は想定されていない (メディアハンドラチェーンに
+//   内部同期が無い) ため、 複数 thread から送信する場合は呼び出し側で直列化する。
+//   `RtpPacketizationConfig` などの可変フィールドも送信中に他 thread から
+//   触らないこと。
+// - 送信中の接続に対して他 thread から close() / force_close() を呼ばないこと
+//   (送信経路が参照するトランスポートが解放され得る)。
 void bind_channel(nb::module_& m) {
-  nb::class_<Channel>(m, "Channel")
-      // Core API
-      .def("close", &Channel::close)
-      .def("send", nb::overload_cast<message_variant>(&Channel::send), "data"_a)
-      .def(
-          "send",
-          [](Channel& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a)
-      .def("is_open", &Channel::isOpen)
-      .def("is_closed", &Channel::isClosed)
-      .def("max_message_size", &Channel::maxMessageSize)
-      .def("buffered_amount", &Channel::bufferedAmount)
-
+  // Channel の virtual メソッド (close / send 2 オーバーロード / is_open /
+  // is_closed / max_message_size / buffered_amount) は binding しない。 Channel は派生クラスの
+  // 2 番目の基底でオブジェクト先頭から 24 バイトずれており、 Channel 側の binding
+  // 経由で呼ぶと基底オフセットが加算されず、 virtual 呼び出しが誤った vtable
+  // スロットを読んで SIGSEGV / SIGBUS になるか、 別の関数を実行してしまう。
+  // 派生クラス (DataChannel / Track / WebSocket) 側で binding する。
+  //
+  // 非 virtual の binding は削除しない。 基底オフセットが加算されなくても impl() が
+  // 同一の impl オブジェクトに到達するため正しく動作する (impl::Channel は
+  // impl::DataChannel / impl::Track / impl::WebSocket の基底サブオブジェクトで、
+  // impl 側も同じオブジェクトを指している)。
+  // callback を Python 側 (インスタンスの __dict__) で保持するために __dict__ slot を
+  // 有効化する (issue 0053)。 これによりインスタンスが GC の対象になり、 callback を
+  // 巻き込んだ循環も回収できる (詳細は register_python_callback のコメントを参照)。
+  // DataChannel / Track / WebSocket は Channel を基底に持つため、 nanobind が基底の
+  // フラグを引き継ぎ、 これらの __dict__ も有効になる。
+  nb::class_<Channel>(m, "Channel", nb::dynamic_attr())
       // Callback registration
-      .def("on_open", &Channel::onOpen)
-      .def("on_closed", &Channel::onClosed)
-      .def("on_error", &Channel::onError)
+      .def("on_open",
+           [](Channel& self, nb::callable callback) {
+             self.onOpen(python_callback<void>(self, callback, "on_open"));
+           })
+      .def("on_closed",
+           [](Channel& self, nb::callable callback) {
+             self.onClosed(python_callback<void>(self, callback, "on_closed"));
+           })
+      .def("on_error",
+           [](Channel& self, nb::callable callback) {
+             self.onError(
+                 python_callback<void, string>(self, callback, "on_error"));
+           })
       .def("on_message",
-           nb::overload_cast<std::function<void(message_variant)>>(
-               &Channel::onMessage))
-      .def("on_message",
-           nb::overload_cast<std::function<void(binary)>,
-                             std::function<void(std::string)>>(
-               &Channel::onMessage),
-           "binary_callback"_a, "string_callback"_a)
-      .def("on_buffered_amount_low", &Channel::onBufferedAmountLow)
+           [](Channel& self, nb::callable callback) {
+             self.onMessage(python_callback<void, message_variant>(
+                 self, callback, "on_message"));
+           })
+      .def(
+          "on_message",
+          [](Channel& self, nb::callable binary_callback,
+             nb::callable string_callback) {
+            self.onMessage(python_callback<void, binary>(self, binary_callback,
+                                                         "on_message_binary"),
+                           python_callback<void, std::string>(
+                               self, string_callback, "on_message_string"));
+          },
+          "binary_callback"_a, "string_callback"_a)
+      .def("on_buffered_amount_low",
+           [](Channel& self, nb::callable callback) {
+             self.onBufferedAmountLow(python_callback<void>(
+                 self, callback, "on_buffered_amount_low"));
+           })
       .def("set_buffered_amount_low_threshold",
            &Channel::setBufferedAmountLowThreshold)
-      .def("reset_callbacks", &Channel::resetCallbacks)
+      .def("reset_callbacks",
+           [](Channel& self) {
+             reset_python_callbacks(self);
+             self.resetCallbacks();
+           })
 
       // Extended API
       .def("receive", &Channel::receive)
       .def("peek", &Channel::peek)
       .def("available_amount", &Channel::availableAmount)
-      .def("on_available", &Channel::onAvailable);
+      .def("on_available", [](Channel& self, nb::callable callback) {
+        self.onAvailable(python_callback<void>(self, callback, "on_available"));
+      });
 }
 
 // ---- datachannel.hpp ----
+
+// send が GIL を解放する理由は bind_channel 直前のコメントを参照。
 
 void bind_datachannel(nb::module_& m) {
   nb::class_<DataChannel, Channel>(m, "DataChannel")
       .def("is_open", &DataChannel::isOpen)
       .def("is_closed", &DataChannel::isClosed)
       .def("max_message_size", &DataChannel::maxMessageSize)
-      .def("close", &DataChannel::close)
+      // buffered_amount は Channel の virtual メソッドで、 Channel は 2 番目の基底で
+      // あるために Channel 側の binding 経由では基底オフセットが加算されず SIGSEGV
+      // していた。 派生クラス側に binding して正しいポインタで呼ぶ。
+      .def("buffered_amount", &Channel::bufferedAmount)
+      // close() は SctpTransport::closeStream() で送信経路と同じ mutex を取る。
+      // GIL を保持したまま待つと、 送信経路の Python callback が GIL を取れずに
+      // 循環待ちになるため、 GIL を解放して実行する (bind_channel のコメント参照)
+      .def("close", &DataChannel::close,
+           nb::call_guard<nb::gil_scoped_release>())
+      // (data, size) 版は size が data の長さを超えると範囲外を読み、 その内容を
+      // 送信していた。 size は len(data) から導出できるため削除した
       .def("send", nb::overload_cast<message_variant>(&DataChannel::send),
-           "data"_a)
-      .def(
-          "send",
-          [](DataChannel& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a)
+           "data"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &DataChannel::stream)
       .def("id", &DataChannel::id)
       .def("label", &DataChannel::label)
@@ -1223,41 +1804,101 @@ void bind_datachannel(nb::module_& m) {
 
 // ---- track.hpp ----
 
+// send が GIL を解放する理由は bind_channel 直前のコメントを参照。
+
 void bind_track(nb::module_& m) {
   nb::class_<Track, Channel>(m, "Track")
       .def("is_open", &Track::isOpen)
       .def("is_closed", &Track::isClosed)
       .def("max_message_size", &Track::maxMessageSize)
-      .def("close", &Track::close)
-      .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a)
-      .def(
-          "send",
-          [](Track& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a)
+      // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
+      .def("buffered_amount", &Channel::bufferedAmount)
+      // close() は resetCallbacks() で callback の mutex を取る。 callback の実行中は
+      // 同じ mutex が保持され、 その callback が GIL を待つため、 GIL を保持したまま
+      // close() を呼ぶと循環待ちになる (bind_channel のコメント参照)
+      .def("close", &Track::close, nb::call_guard<nb::gil_scoped_release>())
+      // (data, size) 版は削除した (DataChannel.send のコメントを参照)
+      .def("send", nb::overload_cast<message_variant>(&Track::send), "data"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      // (data, size, info) 版は削除した (DataChannel.send のコメントを参照)
       .def("send_frame",
            nb::overload_cast<binary, FrameInfo>(&Track::sendFrame), "data"_a,
-           "info"_a)
-      .def(
-          "send_frame",
-          [](Track& self, std::vector<byte> data, size_t size, FrameInfo info) {
-            return self.sendFrame(data.data(), size, info);
-          },
-          "data"_a, "size"_a, "info"_a)
+           "info"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("mid", &Track::mid)
       .def("direction", &Track::direction)
       .def("description", &Track::description)
       .def("set_description", &Track::setDescription, "description"_a)
-      .def("on_frame", &Track::onFrame, "callback"_a)
-      .def("request_keyframe", &Track::requestKeyframe)
-      .def("request_bitrate", &Track::requestBitrate, "bitrate"_a)
-      .def("set_media_handler", &Track::setMediaHandler, "handler"_a)
-      .def("chain_media_handler", &Track::chainMediaHandler, "handler"_a)
+      .def(
+          "on_frame",
+          [](Track& self, nb::callable callback) {
+            self.onFrame(python_callback<void, binary, FrameInfo>(
+                self, callback, "on_frame"));
+          },
+          "callback"_a)
+      // request_keyframe は RtcpReceivingSession などの handler が送信経路
+      // (send callback = transportSend) に入るため、 send と同じく GIL を解放する
+      // (理由は bind_channel 直前のコメント)
+      .def("request_keyframe", &Track::requestKeyframe,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("request_bitrate", &Track::requestBitrate, "bitrate"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("set_media_handler", &Track::setMediaHandler, "handler"_a.none())
+      .def(
+          "chain_media_handler",
+          [](Track& self, std::shared_ptr<MediaHandler> handler) {
+            // media handler が設定済みの場合はそのチェーンの末尾に連結されるため、
+            // binding 側と同じ cycle 検査を行う (未設定の場合は置換のみ)
+            if (auto first = self.getMediaHandler()) {
+              throw_media_handler_chain_error(
+                  media_handler_add_to_chain_check(first, handler),
+                  "chain_media_handler");
+            }
+            self.chainMediaHandler(std::move(handler));
+          },
+          "handler"_a)
       .def("get_media_handler", &Track::getMediaHandler);
 }
 
 // ---- peerconnection.hpp ----
+
+// PeerConnection.close() のバインディング本体。 libdatachannel の close() は非同期で
+// 進むため、 ここで state==Closed まで待機し、 close() から戻った時点で破棄しても
+// 安全な状態を保証する。 呼び出し側バインディングは
+// nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提。
+void close_peer_connection(PeerConnection& self) {
+  // ビジーループにならない値でのポーリング間隔。
+  constexpr auto kPollInterval = std::chrono::milliseconds(10);
+  // ポーリングの上限。 これを超えた場合はデストラクタ側に委ねる。
+  constexpr auto kCloseTimeout = std::chrono::seconds(30);
+
+  if (self.state() == PeerConnection::State::Closed) {
+    return;
+  }
+  self.close();
+  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+  while (self.state() != PeerConnection::State::Closed) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      nb::gil_scoped_acquire gil;
+      // Python 3.15 以降は interpreter 停止中に GIL を取得できない。 その場合は
+      // Python API を触らずに終了する
+      if (!gil.is_valid()) {
+        return;
+      }
+      // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
+      // 放置せず Python 例外として伝播させる。
+      if (PyErr_WarnEx(
+              PyExc_RuntimeWarning,
+              "PeerConnection.close(): state did not reach Closed within "
+              "timeout; the remaining cleanup is delegated to the C++ "
+              "destructor and may block.",
+              1) < 0) {
+        throw nb::python_error();
+      }
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+}
 
 void bind_peerconnection(nb::module_& m) {
   nb::class_<DataChannelInit>(m, "DataChannelInit")
@@ -1272,7 +1913,11 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_ufrag", &LocalDescriptionInit::iceUfrag)
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
-  nb::class_<PeerConnection> pc(m, "PeerConnection");
+  // test 側で weakref.ref(pc) を使うために __weakref__ slot を有効化する。
+  // callback を Python 側 (__dict__) で保持するために __dict__ slot も有効化する
+  // (理由は register_python_callback のコメントを参照)。
+  nb::class_<PeerConnection> pc(
+      m, "PeerConnection", nb::is_weak_referenceable(), nb::dynamic_attr());
 
   // PeerConnection 内の enum
   nb::enum_<PeerConnection::State>(pc, "State")
@@ -1309,8 +1954,34 @@ void bind_peerconnection(nb::module_& m) {
   // PeerConnection
   pc.def(nb::init<>())
       .def(nb::init<Configuration>(), "config"_a)
-      .def("close", &PeerConnection::close)
-      .def("config", &PeerConnection::config, nb::rv_policy::reference)
+      .def("close", &close_peer_connection,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 close() を呼ばずに破棄した場合のセーフティネット。 close_peer_connection
+      // で state==Closed まで進めることで、 デストラクタ内 mProcessor.join() の残
+      // タスクが減って停止を回避しやすい。 __del__ から投げた例外は呼び出し側で
+      // 捕捉できないため RuntimeWarning として記録するだけで握り潰す。
+      .def(
+          "__del__",
+          [](PeerConnection& self) {
+            try {
+              close_peer_connection(self);
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              // interpreter 停止中は Python API を触らずに握り潰す
+              if (!gil.is_valid()) {
+                return;
+              }
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "PeerConnection.__del__: close() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格された場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
+      // 戻り値は PeerConnection 内部への参照のため、 reference_internal で親を生存させる
+      .def("config", &PeerConnection::config, nb::rv_policy::reference_internal)
       .def("state", &PeerConnection::state)
       .def("ice_state", &PeerConnection::iceState)
       .def("gathering_state", &PeerConnection::gatheringState)
@@ -1339,7 +2010,8 @@ void bind_peerconnection(nb::module_& m) {
            "additional_ice_servers"_a = std::vector<IceServer>{})
       .def("create_offer", &PeerConnection::createOffer)
       .def("create_answer", &PeerConnection::createAnswer)
-      .def("set_media_handler", &PeerConnection::setMediaHandler)
+      .def("set_media_handler", &PeerConnection::setMediaHandler,
+           "handler"_a.none())
       .def("get_media_handler", &PeerConnection::getMediaHandler)
       .def(
           "create_data_channel",
@@ -1349,16 +2021,56 @@ void bind_peerconnection(nb::module_& m) {
                                           init.value_or(DataChannelInit{}));
           },
           "label"_a, "init"_a = nb::none())
-      .def("on_data_channel", &PeerConnection::onDataChannel)
+      .def("on_data_channel",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onDataChannel(
+                 python_callback<void, std::shared_ptr<DataChannel>>(
+                     self, callback, "on_data_channel"));
+           })
       .def("add_track", &PeerConnection::addTrack)
-      .def("on_track", &PeerConnection::onTrack)
-      .def("on_local_description", &PeerConnection::onLocalDescription)
-      .def("on_local_candidate", &PeerConnection::onLocalCandidate)
-      .def("on_state_change", &PeerConnection::onStateChange)
-      .def("on_ice_state_change", &PeerConnection::onIceStateChange)
-      .def("on_gathering_state_change", &PeerConnection::onGatheringStateChange)
-      .def("on_signaling_state_change", &PeerConnection::onSignalingStateChange)
-      .def("reset_callbacks", &PeerConnection::resetCallbacks)
+      .def("on_track",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onTrack(python_callback<void, std::shared_ptr<Track>>(
+                 self, callback, "on_track"));
+           })
+      .def("on_local_description",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onLocalDescription(python_callback<void, Description>(
+                 self, callback, "on_local_description"));
+           })
+      .def("on_local_candidate",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onLocalCandidate(python_callback<void, Candidate>(
+                 self, callback, "on_local_candidate"));
+           })
+      .def("on_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onStateChange(python_callback<void, PeerConnection::State>(
+                 self, callback, "on_state_change"));
+           })
+      .def("on_ice_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onIceStateChange(
+                 python_callback<void, PeerConnection::IceState>(
+                     self, callback, "on_ice_state_change"));
+           })
+      .def("on_gathering_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onGatheringStateChange(
+                 python_callback<void, PeerConnection::GatheringState>(
+                     self, callback, "on_gathering_state_change"));
+           })
+      .def("on_signaling_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onSignalingStateChange(
+                 python_callback<void, PeerConnection::SignalingState>(
+                     self, callback, "on_signaling_state_change"));
+           })
+      .def("reset_callbacks",
+           [](PeerConnection& self) {
+             reset_python_callbacks(self);
+             self.resetCallbacks();
+           })
       .def("remote_fingerprint", &PeerConnection::remoteFingerprint)
       .def("clear_stats", &PeerConnection::clearStats)
       .def("bytes_sent", &PeerConnection::bytesSent)
@@ -1368,8 +2080,68 @@ void bind_peerconnection(nb::module_& m) {
 
 // ---- websocket.hpp ----
 
+// send が GIL を解放する理由は bind_channel 直前のコメントを参照。
+
+// WebSocket.close() のバインディング本体。 libdatachannel の close() は非同期で進むため、
+// Connecting / Open から呼ばれた場合は state==Closed まで待機し、 close() から戻った時点で
+// 破棄しても安全な状態にする (Closed と Closing では待機しない。 下のコメントを参照)。
+// 呼び出し側バインディングは nb::call_guard<nb::gil_scoped_release>() で GIL を解放する前提。
+void close_websocket(WebSocket& self) {
+  // ビジーループにならない値でのポーリング間隔。
+  constexpr auto kPollInterval = std::chrono::milliseconds(10);
+  // ポーリングの上限。 これを超えた場合はデストラクタ側に委ねる。
+  constexpr auto kCloseTimeout = std::chrono::seconds(30);
+
+  if (self.readyState() == WebSocket::State::Closed) {
+    return;
+  }
+  // WebSocket::close() は Connecting / Open のときしか動作せず、 Closing 以降は内部で
+  // 何もしない。 対向の応答遅延で polling が timeout まで待つのを避けるため、 Closing の
+  // ときは polling せず即 return し、 残りの状態遷移はデストラクタ側に委ねる。
+  if (self.readyState() == WebSocket::State::Closing) {
+    return;
+  }
+  self.close();
+  const auto deadline = std::chrono::steady_clock::now() + kCloseTimeout;
+  while (self.readyState() != WebSocket::State::Closed) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      nb::gil_scoped_acquire gil;
+      // Python 3.15 以降は interpreter 停止中に GIL を取得できないため、
+      // その場合は Python API を触らずに終了する
+      if (!gil.is_valid()) {
+        return;
+      }
+      // filterwarnings=error 等で警告が例外に昇格された場合は、 保留中の例外を
+      // 放置せず Python 例外として伝播させる。
+      if (PyErr_WarnEx(
+              PyExc_RuntimeWarning,
+              "WebSocket.close(): state did not reach Closed within timeout; "
+              "the remaining cleanup is delegated to the C++ destructor and "
+              "may block.",
+              1) < 0) {
+        throw nb::python_error();
+      }
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+}
+
+// WebSocket.force_close() のバインディング本体。 forceClose() は remoteClose() 経由で
+// closeTransports() まで同期で進むため polling はしない。 ただし GIL を保持したまま実行
+// すると、 受信 callback を実行中の内部 thread とのロック順逆転で hang し得るため、
+// 呼び出し側バインディングは GIL を解放する前提。
+void force_close_websocket(WebSocket& self) {
+  if (self.readyState() == WebSocket::State::Closed) {
+    return;
+  }
+  self.forceClose();
+}
+
 void bind_websocket(nb::module_& m) {
-  nb::class_<WebSocket, Channel> ws(m, "WebSocket");
+  // test 側で weakref.ref(ws) を使うために __weakref__ slot を有効化する。
+  nb::class_<WebSocket, Channel> ws(m, "WebSocket",
+                                    nb::is_weak_referenceable());
 
   // WebSocket::State
   nb::enum_<WebSocket::State>(ws, "State")
@@ -1384,23 +2156,36 @@ void bind_websocket(nb::module_& m) {
       .def("is_open", &WebSocket::isOpen)
       .def("is_closed", &WebSocket::isClosed)
       .def("max_message_size", &WebSocket::maxMessageSize)
-      .def("close", &WebSocket::close)
+      // buffered_amount を派生クラス側で binding する理由は bind_datachannel 内のコメントを参照。
+      .def("buffered_amount", &Channel::bufferedAmount)
+      .def("close", &close_websocket, nb::call_guard<nb::gil_scoped_release>())
+      // 明示 close() を呼ばずに破棄する経路 (ws = None) に __del__ は使えない。
+      // nanobind の tp_dealloc は C++ destructor を直接呼び、 CPython の finalizer
+      // (tp_finalize) を呼ばないため、 基底クラスのインスタンスを破棄する経路では
+      // .def("__del__", ...) は通常のメソッドになるだけで実行されない
+      // (Python サブクラスのインスタンスでは subtype_dealloc 経由で実行される)。
+      // 破棄時に GIL を保持したまま走る C++ 側の public ~WebSocket()
+      // (rtc::WebSocket のデストラクタ) の恒停は、 binding 側では解消できないため
+      // 別途対応する。
+      // (data, size) 版は削除した (DataChannel.send のコメントを参照)
       .def("send", nb::overload_cast<message_variant>(&WebSocket::send),
-           "data"_a)
-      .def(
-          "send",
-          [](WebSocket& self, std::vector<byte> data, size_t size) {
-            return self.send(data.data(), size);
-          },
-          "data"_a, "size"_a)
+           "data"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("ready_state", &WebSocket::readyState)
       .def("open", &WebSocket::open, "url"_a)
-      .def("force_close", &WebSocket::forceClose)
+      .def("force_close", &force_close_websocket,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("remote_address", &WebSocket::remoteAddress)
       .def("path", &WebSocket::path);
 }
 
 // ---- iceudpmuxlistener.hpp ----
+
+// IceUdpMuxListener を停止する。 GIL を解放した状態で呼ぶ前提で、 polling は行わない
+// (IceUdpMuxListener には state API が無い。 stop() の戻り時点で libjuice への登録解除は
+// 完了し、 内部 thread の join は接続中の agent が残っていない場合に完了している)
+void stop_ice_udp_mux_listener(IceUdpMuxListener& self) {
+  self.stop();
+}
 
 void bind_iceudpmuxlistener(nb::module_& m) {
   // IceUdpMuxRequest struct
@@ -1411,24 +2196,134 @@ void bind_iceudpmuxlistener(nb::module_& m) {
       .def_ro("remote_port", &IceUdpMuxRequest::remotePort);
 
   // IceUdpMuxListener class
-  nb::class_<IceUdpMuxListener>(m, "IceUdpMuxListener")
+  //
+  // test 側で weakref.ref(listener) を使うために __weakref__ slot を有効化する
+  nb::class_<IceUdpMuxListener> listener(m, "IceUdpMuxListener",
+                                         nb::is_weak_referenceable());
+  listener
       .def(nb::init<uint16_t, optional<string>>(), "port"_a,
            "bind_address"_a = std::nullopt)
-      .def("stop", &IceUdpMuxListener::stop)
+      // 内部 thread の thread_join が Python callback の GIL 待ちと噛み合って恒停
+      // しないよう、 GIL を解放して停止する (IceUdpMuxListener には state API が無い
+      // ため polling はせず、 stop() の戻り時点で join が完了している前提に乗る)
+      .def("stop", &stop_ice_udp_mux_listener,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 stop() を呼ばずに破棄した場合のセーフティネット。 __del__ から投げた例外は
+      // 呼び出し側で捕捉できないため RuntimeWarning として記録するだけで握り潰す。
+      // nanobind の tp_dealloc は C++ destructor を直接呼び CPython の finalizer を
+      // 呼ばないため、 基底クラスのインスタンスを破棄する経路ではこの __del__ は実行
+      // されない (Python サブクラスでは実行される)。 破棄時の恒停の根本対応は
+      // 別 issue で扱う
+      .def(
+          "__del__",
+          [](IceUdpMuxListener& self) {
+            try {
+              stop_ice_udp_mux_listener(self);
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              // interpreter 停止中は Python API を触らずに握り潰す
+              if (!gil.is_valid()) {
+                return;
+              }
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "IceUdpMuxListener.__del__: stop() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格された場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("port", &IceUdpMuxListener::port)
-      .def("on_unhandled_stun_request", &IceUdpMuxListener::OnUnhandledStunRequest,
-           "callback"_a);
+      // この callback は libjuice の C callback から直接呼ばれるため、 Python の例外が
+      // C のフレームを横断すると std::terminate になる (実測: exit 134)。 ここで受け止めて
+      // RuntimeWarning として記録し、 呼び出し元へは伝播させない。
+      // callback は mux の registry mutex を保持した状態で呼ばれるため、 ここから
+      // stop() などを呼ぶとデッドロックし得る (テストでは例外を投げるだけにする)
+      .def(
+          "on_unhandled_stun_request",
+          [](IceUdpMuxListener& self, nb::callable callback) {
+            self.OnUnhandledStunRequest([callback](IceUdpMuxRequest request) {
+              try {
+                nb::gil_scoped_acquire gil;
+                callback(std::move(request));
+              } catch (...) {
+                nb::gil_scoped_acquire gil;
+                // interpreter 停止中は Python API を触らずに握り潰す
+                if (!gil.is_valid()) {
+                  return;
+                }
+                PyErr_WarnEx(PyExc_RuntimeWarning,
+                             "IceUdpMuxListener.on_unhandled_stun_request: "
+                             "callback raised an exception",
+                             1);
+                // filterwarnings=error 等で warning が例外に昇格された場合も
+                // C のフレームへ例外を出さないよう握り潰す
+                if (PyErr_Occurred())
+                  PyErr_Clear();
+              }
+            });
+          },
+          "callback"_a,
+          "callback の例外は RuntimeWarning として記録し、 "
+          "呼び出し元へは伝播しない");
 }
 
 // ---- websocketserver.hpp ----
 
+// WebSocketServer を停止する。 GIL を解放した状態で呼ぶ前提で、 polling は行わない
+// (WebSocketServer には state API が無い。 stop() の戻り時点で impl 側の
+// tcpServer->close() と mThread.join() が完了している)
+void stop_websocket_server(WebSocketServer& self) {
+  self.stop();
+}
+
 void bind_websocketserver(nb::module_& m) {
-  nb::class_<WebSocketServer>(m, "WebSocketServer")
-      .def(nb::init<>())
+  // test 側で weakref.ref(server) を使うために __weakref__ slot を有効化する。
+  // callback を Python 側 (__dict__) で保持するために __dict__ slot も有効化する
+  // (理由は register_python_callback のコメントを参照)
+  nb::class_<WebSocketServer> server(
+      m, "WebSocketServer", nb::is_weak_referenceable(), nb::dynamic_attr());
+  server.def(nb::init<>())
       .def(nb::init<WebSocketServer::Configuration>(), "config"_a)
-      .def("stop", &WebSocketServer::stop)
+      // 受け入れ thread が Python callback の GIL を待つ間に恒停しないよう、 GIL を
+      // 解放して停止する (close_websocket と同じ理由)
+      .def("stop", &stop_websocket_server,
+           nb::call_guard<nb::gil_scoped_release>())
+      // 明示 stop() を呼ばずに破棄した場合のセーフティネット。 __del__ から投げた例外は
+      // 呼び出し側で捕捉できないため RuntimeWarning として記録するだけで握り潰す。
+      // nanobind の tp_dealloc は C++ destructor を直接呼び CPython の finalizer を
+      // 呼ばないため、 基底クラスのインスタンスを破棄する経路ではこの __del__ は実行
+      // されない (Python サブクラスでは実行される)。 破棄時の恒停の根本対応は
+      // 別 issue で扱う
+      .def(
+          "__del__",
+          [](WebSocketServer& self) {
+            try {
+              stop_websocket_server(self);
+            } catch (...) {
+              nb::gil_scoped_acquire gil;
+              // interpreter 停止中は Python API を触らずに握り潰す
+              if (!gil.is_valid()) {
+                return;
+              }
+              PyErr_WarnEx(PyExc_RuntimeWarning,
+                           "WebSocketServer.__del__: stop() failed", 1);
+              // filterwarnings=error 等で warning が例外に昇格された場合も
+              // destructor を落とさないよう握り潰す。
+              if (PyErr_Occurred())
+                PyErr_Clear();
+            }
+          },
+          nb::call_guard<nb::gil_scoped_release>())
       .def("port", &WebSocketServer::port)
-      .def("on_client", &WebSocketServer::onClient, "callback"_a);
+      .def(
+          "on_client",
+          [](WebSocketServer& self, nb::callable callback) {
+            self.onClient(python_callback<void, std::shared_ptr<WebSocket>>(
+                self, callback, "on_client"));
+          },
+          "callback"_a);
 }
 
 }  // namespace
