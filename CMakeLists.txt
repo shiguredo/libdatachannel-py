@@ -83,7 +83,7 @@ if(NOT WIN32)
   if(NOT EXISTS ${MBEDTLS_LIB})
     # mbedTLS が無いのに libdatachannel だけ残っている部分キャッシュも捨てる
     set(MBEDTLS_NEEDS_REBUILD TRUE)
-  else()
+  elseif(EXISTS ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h)
     file(READ ${MBEDTLS_INSTALL_DIR}/include/mbedtls/mbedtls_config.h MBEDTLS_CONFIG_CONTENT)
     # 部分一致にすると、 無効化されたままの行 (//#define MBEDTLS_THREADING_C) にも一致して
     # ガードが発動せず、 スレッド非対応のままビルドされた _deps を使い続けてしまう。
@@ -91,9 +91,12 @@ if(NOT WIN32)
     if(NOT MBEDTLS_CONFIG_CONTENT MATCHES "(^|\n)#define[ \t]+MBEDTLS_THREADING_C")
       set(MBEDTLS_NEEDS_REBUILD TRUE)
     endif()
+  else()
+    # ヘッダが無い部分 install も作り直す
+    set(MBEDTLS_NEEDS_REBUILD TRUE)
   endif()
   if(MBEDTLS_NEEDS_REBUILD)
-    message(STATUS "MbedTLS was built without threading support; rebuilding MbedTLS and libdatachannel")
+    message(STATUS "MbedTLS threading support is missing; rebuilding MbedTLS and libdatachannel")
     file(REMOVE_RECURSE ${MBEDTLS_BUILD_DIR} ${MBEDTLS_INSTALL_DIR})
     # libdatachannel はこの時点ではパス変数が未定義のため、 タグから直接組み立てる
     file(REMOVE_RECURSE
