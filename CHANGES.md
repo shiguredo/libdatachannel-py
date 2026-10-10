@@ -152,7 +152,7 @@
 
 - [FIX] callback の参照循環によるメモリリークを解消する
   - callback を Python 側で強参照し C++ 側では弱参照で持つようにして、 close() を呼ばなくても解放されるようにした
-  - Channel / DataChannel / Track / WebSocket / PeerConnection / WebSocketServer が __dict__ を持つようになる (インスタンスに属性を設定できる)
+  - Channel / DataChannel / Track / WebSocket / PeerConnection / WebSocketServer が __dict__ を持ち GC 追跡対象になる (インスタンスに属性を設定できる。 参照が無くなってから破棄されるまでが次の GC まで遅れることがある)
   - @voluntas
 
 - [FIX] callback が wrapper 自身を捕捉している場合の解放方法を明記し、 回帰テストを追加する

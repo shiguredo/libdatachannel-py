@@ -89,6 +89,10 @@ class weakref_holder {
   }
 
   weakref_holder(const weakref_holder& other) : m_ptr(other.m_ptr) {
+    // nanobind の pyfunc_wrapper と同じく null を弾く (move 済みの holder を copy しても
+    // Py_INCREF(nullptr) で落ちないようにする)
+    if (!m_ptr)
+      return;
     if (nb::detail::cleanup_guard guard{})
       Py_INCREF(m_ptr);
     else
