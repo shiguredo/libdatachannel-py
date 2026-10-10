@@ -139,6 +139,11 @@
   - 型チェッカーは __init__.py より __init__.pyi を優先するため、 スタブ側に無いと利用者の import が型チェックで失敗していた
   - @voluntas
 
+- [FIX] Candidate の __eq__ と __hash__ の不整合を修正する
+  - candidate 行で比較し、 同じ candidate 行なら同一 hash になるようにする (dict / set で畳み込まれなかった)
+  - libdatachannel の operator!= は foundation のみを比較しており == と非対称だったため、 __ne__ のバインドを外す
+  - @voluntas
+
 ### misc
 
 - [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する

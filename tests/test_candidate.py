@@ -38,3 +38,67 @@ def test_candidate_resolution_and_equality():
     resolved = c1.resolve()
     # ダミーの IP なので実際に解決できるかどうかは気にしない
     assert isinstance(resolved, bool)
+
+
+# SDP の candidate 行が同じ 2 つの Candidate
+_SDP = "candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host"
+
+
+def test_equal_candidates_have_same_hash() -> None:
+    """同じ candidate 行の Candidate が == かつ同一 hash であること
+
+    __eq__ を定義したクラスは __hash__ も必要 (a == b なら hash(a) == hash(b))。
+    """
+    first = Candidate(_SDP)
+    second = Candidate(_SDP)
+
+    assert first == second
+    assert hash(first) == hash(second)
+
+
+def test_equal_candidates_are_deduplicated_in_set_and_dict() -> None:
+    """dict / set で同じ candidate 行の Candidate が 1 つに畳まれること"""
+    first = Candidate(_SDP)
+    second = Candidate(_SDP)
+
+    assert len({first, second}) == 1
+    assert {first: "value"}.get(second) == "value"
+
+
+def test_ne_is_the_negation_of_eq() -> None:
+    """!= が == の否定になっていること
+
+    libdatachannel の operator!= は foundation のみを比較するため、 同じ foundation で
+    node が違う場合に == も != も False になっていた。 __ne__ のバインドを外し、
+    Python が __eq__ の否定を導出するようにしている。
+    """
+    first = Candidate("candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host")
+    other = Candidate("candidate:1 1 UDP 2122260223 192.168.0.2 12345 typ host")
+
+    assert first != other
+    assert (first == other) is False
+    assert len({first, other}) == 2
+
+
+def test_equality_compares_candidate_line() -> None:
+    """candidate 行が違えば等しくないこと
+
+    priority と type は libdatachannel の operator== では比較されないが、 candidate 行
+    としては別の候補であるため、 binding は等しくないものとして扱う。
+    """
+    base = Candidate("candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host")
+
+    assert base != Candidate("candidate:1 1 UDP 2122260222 192.168.0.1 12345 typ host")
+    assert base != Candidate("candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ srflx")
+
+
+def test_eq_with_other_types_returns_false() -> None:
+    """Candidate 以外と比較したときに False を返すこと
+
+    Python の __eq__ は任意の object と比較され得る。 ただし nanobind の引数変換の
+    都合で None との比較は TypeError になる (修正前からの挙動で、 本 issue の範囲外)。
+    """
+    candidate = Candidate(_SDP)
+
+    assert (candidate == 1) is False
+    assert (candidate == "candidate:1 1 UDP 2122260223 192.168.0.1 12345 typ host") is False
