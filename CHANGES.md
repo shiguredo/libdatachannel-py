@@ -18,7 +18,7 @@
   - @voluntas
 - [CHANGE] `Description.media()` / `Description.application()` が値 (コピー) を返すようにする
   - `clear_media()` は内部の media と application を、 `add_media(Application)` / `add_application()` は内部の application を解放するため、 参照を返していると取得済みの戻り値が無効になり、 触ると use-after-free で落ちていた (実測: exit 139)
-  - 戻り値を書き換えても `Description` に反映されなくなる。 media へ codec などを足す場合は、 足した media を組み立ててから `add_media()` する (`add_rtp_map()` などは `Description.Media` のメソッドで、 `add_media()` のあとに取得したコピーへ足しても `Description` には反映されない)
+  - 戻り値を書き換えても `Description` に反映されなくなる。 media へ codec などを足す場合は、 codec を足した media を組み立ててから `add_media()` する (`add_rtp_map()` などは `Description.Media` のメソッドで、 `add_media()` のあとに取得したコピーへ足しても `Description` には反映されない)
   - @voluntas
 - [CHANGE] `Media.rtp_map()` が値 (コピー) を返すようにする
   - 内部の `RtpMap` への参照は `remove_rtp_map()` / `remove_format()` で無効になっていた

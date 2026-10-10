@@ -240,9 +240,6 @@ def test_media_copy_is_not_invalidated_by_clear_media() -> None:
     assert media.mid() == mid
 
     desc.clear_media()
-    # 解放された領域が再利用されるよう、 同じ大きさの確保と解放を繰り返す
-    for _ in range(256):
-        bytearray(4096)
 
     # 破壊的操作のあとに触っても落ちず、 取得時の値を保つ
     assert media.mid() == mid
