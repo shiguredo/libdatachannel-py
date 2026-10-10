@@ -2,7 +2,7 @@
 
 - Priority: Low
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-windows-platform-metadata
 - Polished: 2026-10-10
 
@@ -35,6 +35,21 @@ pyproject.toml の classifiers は Windows を含み、CMakeLists.txt のプラ�
 - `make wheel` が成功すること
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること (PyPI の classifiers は利用者に見える情報のため)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `pyproject.toml`
+  - classifiers から `Operating System :: Microsoft :: Windows` を削除した。 Windows の wheel は 1 つもビルドしておらず、 README も未対応 (優先実装) としているため
+- `CMakeLists.txt`
+  - プラットフォームチェックのメッセージを `This package supports macOS and Linux (Ubuntu).` に変更した
+  - 最初の `WIN32` 分岐に「Windows は現状未対応。 優先実装として受注した際に使う分岐」とコメントを追加した (分岐自体は残す)
+- `CHANGES.md`
+  - `## develop` に `[FIX]` として記録した
+- 検証
+  - `make wheel` が成功し、 生成した wheel の `METADATA` の `Classifier: Operating System` が macOS と Linux のみになることを確認した
+  - `prek run --all-files` が PASS
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
+- README は未対応表明のため変更していない
 
 ## 参考
 
