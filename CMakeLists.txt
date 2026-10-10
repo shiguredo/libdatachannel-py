@@ -308,14 +308,33 @@ endif()
 set_target_properties(libdatachannel_ext PROPERTIES OUTPUT_NAME "libdatachannel_ext")
 
 # 型スタブ (.pyi) ファイルの自動生成
+# 生成されるのは extension module (libdatachannel_ext) のスタブなので、 名前もそれに合わせる
 nanobind_add_stub(
   libdatachannel_stub
   MODULE libdatachannel_ext
-  OUTPUT __init__.pyi
+  OUTPUT libdatachannel_ext.pyi
   PYTHON_PATH $<TARGET_FILE_DIR:libdatachannel_ext>
   DEPENDS libdatachannel_ext
   MARKER_FILE py.typed
 )
+
+# nanobind_add_stub が生成するスタブは extension module のもので、 __init__.py が定義する
+# エイリアス (AACRtpPacketizer など 6 件) を含まない。 型チェッカーは .pyi を .py より
+# 優先するため、 エイリアスを追記した __init__.pyi を作る (wheel にもこれが入る)
+set(LIBDATACHANNEL_STUB_RAW ${CMAKE_CURRENT_BINARY_DIR}/libdatachannel_ext.pyi)
+set(LIBDATACHANNEL_STUB_ALIASES ${CMAKE_CURRENT_SOURCE_DIR}/src/libdatachannel/_stub_aliases.pyi)
+set(LIBDATACHANNEL_STUB ${CMAKE_CURRENT_BINARY_DIR}/__init__.pyi)
+add_custom_command(
+  OUTPUT ${LIBDATACHANNEL_STUB}
+  COMMAND ${CMAKE_COMMAND}
+          -DRAW=${LIBDATACHANNEL_STUB_RAW}
+          -DALIASES=${LIBDATACHANNEL_STUB_ALIASES}
+          -DOUTPUT=${LIBDATACHANNEL_STUB}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/append_stub_aliases.cmake
+  DEPENDS ${LIBDATACHANNEL_STUB_RAW} ${LIBDATACHANNEL_STUB_ALIASES}
+  VERBATIM
+)
+add_custom_target(libdatachannel_stub_aliases ALL DEPENDS ${LIBDATACHANNEL_STUB})
 
 # Wheel に配置するためのインストール先を指定
 set(PY_PACKAGE "libdatachannel")

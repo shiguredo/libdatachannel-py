@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-stub-missing-aliases
 - Polished: 2026-10-10
 
@@ -42,6 +42,27 @@ from libdatachannel import AACRtpPacketizer  # 実行時は成功、型チェッ
 - `prek run --all-files pytest` と `prek run --all-files ty` が PASS すること (`uv sync` は `make develop` で入れた拡張モジュールを削除するため使わない)
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `CMakeLists.txt`
+  - `nanobind_add_stub` の OUTPUT を `libdatachannel_ext.pyi` に変更した (生成物は extension module のスタブのため)
+  - 生成したスタブに `__init__.py` のエイリアスを追記して `__init__.pyi` を作る custom command を追加した。 型チェッカーは `.py` より `.pyi` を優先するため、 スタブ側にエイリアスが無いと利用者の import が型チェックで失敗していた
+  - 追記は CMake のビルドで行う (Makefile のコピーだけに頼ると、 wheel を作る CI では直らない)
+- `cmake/append_stub_aliases.cmake` (新規)
+  - 生成されたスタブとエイリアスの断片を連結して `__init__.pyi` を作る
+- `src/libdatachannel/_stub_aliases.pyi` (新規)
+  - `__init__.py` が定義するエイリアス 6 件 (AACRtpPacketizer / PCMURtpPacketizer / G722RtpPacketizer / AACRtpDepacketizer / PCMURtpDepacketizer / G722RtpDepacketizer) の断片
+- `tests/test_stub_aliases.py` (新規)
+  - 6 つのエイリアスを import して同じクラスであることを確認する (この import が型チェッカーで解決すること自体が検証になる)
+  - インストールされた `__init__.pyi` にエイリアスの行が含まれることを確認する
+- `CHANGES.md`
+  - `## develop` に `[FIX]` として記録した
+- 検証
+  - `prek run --all-files ty` が PASS。 追記前のスタブ (`_build/libdatachannel_ext.pyi`) に差し戻すと ty が 6 件の診断 (6 つのエイリアスに対応) を出すことも確認した
+  - `tests/test_stub_aliases.py` 2 passed、 全体 169 passed / 12 skipped / 1 deselected
+  - `make develop` が成功し、 `_build/__init__.pyi` と `src/libdatachannel/__init__.pyi` にエイリアスが入ることを確認した
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
 
 ## 参考
 
