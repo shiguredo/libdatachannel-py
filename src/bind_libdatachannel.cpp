@@ -28,9 +28,13 @@
 // 標準ライブラリ
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <type_traits>
+#include <vector>
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -68,6 +72,166 @@ struct type_caster<std::vector<std::byte>> {
 }  // namespace nanobind
 
 namespace {
+
+// ---- callback のライフタイム管理 ----
+
+// Python オブジェクト (callback の弱参照) を保持するホルダー。
+// libdatachannel は worker thread で callback を破棄することがあるため、 nb::object を
+// そのまま捕捉すると GIL を持たない thread で Py_DECREF することになる。 nanobind の
+// std::function caster (nanobind/stl/function.h の pyfunc_wrapper) と同じ方針で、 参照
+// カウントを操作する前に cleanup_guard で GIL を取得する。 interpreter が停止済みの
+// 場合に cleanup_guard は false になるため、 その場合は参照カウントを操作しない。
+class weakref_holder {
+ public:
+  // 呼び出し側は GIL を保持している前提 (binding の実行中に作る)
+  explicit weakref_holder(nb::handle weakref) : m_ptr(weakref.ptr()) {
+    Py_INCREF(m_ptr);
+  }
+
+  weakref_holder(const weakref_holder& other) : m_ptr(other.m_ptr) {
+    // nanobind の pyfunc_wrapper と同じく null を弾く (move 済みの holder を copy しても
+    // Py_INCREF(nullptr) で落ちないようにする)
+    if (!m_ptr)
+      return;
+    if (nb::detail::cleanup_guard guard{})
+      Py_INCREF(m_ptr);
+    else
+      m_ptr = nullptr;
+  }
+
+  // std::function に copy ではなく move で保持させる (move なら GIL を必要としない)
+  weakref_holder(weakref_holder&& other) noexcept : m_ptr(other.m_ptr) {
+    other.m_ptr = nullptr;
+  }
+
+  weakref_holder& operator=(const weakref_holder&) = delete;
+  weakref_holder& operator=(weakref_holder&&) = delete;
+
+  ~weakref_holder() {
+    if (!m_ptr)
+      return;
+    // 条件として宣言する (guard の生存期間をこの if 文に閉じ込める)
+    if (nb::detail::cleanup_guard guard{})
+      Py_DECREF(m_ptr);
+  }
+
+  // 弱参照の参照先 (callback) を返す。 参照先が破棄済みの場合は None が返る
+  nb::object target() const {
+    if (!m_ptr)
+      return nb::object();
+    return nb::borrow<nb::object>(m_ptr)();
+  }
+
+ private:
+  PyObject* m_ptr = nullptr;
+};
+
+// callback を Python 側 (インスタンスの __dict__) で強参照し、 C++ 側では弱参照で持つ。
+// 両側で強参照すると nb_inst → C++ → std::function → callable → nb_inst の循環ができ、
+// C++ 側が Python の GC の対象外であるために解放されない (issue 0053)。
+// Python 側に強参照を置くことで instance → __dict__ → callable → instance という GC から
+// 見える循環になり、 C++ 側が参照カウントに寄与しないため回収される。
+// そのために callback を登録する型は nb::dynamic_attr() を指定して __dict__ を持たせる
+// (nanobind は __dict__ を持つ型のインスタンスを GC の対象にする)。
+//
+// self には nb::find() で引いた Python オブジェクトを渡す。 nanobind は基底クラスの
+// ポインタに基底オフセットを加算しないため、 Channel のように派生クラスの 2 番目の基底で
+// ある型でも self のアドレスはインスタンス登録時のポインタと一致し、 nb::find() で引ける。
+// Python 側に強参照を置けた場合は true を返す。
+bool register_python_callback(nb::handle self,
+                              nb::callable callback,
+                              const char* name) {
+  if (!self.is_valid())
+    return false;
+
+  nb::object dict = self.attr("__dict__");
+  std::string key = std::string("_rdc_callback_") + name;
+  dict[nb::str(key.c_str())] = callback;
+
+  return true;
+}
+
+// register_python_callback で保持した callback を弱参照で呼ぶ std::function を作る。
+// C++ 側は弱参照なので callback の寿命を延ばさず、 Python 側の参照が消えれば循環も消える。
+template <typename R, typename... Args>
+std::function<R(Args...)> weak_python_callback(nb::callable callback) {
+  // weakref.ref(callback) を作る。 弱参照を作れない callable に対しては TypeError になる
+  nb::object weakref;
+  try {
+    weakref = nb::module_::import_("weakref").attr("ref")(callback);
+  } catch (nb::python_error&) {
+    // 弱参照を作れない callable (メソッド記述子など) は、 従来どおり C++ 側で強参照して
+    // 呼べるようにする (この場合だけ循環が残るが、 callback が呼ばれなくなるよりはよい)
+    return nb::cast<std::function<R(Args...)>>(callback);
+  }
+
+  return [holder = weakref_holder(weakref)](Args... args) -> R {
+    // libdatachannel の thread から呼ばれるため GIL を取得する
+    nb::gil_scoped_acquire acquire;
+    if (!acquire.is_valid()) {
+      // interpreter 停止中は Python API を触らない
+      if constexpr (!std::is_void_v<R>)
+        return R();
+      else
+        return;
+    }
+
+    nb::object target = holder.target();
+    if (!target.is_valid() || target.is_none()) {
+      // Python 側の参照が消えて callback が破棄済み
+      if constexpr (!std::is_void_v<R>)
+        return R();
+      else
+        return;
+    }
+
+    // 引数の Python 側への変換は nanobind の std::function caster と同じ経路
+    // (Python オブジェクトの呼び出し) に任せる
+    if constexpr (std::is_void_v<R>) {
+      target(std::forward<Args>(args)...);
+      return;
+    } else {
+      return nb::cast<R>(target(std::forward<Args>(args)...));
+    }
+  };
+}
+
+// register_python_callback と weak_python_callback をまとめて呼ぶ。 Python 側に強参照を
+// 置けなかった場合 (= nb::find() でインスタンスを特定できなかった場合) だけ、 従来どおり
+// C++ 側で強参照し、 callback が呼ばれることを優先する。
+template <typename R, typename... Args, typename Self>
+std::function<R(Args...)> python_callback(Self& self,
+                                          nb::callable callback,
+                                          const char* name) {
+  if (!register_python_callback(nb::find(self), callback, name))
+    return nb::cast<std::function<R(Args...)>>(callback);
+
+  return weak_python_callback<R, Args...>(callback);
+}
+
+// reset_callbacks で Python 側に保持した callback を削除する。 C++ 側は弱参照なので削除
+// しなくても呼ばれなくなるが、 callback が捕捉しているオブジェクトを早く解放できるように
+// する。
+template <typename Self>
+void reset_python_callbacks(Self& self) {
+  nb::object found = nb::find(self);
+  if (!found.is_valid())
+    return;
+
+  constexpr char kPrefix[] = "_rdc_callback_";
+  nb::dict dict = found.attr("__dict__");
+
+  // 反復中は削除できないため、 削除するキーを先に集める
+  std::vector<std::string> keys;
+  for (const auto& item : dict) {
+    std::string key = nb::cast<std::string>(item.first);
+    if (key.compare(0, sizeof(kPrefix) - 1, kPrefix) == 0)
+      keys.push_back(key);
+  }
+
+  for (const std::string& key : keys)
+    nb::del(dict[nb::str(key.c_str())]);
+}
 
 // ---- configuration.hpp ----
 
@@ -1552,29 +1716,61 @@ void bind_channel(nb::module_& m) {
   // 同一の impl オブジェクトに到達するため正しく動作する (impl::Channel は
   // impl::DataChannel / impl::Track / impl::WebSocket の基底サブオブジェクトで、
   // impl 側も同じオブジェクトを指している)。
-  nb::class_<Channel>(m, "Channel")
+  // callback を Python 側 (インスタンスの __dict__) で保持するために __dict__ slot を
+  // 有効化する (issue 0053)。 これによりインスタンスが GC の対象になり、 callback を
+  // 巻き込んだ循環も回収できる (詳細は register_python_callback のコメントを参照)。
+  // DataChannel / Track / WebSocket は Channel を基底に持つため、 nanobind が基底の
+  // フラグを引き継ぎ、 これらの __dict__ も有効になる。
+  nb::class_<Channel>(m, "Channel", nb::dynamic_attr())
       // Callback registration
-      .def("on_open", &Channel::onOpen)
-      .def("on_closed", &Channel::onClosed)
-      .def("on_error", &Channel::onError)
+      .def("on_open",
+           [](Channel& self, nb::callable callback) {
+             self.onOpen(python_callback<void>(self, callback, "on_open"));
+           })
+      .def("on_closed",
+           [](Channel& self, nb::callable callback) {
+             self.onClosed(python_callback<void>(self, callback, "on_closed"));
+           })
+      .def("on_error",
+           [](Channel& self, nb::callable callback) {
+             self.onError(
+                 python_callback<void, string>(self, callback, "on_error"));
+           })
       .def("on_message",
-           nb::overload_cast<std::function<void(message_variant)>>(
-               &Channel::onMessage))
-      .def("on_message",
-           nb::overload_cast<std::function<void(binary)>,
-                             std::function<void(std::string)>>(
-               &Channel::onMessage),
-           "binary_callback"_a, "string_callback"_a)
-      .def("on_buffered_amount_low", &Channel::onBufferedAmountLow)
+           [](Channel& self, nb::callable callback) {
+             self.onMessage(python_callback<void, message_variant>(
+                 self, callback, "on_message"));
+           })
+      .def(
+          "on_message",
+          [](Channel& self, nb::callable binary_callback,
+             nb::callable string_callback) {
+            self.onMessage(python_callback<void, binary>(self, binary_callback,
+                                                         "on_message_binary"),
+                           python_callback<void, std::string>(
+                               self, string_callback, "on_message_string"));
+          },
+          "binary_callback"_a, "string_callback"_a)
+      .def("on_buffered_amount_low",
+           [](Channel& self, nb::callable callback) {
+             self.onBufferedAmountLow(python_callback<void>(
+                 self, callback, "on_buffered_amount_low"));
+           })
       .def("set_buffered_amount_low_threshold",
            &Channel::setBufferedAmountLowThreshold)
-      .def("reset_callbacks", &Channel::resetCallbacks)
+      .def("reset_callbacks",
+           [](Channel& self) {
+             reset_python_callbacks(self);
+             self.resetCallbacks();
+           })
 
       // Extended API
       .def("receive", &Channel::receive)
       .def("peek", &Channel::peek)
       .def("available_amount", &Channel::availableAmount)
-      .def("on_available", &Channel::onAvailable);
+      .def("on_available", [](Channel& self, nb::callable callback) {
+        self.onAvailable(python_callback<void>(self, callback, "on_available"));
+      });
 }
 
 // ---- datachannel.hpp ----
@@ -1632,7 +1828,13 @@ void bind_track(nb::module_& m) {
       .def("direction", &Track::direction)
       .def("description", &Track::description)
       .def("set_description", &Track::setDescription, "description"_a)
-      .def("on_frame", &Track::onFrame, "callback"_a)
+      .def(
+          "on_frame",
+          [](Track& self, nb::callable callback) {
+            self.onFrame(python_callback<void, binary, FrameInfo>(
+                self, callback, "on_frame"));
+          },
+          "callback"_a)
       // request_keyframe は RtcpReceivingSession などの handler が送信経路
       // (send callback = transportSend) に入るため、 send と同じく GIL を解放する
       // (理由は bind_channel 直前のコメント)
@@ -1712,8 +1914,10 @@ void bind_peerconnection(nb::module_& m) {
       .def_rw("ice_pwd", &LocalDescriptionInit::icePwd);
 
   // test 側で weakref.ref(pc) を使うために __weakref__ slot を有効化する。
-  nb::class_<PeerConnection> pc(m, "PeerConnection",
-                                nb::is_weak_referenceable());
+  // callback を Python 側 (__dict__) で保持するために __dict__ slot も有効化する
+  // (理由は register_python_callback のコメントを参照)。
+  nb::class_<PeerConnection> pc(
+      m, "PeerConnection", nb::is_weak_referenceable(), nb::dynamic_attr());
 
   // PeerConnection 内の enum
   nb::enum_<PeerConnection::State>(pc, "State")
@@ -1817,16 +2021,56 @@ void bind_peerconnection(nb::module_& m) {
                                           init.value_or(DataChannelInit{}));
           },
           "label"_a, "init"_a = nb::none())
-      .def("on_data_channel", &PeerConnection::onDataChannel)
+      .def("on_data_channel",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onDataChannel(
+                 python_callback<void, std::shared_ptr<DataChannel>>(
+                     self, callback, "on_data_channel"));
+           })
       .def("add_track", &PeerConnection::addTrack)
-      .def("on_track", &PeerConnection::onTrack)
-      .def("on_local_description", &PeerConnection::onLocalDescription)
-      .def("on_local_candidate", &PeerConnection::onLocalCandidate)
-      .def("on_state_change", &PeerConnection::onStateChange)
-      .def("on_ice_state_change", &PeerConnection::onIceStateChange)
-      .def("on_gathering_state_change", &PeerConnection::onGatheringStateChange)
-      .def("on_signaling_state_change", &PeerConnection::onSignalingStateChange)
-      .def("reset_callbacks", &PeerConnection::resetCallbacks)
+      .def("on_track",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onTrack(python_callback<void, std::shared_ptr<Track>>(
+                 self, callback, "on_track"));
+           })
+      .def("on_local_description",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onLocalDescription(python_callback<void, Description>(
+                 self, callback, "on_local_description"));
+           })
+      .def("on_local_candidate",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onLocalCandidate(python_callback<void, Candidate>(
+                 self, callback, "on_local_candidate"));
+           })
+      .def("on_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onStateChange(python_callback<void, PeerConnection::State>(
+                 self, callback, "on_state_change"));
+           })
+      .def("on_ice_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onIceStateChange(
+                 python_callback<void, PeerConnection::IceState>(
+                     self, callback, "on_ice_state_change"));
+           })
+      .def("on_gathering_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onGatheringStateChange(
+                 python_callback<void, PeerConnection::GatheringState>(
+                     self, callback, "on_gathering_state_change"));
+           })
+      .def("on_signaling_state_change",
+           [](PeerConnection& self, nb::callable callback) {
+             self.onSignalingStateChange(
+                 python_callback<void, PeerConnection::SignalingState>(
+                     self, callback, "on_signaling_state_change"));
+           })
+      .def("reset_callbacks",
+           [](PeerConnection& self) {
+             reset_python_callbacks(self);
+             self.resetCallbacks();
+           })
       .def("remote_fingerprint", &PeerConnection::remoteFingerprint)
       .def("clear_stats", &PeerConnection::clearStats)
       .def("bytes_sent", &PeerConnection::bytesSent)
@@ -2035,9 +2279,11 @@ void stop_websocket_server(WebSocketServer& self) {
 }
 
 void bind_websocketserver(nb::module_& m) {
-  // test 側で weakref.ref(server) を使うために __weakref__ slot を有効化する
-  nb::class_<WebSocketServer> server(m, "WebSocketServer",
-                                     nb::is_weak_referenceable());
+  // test 側で weakref.ref(server) を使うために __weakref__ slot を有効化する。
+  // callback を Python 側 (__dict__) で保持するために __dict__ slot も有効化する
+  // (理由は register_python_callback のコメントを参照)
+  nb::class_<WebSocketServer> server(
+      m, "WebSocketServer", nb::is_weak_referenceable(), nb::dynamic_attr());
   server.def(nb::init<>())
       .def(nb::init<WebSocketServer::Configuration>(), "config"_a)
       // 受け入れ thread が Python callback の GIL を待つ間に恒停しないよう、 GIL を
@@ -2071,7 +2317,13 @@ void bind_websocketserver(nb::module_& m) {
           },
           nb::call_guard<nb::gil_scoped_release>())
       .def("port", &WebSocketServer::port)
-      .def("on_client", &WebSocketServer::onClient, "callback"_a);
+      .def(
+          "on_client",
+          [](WebSocketServer& self, nb::callable callback) {
+            self.onClient(python_callback<void, std::shared_ptr<WebSocket>>(
+                self, callback, "on_client"));
+          },
+          "callback"_a);
 }
 
 }  // namespace

@@ -504,6 +504,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-aiohttp" },
     { name = "pytest-timeout" },
+    { name = "structlog" },
 ]
 
 [package.metadata]
@@ -540,6 +541,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-aiohttp" },
     { name = "pytest-timeout" },
+    { name = "structlog" },
 ]
 
 [[package]]

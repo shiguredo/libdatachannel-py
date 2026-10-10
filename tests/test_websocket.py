@@ -23,16 +23,14 @@ def test_websocket(echo_websocket_server) -> None:
     closed = threading.Event()
 
     def ws_on_open() -> None:
-        print("WebSocket: Open")
         assert ws is not None
         ws.send(my_message)
         opened.set()
 
     def ws_on_error(error: str) -> None:
-        print(f"WebSocket: Error: {error}")
+        pass
 
     def ws_on_closed() -> None:
-        print("WebSocket: Closed")
         closed.set()
 
     def ws_on_message(message: str | bytes) -> None:
@@ -40,10 +38,9 @@ def test_websocket(echo_websocket_server) -> None:
         if isinstance(message, str):
             received = message == my_message
             if received:
-                print("WebSocket: Received expected")
                 received_event.set()
             else:
-                print("WebSocket: Received UNEXPECTED message")
+                pass
 
     ws.on_open(ws_on_open)
     ws.on_error(ws_on_error)
@@ -64,8 +61,6 @@ def test_websocket(echo_websocket_server) -> None:
 
     # これが無いとリークする
     ws = None
-
-    print("Success")
 
 
 def test_websocket_send_slice(echo_websocket_server) -> None:

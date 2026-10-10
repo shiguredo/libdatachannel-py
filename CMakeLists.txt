@@ -322,16 +322,16 @@ nanobind_add_stub(
 # エイリアス (AACRtpPacketizer など 6 件) を含まない。 型チェッカーは .pyi を .py より
 # 優先するため、 エイリアスを追記した __init__.pyi を作る (wheel にもこれが入る)
 set(LIBDATACHANNEL_STUB_RAW ${CMAKE_CURRENT_BINARY_DIR}/libdatachannel_ext.pyi)
-set(LIBDATACHANNEL_STUB_ALIASES ${CMAKE_CURRENT_SOURCE_DIR}/src/libdatachannel/_stub_aliases.pyi)
 set(LIBDATACHANNEL_STUB ${CMAKE_CURRENT_BINARY_DIR}/__init__.pyi)
+set(LIBDATACHANNEL_INIT_PY ${CMAKE_CURRENT_SOURCE_DIR}/src/libdatachannel/__init__.py)
 add_custom_command(
   OUTPUT ${LIBDATACHANNEL_STUB}
   COMMAND ${CMAKE_COMMAND}
           -DRAW=${LIBDATACHANNEL_STUB_RAW}
-          -DALIASES=${LIBDATACHANNEL_STUB_ALIASES}
+          -DINIT_PY=${LIBDATACHANNEL_INIT_PY}
           -DOUTPUT=${LIBDATACHANNEL_STUB}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/append_stub_aliases.cmake
-  DEPENDS ${LIBDATACHANNEL_STUB_RAW} ${LIBDATACHANNEL_STUB_ALIASES}
+  DEPENDS ${LIBDATACHANNEL_STUB_RAW} ${LIBDATACHANNEL_INIT_PY}
   VERBATIM
 )
 add_custom_target(libdatachannel_stub_aliases ALL DEPENDS ${LIBDATACHANNEL_STUB})

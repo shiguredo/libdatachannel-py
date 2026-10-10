@@ -25,6 +25,10 @@ from libdatachannel import (
     Track,
 )
 
+# 接続確立 (ICE / DTLS のハンドシェイク) の待ち時間。 負荷の高い CI ランナーでは
+# ループバックでも 20 秒を超えることがあり、 断続的に失敗していた
+_CONNECT_TIMEOUT = 60
+
 
 def test_data_channel_init():
     init = DataChannelInit()
@@ -86,18 +90,16 @@ def test_track():
     pc2 = PeerConnection(config2)
 
     def pc1_on_local_description(desc):
-        print("Description 1: " + str(desc))
         pc2.set_remote_description(Description(str(desc)))
 
     def pc1_on_local_candidate(candidate):
-        print("Candidate 1: " + str(candidate))
         pc2.add_remote_candidate(Candidate(str(candidate)))
 
     def pc1_on_state_change(state):
-        print("State 1: " + str(state))
+        pass
 
     def pc1_on_gathering_state_change(state):
-        print("Gathering state 1: " + str(state))
+        pass
 
     pc1.on_local_description(pc1_on_local_description)
     pc1.on_local_candidate(pc1_on_local_candidate)
@@ -105,18 +107,16 @@ def test_track():
     pc1.on_gathering_state_change(pc1_on_gathering_state_change)
 
     def pc2_on_local_description(desc):
-        print("Description 2: " + str(desc))
         pc1.set_remote_description(Description(str(desc)))
 
     def pc2_on_local_candidate(candidate):
-        print("Candidate 2: " + str(candidate))
         pc1.add_remote_candidate(Candidate(str(candidate)))
 
     def pc2_on_state_change(state):
-        print("State 2: " + str(state))
+        pass
 
     def pc2_on_gathering_state_change(state):
-        print("Gathering state 2: " + str(state))
+        pass
 
     pc2.on_local_description(pc2_on_local_description)
     pc2.on_local_candidate(pc2_on_local_candidate)
@@ -136,17 +136,13 @@ def test_track():
     def pc2_on_track(t):
         nonlocal t2
         mid = t.mid()
-        print(f'Track 2: Received track with mid "{mid}"')
         if mid != new_track_mid:
-            print("Wrong track mid", file=sys.stderr)
             return
 
         def t_on_open():
-            print(f'Track 2: Track with mid "{mid}" is open')
             t2_opened.set()
 
         def t_on_closed():
-            print(f'Track 2: Track with mid "{mid}" is closed')
             t2_closed.set()
 
         t.on_open(t_on_open)
@@ -175,8 +171,8 @@ def test_track():
 
     # callback から通知されるまで待つ (ポーリングしない)。 旧実装は 1 秒 × 10 回の
     # ポーリングだったため、 待ち時間の上限はそれより余裕を持たせた 20 秒とする。
-    assert t1_opened.wait(timeout=20), "送信側の Track が open しなかった"
-    assert t2_opened.wait(timeout=20), "受信側の Track が open しなかった"
+    assert t1_opened.wait(timeout=_CONNECT_TIMEOUT), "送信側の Track が open しなかった"
+    assert t2_opened.wait(timeout=_CONNECT_TIMEOUT), "受信側の Track が open しなかった"
 
     assert pc1.state() == PeerConnection.State.Connected
     assert pc2.state() == PeerConnection.State.Connected
@@ -209,8 +205,12 @@ def test_track():
     t2 = None
     pc1.set_local_description()
 
-    assert t1_opened.wait(timeout=20), "再ネゴシエーション後の送信側の Track が open しなかった"
-    assert t2_opened.wait(timeout=20), "再ネゴシエーション後の受信側の Track が open しなかった"
+    assert t1_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        "再ネゴシエーション後の送信側の Track が open しなかった"
+    )
+    assert t2_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        "再ネゴシエーション後の受信側の Track が open しなかった"
+    )
 
     assert t1.is_open()
     assert t2 is not None
@@ -225,8 +225,6 @@ def test_track():
 
     assert t1.is_closed()
     assert t2.is_closed()
-
-    print("Success")
 
 
 # test_track() と同じセットアップで、 明示的な close() なしに破棄する。 __del__
@@ -492,9 +490,15 @@ def make_loopback_with_pli(
     pc1.set_remote_description(Description(answer))
 
     # 接続確立とトラック / DataChannel のオープンを callback で待つ。
-    assert t1_opened.wait(timeout=20), "送信側の Track が open しなかった"
-    assert t2_opened.wait(timeout=20), "受信側の Track が open しなかった"
-    assert dc1_opened.wait(timeout=20), "DataChannel が open しなかった"
+    assert t1_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        f"送信側の Track が open しなかった (state={pc1.state()}, ice_state={pc1.ice_state()})"
+    )
+    assert t2_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        f"受信側の Track が open しなかった (state={pc2.state()}, ice_state={pc2.ice_state()})"
+    )
+    assert dc1_opened.wait(timeout=_CONNECT_TIMEOUT), (
+        f"DataChannel が open しなかった (state={pc1.state()}, ice_state={pc1.ice_state()})"
+    )
 
     assert t1.is_open(), "送信側の Track が open しなかった"
     assert t2 is not None, "受信側の Track が取得できなかった"
@@ -726,7 +730,7 @@ def test_data_channel_close_releases_gil() -> None:
     if not getattr(sys, "_is_gil_enabled", lambda: True)():
         pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
 
-    _pc1, _pc2, _t1, _t2, data_channel = make_loopback_with_pli(lambda: None)
+    pc1, pc2, _t1, _t2, data_channel = make_loopback_with_pli(lambda: None)
 
     counter = 0
     stop = False
@@ -752,8 +756,9 @@ def test_data_channel_close_releases_gil() -> None:
         # 待機 thread に新しい switch interval で GIL を待たせ直す (上のコメント参照)
         time.sleep(0)
 
-        # 解放窓は µs 程度なので、 1 回の計測では偽陰性になり得る。 50 ms のあいだ
-        # 呼び続け、 その間に待機 thread が進行すれば解放されていると判定する。
+        # close() は呼び出し全体で GIL を解放するが、 呼び出し自体が短いため 1 回の
+        # 計測では待機 thread が動き出せず偽陰性になり得る。 50 ms のあいだ呼び続け、
+        # その間に進行すれば解放されていると判定する。
         # 2 回目以降の close() は内部では no-op になるが、 call_guard は毎回通る
         released = 0
         released_start = counter
@@ -767,10 +772,13 @@ def test_data_channel_close_releases_gil() -> None:
         stop = True
         sys.setswitchinterval(original_interval)
         thread.join(timeout=5)
-        # ループバックは相互参照を持つため、 明示的に回収する。 閉じた DataChannel が
-        # 残ると nanobind のリーク警告がインタプリタ終了時に出る
+        # callback が wrapper 自身を捕捉しているため、 close() を呼ばないと Python の
+        # GC から見えない循環ができて解放されない (issue 0052)。 gc.collect() では回収
+        # できないため、 PeerConnection を明示的に閉じる
+        pc1.close()
+        pc2.close()
         del data_channel
-        del _pc1, _pc2, _t1, _t2
+        del _t1, _t2
         gc.collect()
 
     assert released > 0, "close() が GIL を解放していない"

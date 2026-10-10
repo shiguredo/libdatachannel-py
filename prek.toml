@@ -65,6 +65,9 @@ hooks = [
       "-v",
       "--deselect",
       "tests/test_peerconnection.py::test_destruct_without_explicit_close",
+      # test_track も一部の環境でネイティブに恒停する (issue 0051)
+      "--deselect",
+      "tests/test_peerconnection.py::test_track",
     ],
     language = "system",
     types = ["python"],

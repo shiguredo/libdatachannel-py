@@ -103,7 +103,6 @@ def test_compute_rtp_timestamp_does_not_accumulate_rounding_error() -> None:
     for index in range(frames + 1):
         computed = calculator.update(frame_interval_usec * index)
 
-    assert accumulated == 2_999_000
     assert computed == 2_999_970
     assert computed - accumulated == 970
 

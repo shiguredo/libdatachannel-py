@@ -254,21 +254,35 @@ def test_concurrent_peerconnection_callback_registration():
 
 @requires_free_threading
 def test_concurrent_datachannel_creation():
-    """複数スレッドから同時に DataChannel を生成"""
-    pc = PeerConnection()
+    """複数スレッドから同時に DataChannel を生成
+
+    auto negotiation を無効にする。 有効なままだと create_data_channel() が
+    setLocalDescription(Offer) を呼び、 2 番手以降が signaling state の競合で
+    std::logic_error になる (テストの目的は並列生成が binding を壊さないことなので、
+    ネゴシエーション経路は通さない)。
+    """
+    config = Configuration()
+    config.disable_auto_negotiation = True
+    pc = PeerConnection(config)
     results = {}
+    # スレッド内で起きた例外は pytest に伝わらないため、 集めて報告する
+    errors: list[BaseException] = []
     lock = threading.Lock()
     barrier = threading.Barrier(4)
 
     def create_channels(thread_id: int):
-        barrier.wait()
-        channels = []
-        for i in range(10):
-            label = f"ch-{thread_id}-{i}"
-            dc = pc.create_data_channel(label)
-            channels.append(dc)
-        with lock:
-            results[thread_id] = channels
+        try:
+            barrier.wait()
+            channels = []
+            for i in range(10):
+                label = f"ch-{thread_id}-{i}"
+                dc = pc.create_data_channel(label)
+                channels.append(dc)
+            with lock:
+                results[thread_id] = channels
+        except Exception as e:  # noqa: BLE001 (ワーカースレッドの例外を収集してテストで検証するため)
+            with lock:
+                errors.append(e)
 
     threads = []
     for i in range(4):
@@ -279,6 +293,7 @@ def test_concurrent_datachannel_creation():
     for t in threads:
         t.join()
 
+    assert not errors, f"スレッド内で例外が発生した: {errors}"
     assert len(results) == 4
     for thread_id, channels in results.items():
         assert len(channels) == 10

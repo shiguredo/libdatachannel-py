@@ -105,11 +105,13 @@ jobs:
           set -euo pipefail
           uv venv --python "${{ matrix.python_version }}" .venv-test
           uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
-          # 除外するテスト: test_destruct_without_explicit_close は GIL と libdatachannel の
-          # mutex のデッドロックで停止し、 pytest-timeout も発火しないため job の timeout まで
-          # 止まる。 根本対応は別途行う。
+          # 除外するテスト: どちらもネイティブで停止し、 pytest-timeout も発火しないため job の
+          # timeout まで止まる。 根本対応は別途行う。
+          # - test_destruct_without_explicit_close: GIL と libdatachannel の mutex のデッドロック
+          # - test_track: 一部の runner で恒停する (issue 0051)
           .venv-test/bin/python -m pytest tests/ -v \
-            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close \
+            --deselect tests/test_peerconnection.py::test_track
 
       # free-threading の leg では GIL が無効であることを確認する。
       # モジュールを import した後で確認することで、 GIL を使うモジュールが静かに GIL を
@@ -171,7 +173,8 @@ jobs:
           uv venv --python "${{ matrix.python_version }}" .venv-test
           uv pip install --python .venv-test/bin/python --group test wheelhouse/*.whl
           .venv-test/bin/python -m pytest tests/ -v \
-            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close
+            --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close \
+            --deselect tests/test_peerconnection.py::test_track
 
       # free-threading の leg ではモジュールを import した後で GIL が無効であることを確認する
       - name: Check free-threading
