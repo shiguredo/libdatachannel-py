@@ -187,7 +187,8 @@ jobs:
   slack_notify:
     needs: [build_ubuntu, build_macos]
     runs-on: ubuntu-slim
-    if: ${{ !cancelled() }}
+    # 一時的に止めたい場合はリポジトリ変数 SLACK_NOTIFY を false にする
+    if: ${{ !cancelled() && vars.SLACK_NOTIFY != 'false' }}
     timeout-minutes: 5
     permissions:
       actions: read
@@ -284,7 +285,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Slack Notification
-        if: failure()
+        if: ${{ failure() && vars.SLACK_NOTIFY != 'false' }}
         uses: shiguredo/github-actions/.github/actions/slack-notify@main
         with:
           status: ${{ job.status }}
