@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-10
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/update-slack-notify-switch
 - Polished: 2026-10-10
 
@@ -31,3 +31,12 @@ Slack 通知が不要な期間に、 コードを書き換えずに止められ�
 - `prek run --all-files check-yaml` が PASS すること
 - リポジトリ変数 `SLACK_NOTIFY` に `false` を設定して通知が止まること (設定手順を解決方法に残す)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `.github/workflows/wheel.yml` の通知 2 箇所の `if:` に `vars.SLACK_NOTIFY != 'false'` を追加した (変数が未設定または `true` なら従来どおり通知する)
+- リポジトリ変数 `SLACK_NOTIFY=false` を設定し、 通知を止めた。 再開は `gh variable set SLACK_NOTIFY --body true`、 または変数を削除する
+- 検証
+  - `prek run --all-files check-yaml` が PASS
+  - `gh variable list` で `SLACK_NOTIFY=false` が設定されていることを確認した
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
