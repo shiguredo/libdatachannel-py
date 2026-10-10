@@ -40,9 +40,12 @@ callback が wrapper 自身を捕捉している (閉包や束縛メソッド) �
   - wrapper を捕捉する callback (`lambda state: (pc, state)`) を登録し、 `close()` してから破棄する子プロセス用スクリプト
 - `tests/test_leak.py` (新規)
   - 上記を subprocess で実行し、 終了コード 0 と `nanobind: leaked` が stderr に出ないことを検証する
+- `tests/test_peerconnection.py::test_data_channel_close_releases_gil` の後始末を修正した
+  - このテストがリークの実体だった (`make_loopback_with_pli` の callback が wrapper を捕捉し、 `PeerConnection` を閉じずに `gc.collect()` だけしていた)。 `pc1.close()` / `pc2.close()` を呼ぶようにした
 - 検証
-  - `tests/test_leak.py` が pass する (close を外すと `nanobind: leaked` で失敗することを確認する)
-  - 全体 173 passed / 12 skipped / 2 deselected
+  - `tests/test_leak.py` が pass する (close を外すと `nanobind: leaked` が出ることを実測)
+  - suite 全体で `nanobind: leaked` が出ないこと (0 件) を確認
+  - 全体 172 passed / 12 skipped / 2 deselected、 `prek run --all-files ty` が PASS
   - `/review-diff-code` の致命的 / 重要指摘が 0 件
 - 恒久対処 (弱参照 caster) は挙動変化を伴うため未実施。 実施するかは別途判断する
 

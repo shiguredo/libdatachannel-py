@@ -730,7 +730,7 @@ def test_data_channel_close_releases_gil() -> None:
     if not getattr(sys, "_is_gil_enabled", lambda: True)():
         pytest.skip("GIL が無いビルド (free-threading) では GIL 解放を測れない")
 
-    _pc1, _pc2, _t1, _t2, data_channel = make_loopback_with_pli(lambda: None)
+    pc1, pc2, _t1, _t2, data_channel = make_loopback_with_pli(lambda: None)
 
     counter = 0
     stop = False
@@ -772,10 +772,13 @@ def test_data_channel_close_releases_gil() -> None:
         stop = True
         sys.setswitchinterval(original_interval)
         thread.join(timeout=5)
-        # ループバックは相互参照を持つため、 明示的に回収する。 閉じた DataChannel が
-        # 残ると nanobind のリーク警告がインタプリタ終了時に出る
+        # callback が wrapper 自身を捕捉しているため、 close() を呼ばないと Python の
+        # GC から見えない循環ができて解放されない (issue 0052)。 gc.collect() では回収
+        # できないため、 PeerConnection を明示的に閉じる
+        pc1.close()
+        pc2.close()
         del data_channel
-        del _pc1, _pc2, _t1, _t2
+        del _t1, _t2
         gc.collect()
 
     assert released > 0, "close() が GIL を解放していない"
