@@ -537,10 +537,26 @@ void bind_candidate(nb::module_& m) {
       .def("family", &Candidate::family)
       .def("address", &Candidate::address)
       .def("port", &Candidate::port)
-      .def(nb::self == nb::self,
-           nb::sig("def __eq__(self, arg: object, /) -> bool"))
-      .def(nb::self != nb::self,
-           nb::sig("def __ne__(self, arg: object, /) -> bool"))
+      // Python の規約では __eq__ を定義したクラスは __hash__ も必要で、 __ne__ は
+      // __eq__ の否定でなければならない。 libdatachannel の operator== は
+      // (foundation / service / node) を、 operator!= は foundation のみを比較しており
+      // 非対称なため、 binding は SDP の candidate 行 (candidate()) で比較する。
+      // __ne__ はバインドせず、 Python に __eq__ の否定を導出させる
+      .def(
+          "__eq__",
+          [](const Candidate& self, nb::handle other) {
+            if (!nb::isinstance<Candidate>(other))
+              return false;
+            return self.candidate() ==
+                   nb::cast<const Candidate&>(other).candidate();
+          },
+          "other"_a, nb::sig("def __eq__(self, other: object, /) -> bool"))
+      // __eq__ と同じ値 (SDP の candidate 行) から作る
+      .def("__hash__",
+           [](const Candidate& self) {
+             return static_cast<size_t>(
+                 std::hash<std::string>{}(self.candidate()));
+           })
       .def("__str__",
            [](const Candidate& c) { return static_cast<std::string>(c); });
 }

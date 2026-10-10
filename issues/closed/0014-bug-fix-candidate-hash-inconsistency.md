@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-candidate-hash-inconsistency
 - Polished: 2026-10-10
 
@@ -50,6 +50,21 @@ assert len({c1, c2}) == 1  # 2 になる
 - `prek run --all-files pytest` と `prek run --all-files ty` が PASS すること (`uv sync` は `make develop` で入れた拡張モジュールを削除するため使わない)
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp`
+  - `Candidate` の `__eq__` を SDP の candidate 行 (`candidate()`) の比較に変え、 同じ値から `__hash__` を作るようにした。 これまで `nb::self == nb::self` で libdatachannel の `Candidate::operator==` をそのまま使い、 `__hash__` が無かったため、 `==` が True でも hash が異なり dict / set で畳み込まれなかった
+  - `__ne__` のバインドを外した。 libdatachannel の `operator!=` は foundation のみを比較しており `==` と非対称で、 同じ foundation で node が違う場合に `==` も `!=` も False になっていた。 Python が `__eq__` の否定を導出するようになる
+  - `__eq__` は `Candidate` 以外と比較されたときも False を返す (`None` との比較のみ nanobind の引数変換の都合で TypeError になる。 修正前からの挙動で本 issue の範囲外)
+- `tests/test_candidate.py`
+  - 同じ candidate 行の 2 つが `==` かつ同一 hash であること、 dict / set で 1 つに畳まれること、 `!=` が `==` の否定であること (同じ foundation で node だけ違う場合を含む)、 candidate 行が違えば等しくないこと、 `Candidate` 以外と比較して False を返すことを追加した
+- `CHANGES.md`
+  - `## develop` に `[FIX]` として記録した
+- 検証
+  - `tests/test_candidate.py` 9 passed、 全体 174 passed / 12 skipped / 1 deselected
+  - `prek run --all-files ty` が PASS
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
 
 ## 参考
 
