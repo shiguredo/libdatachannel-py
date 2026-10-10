@@ -4,10 +4,12 @@
 """
 
 import gc
+import subprocess
 import sys
 import threading
 import time
 import weakref
+from pathlib import Path
 
 import pytest
 
@@ -150,3 +152,39 @@ def test_del_calls_stop_on_python_subclass() -> None:
 
     assert del_called == [True]
     assert del_errors == [], f"binding の __del__ が異常終了した: {del_errors}"
+
+
+# callback の例外は libjuice の C callback から直呼びされる経路で std::terminate に
+# なるため、 pytest プロセス内では実行せず subprocess で起動して終了コードを見る
+# (pytest-timeout はネイティブ側の停止では発火しない)
+_CRASH_REPRODUCTION_TIMEOUT = 60
+
+
+def _run_crash_reproduction() -> subprocess.CompletedProcess[str]:
+    """callback の例外でプロセスが落ちないかを子プロセスで確認する"""
+    script = Path(__file__).with_name("crash_reproduction_iceudpmuxlistener.py")
+    return subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=_CRASH_REPRODUCTION_TIMEOUT,
+        check=False,
+    )
+
+
+def test_callback_exception_does_not_crash() -> None:
+    """callback 内で例外を投げてもプロセスが落ちないこと
+
+    IceUdpMuxListener の callback は libjuice の C callback から直接呼ばれるため、
+    例外が C のフレームを横断すると std::terminate になる。 binding 側で受け止めて
+    RuntimeWarning として記録するため、 子プロセスは正常終了する。
+    """
+    result = _run_crash_reproduction()
+
+    assert result.returncode == 0, (
+        f"callback の例外でプロセスが落ちた: returncode={result.returncode} "
+        f"stderr={result.stderr[-2000:]}"
+    )
+    assert "callback called" in result.stdout, (
+        f"callback が呼ばれなかった: stdout={result.stdout!r} stderr={result.stderr[-2000:]}"
+    )
