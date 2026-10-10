@@ -4,7 +4,7 @@
 - Created: 2026-10-10
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-whip-handle-error-logger
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-10
 
 ## 目的
 
@@ -26,15 +26,16 @@
 
 ## 設計方針
 
-- `handle_error` を structlog の API に合わせて書き直す。 Debug 時のスタックトレースは `logger.debug(..., exc_info=True)` のように structlog で扱える形にするか、 トレースバック出力をやめて `logger.error` だけにする
-- `logging.DEBUG` の比較に structlog の logger を使わない (`structlog.is_configured()` や `logger.is_enabled_for` ではなく、 標準の `logging.getLogger()` を参照する形は避け、 structlog 側で完結させる)
-- whep.py と重複しないよう、 共有する関数として 1 箇所だけ直す
-- 例外時の振る舞いを検証できる形にする (examples は import が重いため、 検証方法を明確にする)
+- `handle_error` を structlog の API に合わせて書き直す。 `logger.error(...)` で出力し、 スタックトレースはレベル判定を自前でせず `logger.debug(..., exc_info=error)` に任せる (structlog は出力しないレベルでは例外を整形しないため、 `logging.DEBUG` の比較そのものが不要になる)
+- `whip.py` の `handle_error` は `whep.py` から `from whip import handle_error` で共有されている。 共有したまま検証できるよう、 この関数を `examples/error_logging.py` に切り出し、 `whip.py` はそこから import する (whep.py の import はそのまま動く)
+- 検証は `examples/whip.py` を import せずにできるようにする (`whip.py` は portaudio / uvc / webcodecs を import するため、 テストから直接読めない)。 `examples/rtp_timestamp.py` と同じく importlib で `examples/error_logging.py` を読み込み、 `handle_error` を呼ぶ
+- `structlog.testing` などのテスト用の差し替えではなく、 `capsys` で実際の出力を確認する。 Debug 有効時のトレースバックは `structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(...))` で再現し、 `structlog.reset_defaults()` で元に戻す
 
 ## 完了条件
 
-- `handle_error` が `AttributeError` を出さないこと (`uv run --no-sync python -c` で `handle_error` を直接呼び、 例外が出ないことを確認する)
-- 例外時に `logger.error` の出力が残ること
+- `tests/test_error_logging.py` で `handle_error` を呼んでも `AttributeError` が出ないこと
+- 例外時に `logger.error` の出力 (`Error <context>: <error>`) が残ること
+- Debug ログが有効な場合はスタックトレースが出力され、 Info レベルでは出力されないこと
 - `prek run --all-files pytest` と `prek run --all-files ty` が PASS すること
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
