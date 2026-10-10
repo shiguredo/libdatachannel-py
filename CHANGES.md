@@ -127,6 +127,10 @@
   - なお、 AV1 で SequenceHeader をキャッシュした後は max_fragment_size が 2 + SequenceHeader 長 未満だとヒープを壊す経路が残る。 SequenceHeader のキャッシュの有無は binding から判定できないため、 根本解消は libdatachannel 側の修正が必要である
   - @voluntas
 
+- [FIX] 未対応の Windows を PyPI の classifiers と CMakeLists.txt の表明から外す
+  - README は未対応 (優先実装) としているため、 表明を README に合わせる
+  - @voluntas
+
 ### misc
 
 - [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する

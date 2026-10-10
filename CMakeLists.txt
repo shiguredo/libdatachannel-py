@@ -3,7 +3,7 @@ project(libdatachannel_py LANGUAGES CXX)
 
 # プラットフォームチェック
 if(NOT APPLE AND NOT UNIX AND NOT WIN32)
-  message(FATAL_ERROR "This package supports macOS, Linux (Ubuntu), and Windows.")
+  message(FATAL_ERROR "This package supports macOS and Linux (Ubuntu).")
 endif()
 
 # ExternalProject の依存関係は _deps 配下で管理
@@ -54,6 +54,8 @@ set(MBEDTLS_SOURCE_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/source")
 set(MBEDTLS_BUILD_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/build")
 set(MBEDTLS_INSTALL_DIR "${DEPS_DIR}/mbedtls/${MBEDTLS_TAG}/install")
 
+# Windows は現状未対応。 優先実装として受注した際に使う分岐
+# (対応時は classifiers と README も更新する)
 # Windows では .lib、それ以外では .a
 if(WIN32)
   set(MBEDTLS_LIB ${MBEDTLS_INSTALL_DIR}/lib/mbedtls.lib)
