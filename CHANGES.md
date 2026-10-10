@@ -9,7 +9,9 @@
 - FIX
   - バグ修正
 
-## develop
+## 2026.1.0
+
+**リリース日**: 2026-10-10
 
 - [CHANGE] `Media.as_audio()` / `Media.as_video()` が参照を返すようにする
   - 従来は値コピーを返しており、 戻り値への codec 追加が元の `Media` に反映されなかった
@@ -30,6 +32,11 @@
   - `size` は `len(data)` から導出できるため、 size を取らない版 (`send` は 1 引数、 `send_frame` は `data` と `info`) とスライス (`data[:size]`) で置き換えられる (`size` を渡して呼ぶと `TypeError` になる)
   - `Channel` 側の同じ版は binding の削除 (develop の `[FIX]` エントリ) で既に対応済み
   - @voluntas
+- [ADD] Python 3.14t に対応する
+  - Free Threading 対応
+  - @voluntas
+- [ADD] Python 3.12 に対応する
+  - @voluntas
 - [UPDATE] examples/whip.py と examples/whep.py が Trickle ICE の PATCH で local candidate を送るようにする
   - 201 Created を受信するまで candidate を保持し、 受信後に 1 つの HTTP PATCH (`application/trickle-ice-sdpfrag`) でまとめて送る (RFC 9725 Section 4.3.2 / draft-ietf-wish-whep-03 Section 4.4.2)
   - ICE server の有無にかかわらず gathering し、 host candidate も伝える
@@ -43,11 +50,6 @@
 - [UPDATE] nanobind の最小バージョンを 3.1.0 にする
   - nanobind 3 では `NB_TRAMPOLINE` の size 引数が不要になったため削除し、 型 caster の `flags` を `uint32_t` に広げて `noexcept` を付ける
   - `nb::gil_scoped_acquire::is_valid()` を使い、 interpreter 停止中は Python API を触らずに終了するようにする (Python 3.15 以降で必要)
-  - @voluntas
-- [ADD] Python 3.14t に対応する
-  - Free Threading 対応
-  - @voluntas
-- [ADD] Python 3.12 に対応する
   - @voluntas
 - [FIX] IceUdpMuxListener の stop() を GIL 解放下で実行するようにする
   - 内部 thread の join が Python callback の GIL 待ちと噛み合って恒停し得るため、 GIL を解放して停止する
