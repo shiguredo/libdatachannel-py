@@ -2,9 +2,9 @@
 
 - Priority: Medium
 - Created: 2026-08-30
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-flaky-concurrent-datachannel
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-10
 
 ## 目的
 
@@ -32,8 +32,18 @@ tests/test_free_threading.py の test_concurrent_datachannel_creation は 4 ス�
 
 - テストが断続的に失敗しないこと
 - 失敗時に原因 (例外) が確認できること
-- `uv sync && make test` で全テストが PASS すること
+- `prek run --all-files pytest` と `prek run --all-files ty` が PASS すること (`uv sync` は `make develop` で入れた拡張モジュールを削除するため使わない)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `tests/test_free_threading.py`
+  - `test_concurrent_datachannel_creation` の `PeerConnection` を `disable_auto_negotiation = True` で作るようにした。 auto negotiation が有効なままだと `create_data_channel()` が `setLocalDescription(Offer)` を呼び、 2 番手以降が signaling state の競合で `std::logic_error` になるため
+  - スレッド内の例外を `errors` に集めてテストで検証するようにした (同ファイルの他のテストと同じ書き方)。 これまでは例外が `results` の件数不足として現れるだけで、 原因が分からなかった
+- 検証
+  - `tests/test_free_threading.py` は free-threading ビルドでのみ実行されるため、 通常ビルドでは skip される (12 skipped)。 実行結果は CI の free-threading leg で確認する
+  - `prek run --all-files pytest` と `prek run --all-files ty` が PASS
+  - `/review-diff-code` の致命的 / 重要指摘が 0 件
 
 ## 参考
 
