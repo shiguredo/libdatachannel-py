@@ -480,7 +480,8 @@ void bind_description(nb::module_& m) {
       // Application* を返す非 const 版を使う
       .def("application", nb::overload_cast<>(&Description::application),
            nb::rv_policy::copy,
-           "戻り値はコピーのため、 書き換えても Description には反映されない");
+           "戻り値はコピーのため、 書き換えても Description には反映されない。 "
+           "application が無いときは None になる");
 }
 
 // ---- candidate.hpp ----

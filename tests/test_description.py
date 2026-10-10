@@ -240,13 +240,13 @@ def test_media_copy_is_not_invalidated_by_clear_media() -> None:
     assert media.mid() == mid
 
     desc.clear_media()
-    # 解放された領域が再利用されるようヒープを撹拌する
-    churn = [bytearray(4096) for _ in range(256)]
+    # 解放された領域が再利用されるよう、 同じ大きさの確保と解放を繰り返す
+    for _ in range(256):
+        bytearray(4096)
 
     # 破壊的操作のあとに触っても落ちず、 取得時の値を保つ
     assert media.mid() == mid
     assert desc.media_count() == 0
-    assert len(churn) == 256
 
 
 def test_media_copy_does_not_change_description() -> None:
@@ -267,6 +267,19 @@ def test_media_copy_does_not_change_description() -> None:
     assert "a=rtpmap:96 H264/90000" not in str(desc)
     # 戻り値は毎回別のオブジェクト (参照返しへの回帰を直接検出する)
     assert desc.media(0) is not desc.media(0)
+
+
+def test_application_returns_none_when_absent() -> None:
+    """application が無い Description では application() が None を返すこと
+
+    media() / application() はコピーを返すため、 実体が無い場合の戻り値も固定しておく。
+    """
+    desc = Description("v=0...")
+    assert desc.application() is None
+
+    desc.add_application("data")
+    application = desc.application()
+    assert isinstance(application, Description.Application)
 
 
 def test_application_copy_is_not_invalidated_by_add_media_application() -> None:
