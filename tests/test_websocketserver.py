@@ -37,24 +37,21 @@ def test_websocketserver():
 
     def server_on_client(incoming):
         nonlocal client
-        print("WebSocketServer: Client connection received")
         client = incoming
 
         addr = client.remote_address()
         if addr is not None:
-            print(f"WebSocketServer: Client remote address is {addr}")
+            pass
 
         def client_on_open():
             nonlocal client
-            print("WebSocketServer: Client connection open")
             assert client is not None
             path = client.path()
             if path is not None:
-                print(f"WebSocketServer: Requested path is {path}")
+                pass
             client_opened.set()
 
         def client_on_closed():
-            print("WebSocketServer: Client connection closed")
             client_closed.set()
 
         def client_on_message(message):
@@ -82,14 +79,12 @@ def test_websocketserver():
     max_size_received_event = threading.Event()
 
     def ws_on_open():
-        print("WebSocket: Open")
         assert ws is not None
         ws.send(b"\x00" * 1001)
         ws.send(my_message)
         ws_opened.set()
 
     def ws_on_closed():
-        print("WebSocket: Closed")
         ws_closed.set()
 
     ws.on_open(ws_on_open)
@@ -104,17 +99,15 @@ def test_websocketserver():
         if isinstance(message, str):
             received = message == my_message
             if received:
-                print("WebSocket: Received expected message")
                 message_received.set()
             else:
-                print("WebSocket: Received UNEXPECTED message")
+                pass
         else:
             max_size_received = len(message) == 1000
             if max_size_received:
-                print("WebSocket: Received large message truncated at max size")
                 max_size_received_event.set()
             else:
-                print("WebSocket: Received large message NOT TRUNCATED")
+                pass
 
     ws.on_message(ws_on_message)
 
@@ -143,8 +136,6 @@ def test_websocketserver():
     ws = None
     server = None
     client = None
-
-    print("Success")
 
 
 def test_stop_releases_gil() -> None:

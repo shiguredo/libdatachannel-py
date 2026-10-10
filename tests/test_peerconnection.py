@@ -90,18 +90,16 @@ def test_track():
     pc2 = PeerConnection(config2)
 
     def pc1_on_local_description(desc):
-        print("Description 1: " + str(desc))
         pc2.set_remote_description(Description(str(desc)))
 
     def pc1_on_local_candidate(candidate):
-        print("Candidate 1: " + str(candidate))
         pc2.add_remote_candidate(Candidate(str(candidate)))
 
     def pc1_on_state_change(state):
-        print("State 1: " + str(state))
+        pass
 
     def pc1_on_gathering_state_change(state):
-        print("Gathering state 1: " + str(state))
+        pass
 
     pc1.on_local_description(pc1_on_local_description)
     pc1.on_local_candidate(pc1_on_local_candidate)
@@ -109,18 +107,16 @@ def test_track():
     pc1.on_gathering_state_change(pc1_on_gathering_state_change)
 
     def pc2_on_local_description(desc):
-        print("Description 2: " + str(desc))
         pc1.set_remote_description(Description(str(desc)))
 
     def pc2_on_local_candidate(candidate):
-        print("Candidate 2: " + str(candidate))
         pc1.add_remote_candidate(Candidate(str(candidate)))
 
     def pc2_on_state_change(state):
-        print("State 2: " + str(state))
+        pass
 
     def pc2_on_gathering_state_change(state):
-        print("Gathering state 2: " + str(state))
+        pass
 
     pc2.on_local_description(pc2_on_local_description)
     pc2.on_local_candidate(pc2_on_local_candidate)
@@ -140,17 +136,13 @@ def test_track():
     def pc2_on_track(t):
         nonlocal t2
         mid = t.mid()
-        print(f'Track 2: Received track with mid "{mid}"')
         if mid != new_track_mid:
-            print("Wrong track mid", file=sys.stderr)
             return
 
         def t_on_open():
-            print(f'Track 2: Track with mid "{mid}" is open')
             t2_opened.set()
 
         def t_on_closed():
-            print(f'Track 2: Track with mid "{mid}" is closed')
             t2_closed.set()
 
         t.on_open(t_on_open)
@@ -233,8 +225,6 @@ def test_track():
 
     assert t1.is_closed()
     assert t2.is_closed()
-
-    print("Success")
 
 
 # test_track() と同じセットアップで、 明示的な close() なしに破棄する。 __del__
