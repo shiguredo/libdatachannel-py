@@ -41,6 +41,7 @@ import uvc
 from blend2d import CompOp, Context, Image, Path
 
 # このファイルを直接実行すると examples ディレクトリが sys.path に入る
+from error_logging import handle_error
 from rtp_timestamp import RtpTimestampCalculator
 
 # libdatachannel-py
@@ -121,15 +122,6 @@ def send_trickle_ice_patch(
 # ============================================================================
 # ユーティリティ関数（whep.py と共有）
 # ============================================================================
-
-
-def handle_error(context: str, error: Exception) -> None:
-    """エラーハンドリング"""
-    logger.error(f"Error {context}: {error}")
-    if logger.isEnabledFor(logging.DEBUG):
-        import traceback
-
-        traceback.print_exc()
 
 
 def get_nal_type_name(nal_type: int) -> str:
