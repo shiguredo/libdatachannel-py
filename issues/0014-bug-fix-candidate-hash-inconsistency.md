@@ -4,7 +4,7 @@
 - Created: 2026-08-30
 - Completed: {YYYY-MM-DD}
 - Branch: feature/fix-candidate-hash-inconsistency
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-10
 
 ## 目的
 
@@ -36,14 +36,19 @@ assert len({c1, c2}) == 1  # 2 になる
 
 ## 設計方針
 
-- `candidate()` 文字列ベースで __hash__ を定義する
-- 併せて __eq__ の比較対象 (mid を含むか等) の仕様を確認し、テストで固定する
+- `bind_candidate` の `__eq__` を SDP の candidate 行 (`candidate()`) の比較に変え、 `__hash__` を同じ値から作り、 `__ne__` は明示的にバインドしない (Python が `__eq__` の否定として導出する)
+  - 現在の `nb::self == nb::self` は libdatachannel の `Candidate::operator==` (foundation / service / node の比較) をそのまま使っており、 candidate 行で表される値 (priority や type) が違っても等しいと判定される。 `__hash__` を candidate 行から作ると「等しいのに hash が違う」状態が残るため、 比較と hash の対象を candidate 行に揃える
+  - `Operator!=` は foundation のみを比較しており `==` と非対称 (同じ foundation で node が違うと `==` も `!=` も False)。 明示的な `__ne__` のバインドを外して Python の導出に任せる
+- `__eq__` は `Candidate` 以外の object と比較されたときに例外を投げず False を返す
+- テストで固定する内容: 同じ candidate 行の 2 つが `==` かつ同一 hash であること、 `!=` が `==` の否定であること、 dict / set で 1 つに畳まれること、 candidate 行が違えば等しくないこと
 
 ## 完了条件
 
 - `==` が True の Candidate が同一 hash を持つこと (テストで検証)
+- `!=` が `==` の否定になっていること (同じ foundation で node だけ違う場合を含む)
 - dict / set での等価性のテストが追加されていること
-- `uv sync && make test` で全テストが PASS すること
+- `prek run --all-files pytest` と `prek run --all-files ty` が PASS すること (`uv sync` は `make develop` で入れた拡張モジュールを削除するため使わない)
+- `CHANGES.md` の `## develop` に `[FIX]` として記録すること
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
