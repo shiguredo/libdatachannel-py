@@ -129,6 +129,11 @@
 
 ### misc
 
+- [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する
+  - `CMakeLists.txt` の `_deps` を捨てる条件が、 無効化されたままの行 (//#define) に誤マッチしていた
+  - `wheel.yml` と `prek.yml` の `_deps` キャッシュキーに世代を付け、 修正前のキャッシュを復元させない
+  - @voluntas
+
 - [FIX] CI の pytest リトライを削除する
   - リトライに頼らず、 pytest の失敗をそのまま job の失敗として扱う (mbedTLS のスレッド対応で不安定要因を解消したため)
   - @voluntas
@@ -148,6 +153,9 @@
   - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
   - @voluntas
+- [FIX] IceUdpMuxListener の callback で例外を投げてもプロセスが落ちないようにする
+  - callback は libjuice の C callback から直接呼ばれるため、 Python の例外が C のフレームを横断すると std::terminate になっていた (実測: exit 134)
+  - binding 側で受け止めて RuntimeWarning として記録し、 STUN の未処理 request を送る実測テストを追加する
 - [FIX] examples/whip.py の RTP timestamp が長時間の配信で wrap せず、 送信が停止する問題を修正する
   - 毎フレームの差分の足し込みをやめ、 最初の dts からの経過時間から計算する (映像は 90000、 音声は 48000)
   - 乱数の初期値を維持したまま 32 bit で wrap させ、 丸め誤差の累積も解消する

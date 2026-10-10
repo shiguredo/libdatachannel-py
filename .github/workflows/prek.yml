@@ -53,10 +53,10 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _deps
-          key: ${{ runner.os }}-deps-ubuntu-24.04_x86_64-python-3.14-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
+          key: ${{ runner.os }}-deps-v2-ubuntu-24.04_x86_64-python-3.14-${{ hashFiles('deps.json', 'CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-deps-ubuntu-24.04_x86_64-python-3.14-
-            ${{ runner.os }}-deps-ubuntu-24.04_x86_64-
+            ${{ runner.os }}-deps-v2-ubuntu-24.04_x86_64-python-3.14-
+            ${{ runner.os }}-deps-v2-ubuntu-24.04_x86_64-
 
       - name: Build wheel
         run: uv build --wheel
