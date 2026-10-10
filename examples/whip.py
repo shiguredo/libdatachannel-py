@@ -41,7 +41,7 @@ import uvc
 from blend2d import CompOp, Context, Image, Path
 
 # このファイルを直接実行すると examples ディレクトリが sys.path に入る
-from rtp_timestamp import compute_rtp_timestamp
+from rtp_timestamp import RtpTimestampCalculator
 
 # libdatachannel-py
 from trickle_ice import build_sdp_fragment, wait_for_ice_gathering
@@ -627,12 +627,11 @@ class WHIPClient:
         self.renderer: Blend2DRenderer | None = None
         self.audio_frame_size = 960  # 20ms @ 48kHz
 
-        # タイムスタンプ用（前フレームからの duration でインクリメント）
+        # デバッグログの duration 用（前フレームとの差分）
         self.last_video_dts_usec: int = 0
-        self.last_audio_dts_usec: int = 0
-        # 最初の dts (経過時間の基準)。 最初のフレームで設定する
-        self.first_video_dts_usec: int | None = None
-        self.first_audio_dts_usec: int | None = None
+        # RTP timestamp の計算（最初の dts を基準にする）
+        self.video_rtp_timestamp: RtpTimestampCalculator | None = None
+        self.audio_rtp_timestamp: RtpTimestampCalculator | None = None
 
         # Key frame interval（90秒ごと、ただし最初のフレームと PLI 応答時はキーフレーム）
         self.key_frame_interval_frames = self.video_fps * 90
@@ -839,18 +838,10 @@ class WHIPClient:
                 dts_usec = chunk.timestamp
                 duration = dts_usec - self.last_video_dts_usec
 
-                # 最初の dts からの経過時間でタイムスタンプを計算する。
-                # 毎フレームの差分を足し込むと丸め誤差が累積するため、 基準からの
-                # 経過時間から直接計算する (RTP の timestamp は 32 bit で wrap する)
-                if self.first_video_dts_usec is None:
-                    self.first_video_dts_usec = dts_usec
-                if self.video_config is not None:
-                    self.video_config.timestamp = compute_rtp_timestamp(
-                        self.video_config.start_timestamp,
-                        self.first_video_dts_usec,
-                        dts_usec,
-                        90000,
-                    )
+                # 最初の dts からの経過時間でタイムスタンプを計算する
+                # (RTP の timestamp は 32 bit で wrap する)
+                if self.video_rtp_timestamp is not None and self.video_config is not None:
+                    self.video_config.timestamp = self.video_rtp_timestamp.update(dts_usec)
 
                 # 送信
                 self.video_track.send(bytes(data))
@@ -919,6 +910,7 @@ class WHIPClient:
         )
         self.video_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
         self.video_config.timestamp = self.video_config.start_timestamp
+        self.video_rtp_timestamp = RtpTimestampCalculator(self.video_config.start_timestamp, 90000)
         self.video_config.sequence_number = random.randint(0, 0xFFFF)
 
         if self.codec == "av1":
@@ -992,6 +984,7 @@ class WHIPClient:
         )
         self.audio_config.start_timestamp = random.randint(0, 0xFFFFFFFF)
         self.audio_config.timestamp = self.audio_config.start_timestamp
+        self.audio_rtp_timestamp = RtpTimestampCalculator(self.audio_config.start_timestamp, 48000)
         self.audio_config.sequence_number = random.randint(0, 0xFFFF)
 
         self.audio_packetizer = OpusRtpPacketizer(self.audio_config)
@@ -1414,20 +1407,12 @@ class WHIPClient:
             timestamp_us, data = self.encoded_audio_queue.get_nowait()
 
             # 最初の dts からの経過時間でタイムスタンプを計算する (映像と同じ理由)
-            if self.first_audio_dts_usec is None:
-                self.first_audio_dts_usec = timestamp_us
-            if self.audio_config is not None:
-                self.audio_config.timestamp = compute_rtp_timestamp(
-                    self.audio_config.start_timestamp,
-                    self.first_audio_dts_usec,
-                    timestamp_us,
-                    48000,
-                )
+            if self.audio_rtp_timestamp is not None and self.audio_config is not None:
+                self.audio_config.timestamp = self.audio_rtp_timestamp.update(timestamp_us)
 
             self.audio_track.send(data)
 
             # 状態を更新
-            self.last_audio_dts_usec = timestamp_us
             self.encoded_audio_count += 1
 
             if self.encoded_audio_count % 100 == 0:

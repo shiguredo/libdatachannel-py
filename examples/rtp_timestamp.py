@@ -7,10 +7,10 @@ dts (マイクロ秒) から RTP timestamp を求める。 RTP の timestamp は
 from libdatachannel import RtpPacketizationConfig
 
 # RTP timestamp の上限 (32 bit)
-RTP_TIMESTAMP_MASK = (1 << 32) - 1
+RTP_TIMESTAMP_MASK: int = (1 << 32) - 1
 
 # dts はマイクロ秒
-MICROSECONDS_PER_SECOND = 1_000_000
+MICROSECONDS_PER_SECOND: int = 1_000_000
 
 
 def compute_rtp_timestamp(
@@ -39,3 +39,31 @@ def compute_rtp_timestamp(
         elapsed_seconds, clock_rate
     )
     return (start_timestamp + elapsed_timestamp) & RTP_TIMESTAMP_MASK
+
+
+class RtpTimestampCalculator:
+    """dts から RTP timestamp を計算する
+
+    最初の dts を基準にして、 そこからの経過時間から計算する。 毎フレームの差分を
+    足し込むと丸め誤差が累積するため、 基準からの経過時間から直接計算する。
+    """
+
+    def __init__(self, start_timestamp: int, clock_rate: int) -> None:
+        self._start_timestamp = start_timestamp
+        self._clock_rate = clock_rate
+        self._first_dts_usec: int | None = None
+
+    def update(self, dts_usec: int) -> int:
+        """フレームの dts から RTP timestamp を求める
+
+        Args:
+            dts_usec: 対象のフレームの dts (マイクロ秒)
+
+        Returns:
+            32 bit に収めた RTP timestamp
+        """
+        if self._first_dts_usec is None:
+            self._first_dts_usec = dts_usec
+        return compute_rtp_timestamp(
+            self._start_timestamp, self._first_dts_usec, dts_usec, self._clock_rate
+        )

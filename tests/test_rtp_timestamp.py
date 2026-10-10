@@ -17,6 +17,7 @@ assert _SPEC.loader is not None
 _SPEC.loader.exec_module(rtp_timestamp)
 
 compute_rtp_timestamp = rtp_timestamp.compute_rtp_timestamp
+RtpTimestampCalculator = rtp_timestamp.RtpTimestampCalculator
 
 # 映像のクロックレート (90 kHz) と Opus のクロックレート (48 kHz)
 VIDEO_CLOCK_RATE = 90000
@@ -36,8 +37,8 @@ AUDIO_CLOCK_RATE = 48000
         (1000, 1_000_000, AUDIO_CLOCK_RATE, 49000),
         # 2 秒で 2 クロックレート分だけ進む
         (0, 2_000_000, VIDEO_CLOCK_RATE, 180000),
-        # 端数は四捨五入する (0.45 クロックは 0)
-        (0, 5_000, VIDEO_CLOCK_RATE, 450),
+        # 端数は四捨五入する (499.95 クロックは 500)
+        (0, 5_555, VIDEO_CLOCK_RATE, 500),
         # 初期値から 32 bit を超えると wrap する
         (0xFFFFFFFF, 1_000_000, VIDEO_CLOCK_RATE, 89999),
         # 32 bit の上限を超えても例外にならず 32 bit に収まる
@@ -51,7 +52,7 @@ AUDIO_CLOCK_RATE = 48000
         "one_second_video",
         "one_second_audio",
         "two_seconds_elapsed",
-        "truncate_fraction",
+        "round_fraction",
         "wrap_video",
         "wrap_with_large_start",
         "wrap_audio",
@@ -84,23 +85,37 @@ def test_compute_rtp_timestamp_with_non_zero_first_dts() -> None:
 
 
 def test_compute_rtp_timestamp_does_not_accumulate_rounding_error() -> None:
-    """差分を足し込む方式と違い、 丸め誤差が累積しないこと
+    """フレームを連続で渡しても丸め誤差が累積しないこと
 
-    33.333 ms 間隔のフレームを 1000 枚送ると、 1 枚ごとに 90 kHz 換算で
-    2999.97 クロックとなり 0.97 クロックを切り捨てる。 1000 枚で 970 クロックの
-    ずれが累積するため、 経過時間から直接計算する (30 fps では 100 秒あたり
-    約 22 ms のずれになる)。
+    33.333 ms 間隔のフレームを 1000 枚送ると、 1 枚ごとの切り捨てを足し込む方式は
+    90 kHz 換算で 1 枚あたり 0.97 クロックを失い、 1000 枚で 970 クロックずれる。
+    基準からの経過時間で計算するため、 ずれは 1 クロック未満に収まる
+    (ずれはフレーム間隔によって変わり、 長時間の配信では無視できない大きさになる)。
     """
     frame_interval_usec = 33_333
     frames = 1000
-    first_dts_usec = 0
-    last_dts_usec = frame_interval_usec * frames
+    calculator = RtpTimestampCalculator(0, VIDEO_CLOCK_RATE)
 
-    # 毎フレームの差分を切り捨てて足し込む方式 (従来の計算)
+    # 1 枚ごとの切り捨てを足し込む方式 (従来の計算)
     accumulated = frame_interval_usec * VIDEO_CLOCK_RATE // 1_000_000 * frames
-    # 最初の dts からの経過時間から直接計算する方式
-    computed = compute_rtp_timestamp(0, first_dts_usec, last_dts_usec, VIDEO_CLOCK_RATE)
+    # フレーム列を連続で渡す (実装と同じ経路)
+    computed = 0
+    for index in range(frames + 1):
+        computed = calculator.update(frame_interval_usec * index)
 
     assert accumulated == 2_999_000
     assert computed == 2_999_970
     assert computed - accumulated == 970
+
+
+def test_rtp_timestamp_calculator_keeps_start_timestamp_on_first_frame() -> None:
+    """最初のフレームでは初期値をそのまま返すこと
+
+    RTP timestamp の初期値は乱数であるため、 0 から始めてはならない。
+    """
+    start_timestamp = 0xC0FFEE12
+    calculator = RtpTimestampCalculator(start_timestamp, VIDEO_CLOCK_RATE)
+
+    assert calculator.update(123_456) == start_timestamp
+    # 2 枚目は初期値から進む
+    assert calculator.update(123_456 + 1_000_000) == start_timestamp + 90_000

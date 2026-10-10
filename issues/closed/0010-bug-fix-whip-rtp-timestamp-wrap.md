@@ -37,13 +37,15 @@ config.timestamp = 0x100000000  # uint32 の範囲外 → TypeError
 - 初期値 `start_timestamp` (乱数) は維持する。 RTP timestamp の初期値は RFC 3550 Section 5.1 で乱数にすることが SHOULD とされており、 libdatachannel の `RtpPacketizationConfig` も同じ趣旨で `startTimestamp` を乱数にしている。 0 から始めると乱数だった現行の挙動からの説明なき逸脱になる
 - timestamp の計算に既存の `RtpPacketizationConfig.get_timestamp_from_seconds(seconds, clock_rate)` (静的メソッド。 `uint32_t(int64_t(round(seconds * clock_rate)))` で wrap する) を使い、 その結果に `start_timestamp` を足して 32 bit でマスクする。 自前の変換は作らない
 - 初回 dts からの絶対時間方式に変更し、 毎フレームの丸め誤差累積も解消する。 `first_video_dts_usec` / `first_audio_dts_usec` を `None` で初期化し、 最初のフレームの dts を設定してから経過秒を渡す。 映像は 90000、 音声は 48000 を渡す
-- 従来の `last_video_dts_usec` / `last_audio_dts_usec` は 0 初期化のみで、 初回フレームの duration が絶対 dts になっていた。 この点も上記で解消する
-- `examples/whip.py` は import 時に uvc / portaudio / webcodecs を要求するため `examples/` のコードを直接 import するテストは書かない。 検証は `RtpPacketizationConfig.get_timestamp_from_seconds` の wrap と丸めを `tests/test_packetizationconfig.py` で確認する
+- timestamp の計算は最初の dts を基準にするため、 0 初期化の `last_video_dts_usec` に依存しなくなる (`last_video_dts_usec` はデバッグログの duration 用に残る)
+- timestamp の計算は `examples/rtp_timestamp.py` の純関数 `compute_rtp_timestamp` に切り出し、 フレームごとの基準 dts は `RtpTimestampCalculator` が持つ
+- `tests/test_rtp_timestamp.py` から importlib で読み込み、 wrap・丸め・初期値の維持・フレーム列での非累積を検証する (`tests/test_trickle_ice.py` と同じ方式)
+- `examples/whip.py` は import 時に uvc / portaudio / webcodecs を要求するため、 example 本体を import するテストは書かない
 - whep.py は `frame_info.timestamp` を読むだけで timestamp を加算しないため対象外 (確認済み)
 
 ## 完了条件
 
-- `tests/test_packetizationconfig.py` に `get_timestamp_from_seconds` のテストを追加し、 32 bit の上限を超える入力が例外にならず wrap した値になることと、 端数が四捨五入されることを検証すること
+- `tests/test_rtp_timestamp.py` で、 32 bit の上限を超える入力が例外にならず wrap した値になること、 端数が四捨五入されること、 最初のフレームが初期値 (乱数) になること、 フレーム列を連続で渡しても丸め誤差が累積しないことを検証すること
 - 最初のフレームの timestamp が 0 ではなく `start_timestamp` (乱数) になること (映像と音声で `start_timestamp` を足していることをコードで確認する)
 - `make develop` のあと `uv run --no-sync python -m pytest tests/ -q --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close` と `prek run --all-files pytest` / `prek run --all-files ty` が PASS すること (deselect は恒停するテストのため必須)
 - `CHANGES.md` の `## develop` に `[FIX]` として記録すること
@@ -51,16 +53,19 @@ config.timestamp = 0x100000000  # uint32 の範囲外 → TypeError
 
 ## 解決方法
 
+- `examples/rtp_timestamp.py` (新規)
+  - `compute_rtp_timestamp(start_timestamp, first_dts_usec, dts_usec, clock_rate)` で、 最初の dts からの経過時間から RTP timestamp を求める。 `RtpPacketizationConfig.get_timestamp_from_seconds` を使い、 初期値 (乱数) を足して `& 0xFFFFFFFF` で 32 bit に収める
+  - フレームごとの基準 dts は `RtpTimestampCalculator` が持つ
 - `examples/whip.py`
-  - 映像 (`_setup_video_encoder` の `on_output`) と音声 (`_send_encoded_audio`) の timestamp 更新を、 毎フレームの差分の足し込みから「最初の dts からの経過時間」へ変更した。 `RtpPacketizationConfig.get_timestamp_from_seconds(seconds, clock_rate)` で経過時間を変換し、 `start_timestamp` (乱数) を足してから `& 0xFFFFFFFF` で wrap させる
-  - `first_video_dts_usec` / `first_audio_dts_usec` を追加し、 最初のフレームで設定する。 従来は `last_*_dts_usec` が 0 初期化のみで、 初回フレームの duration が絶対 dts になっていた
-- `tests/test_packetizationconfig.py`
-  - `get_timestamp_from_seconds` のテストを追加した (32 bit を超える入力で wrap すること、 端数が四捨五入されること)。 90 kHz で 100000 秒 (= 2^32 を 2 周) を渡しても例外にならず 410065408 になる
+  - 映像 (`_setup_video_encoder` の `on_output`) と音声 (`_send_encoded_audio`) の timestamp 更新を `RtpTimestampCalculator` に置き換えた。 毎フレームの差分の足し込みをやめ、 丸め誤差の累積をなくした (30 fps では 100 秒あたり数十 ms のずれが累積していた)
+  - 使わなくなった `first_video_dts_usec` / `first_audio_dts_usec` / `last_audio_dts_usec` を削除した (`last_video_dts_usec` はデバッグログの duration 用に残る)
+- `tests/test_rtp_timestamp.py` (新規)
+  - wrap・丸め・初期値の維持 (最初のフレームは初期値のまま)・フレーム列を連続で渡したときの非累積を検証する 12 テスト
 - 検証
-  - `tests/test_packetizationconfig.py` 12 passed
-  - `/review-diff-code` 3 周で致命的 0 / 重要 0
-  - 手動確認は `--fake-capture-device` で `start_timestamp` を `0xFFFFFF00` 付近に固定して行う (WHIP サーバーが必要なため自動テストの対象外)
-- 併せて、 `handle_error` が `logger.isEnabledFor` で `AttributeError` になる不具合を別 issue として起票した (例外処理の前提が壊れているため、 0010 とは分けて対応する)
+  - `tests/test_rtp_timestamp.py` 12 passed、 全体 163 passed / 12 skipped / 1 deselected
+  - `prek run --all-files pytest` と `prek run --all-files ty` が PASS
+  - 手動確認 (WHIP サーバーが要るため未実施): `--fake-capture-device` で `start_timestamp` を `0xFFFFFF00` 付近に固定し、 長時間動かしても送信が継続することを確認する
+- 併せて、 `handle_error` が `logger.isEnabledFor` で `AttributeError` になる不具合を別 issue として起票した
 
 ## スコープ外 (関連する未解決問題)
 
