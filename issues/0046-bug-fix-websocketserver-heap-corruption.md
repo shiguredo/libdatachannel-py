@@ -53,7 +53,7 @@
 - `CMakeLists.txt` のガードが、 無効化されたままの行 (`//#define MBEDTLS_THREADING_C`) では再ビルドが走り、 有効な define では走らないこと (`cmake -P` の確認で示す)
 - CI (wheel.yml) の全 leg が PASS すること
 - 影響していた leg のログで `-- Building MbedTLS...` (再ビルド) が出ること
-- `CHANGES.md` の `## develop` に `[FIX]` として記録すること
+- `CHANGES.md` の `## develop` の `### misc` に記録すること (利用者に見える挙動は変わらないため)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 - 破壊箇所が特定できない場合は、 残る候補と次の調査手順が issue に記録されていること (今回特定できたため対象外)
 
