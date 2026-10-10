@@ -36,7 +36,7 @@ config.timestamp = 0x100000000  # uint32 の範囲外 → TypeError
 
 - 初期値 `start_timestamp` (乱数) は維持する。 RTP timestamp の初期値は RFC 3550 Section 5.1 で乱数にすることが SHOULD とされており、 libdatachannel の `RtpPacketizationConfig` も同じ趣旨で `startTimestamp` を乱数にしている。 0 から始めると乱数だった現行の挙動からの説明なき逸脱になる
 - timestamp の計算に既存の `RtpPacketizationConfig.get_timestamp_from_seconds(seconds, clock_rate)` (静的メソッド。 `uint32_t(int64_t(round(seconds * clock_rate)))` で wrap する) を使い、 その結果に `start_timestamp` を足して 32 bit でマスクする。 自前の変換は作らない
-- 初回 dts からの絶対時間方式に変更し、 毎フレームの丸め誤差累積も解消する。 `first_video_dts_usec` / `first_audio_dts_usec` を `None` で初期化し、 最初のフレームの dts を設定してから経過秒を渡す。 映像は 90000、 音声は 48000 を渡す
+- 初回 dts からの絶対時間方式に変更し、 毎フレームの丸め誤差累積も解消する。 最初のフレームの dts を基準として保持し、 経過秒を渡す (映像は 90000、 音声は 48000)
 - timestamp の計算は最初の dts を基準にするため、 0 初期化の `last_video_dts_usec` に依存しなくなる (`last_video_dts_usec` はデバッグログの duration 用に残る)
 - timestamp の計算は `examples/rtp_timestamp.py` の純関数 `compute_rtp_timestamp` に切り出し、 フレームごとの基準 dts は `RtpTimestampCalculator` が持つ
 - `tests/test_rtp_timestamp.py` から importlib で読み込み、 wrap・丸め・初期値の維持・フレーム列での非累積を検証する (`tests/test_trickle_ice.py` と同じ方式)
