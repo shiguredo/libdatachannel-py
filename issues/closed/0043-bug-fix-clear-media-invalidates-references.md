@@ -2,7 +2,7 @@
 
 - Priority: High
 - Created: 2026-10-09
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-10
 - Branch: feature/fix-clear-media-invalidates-references
 - Polished: 2026-10-10
 
@@ -61,6 +61,29 @@ m.mid()  # 解放済みの Media を参照 → SIGSEGV (exit 139)
 - `CHANGES.md` の `## develop` にある 0013 の `[CHANGE]` エントリにある「既存の media には … `add_rtp_map()` へ渡して追加する」という案内と、 binding の `as_audio()` / `as_video()` の docstring、 `get_media` のコメント、 `tests/test_description.py` の参照の寿命に関するテストの docstring を、 コピーを返す挙動に合わせて修正すること
 - libdatachannel に `shared_ptr` を返す API を足す提案の内容を、 解決方法に記録すること (この issue では upstream への提案までとし、 実装はしない)
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
+
+## 解決方法
+
+- `src/bind_libdatachannel.cpp`
+  - `Description.media()` (`get_media`) と `Description.application()` が、 内部の実体への参照ではなく値 (コピー) を返すようにした。 実体は `Description` が持つ `Entry` / `mApplication` にあり、 `clear_media()` / `add_media(Application)` / `add_application()` がそれらを解放するため、 参照を返していると取得済みの戻り値が use-after-free になり SIGSEGV になっていた (実測: exit 139)
+  - コピーのため、 破壊的操作のあとでも以前に取得した戻り値は取得時の値を返し続ける
+  - 戻り値を書き換えても `Description` には反映されなくなる。 codec などを足す場合は codec を足した media を組み立ててから `add_media()` する。 後方互換のない変更のため `[CHANGE]` として `CHANGES.md` に記録し、 docstring にも明記した
+  - `application()` に `nb::sig` を付け、 生成スタブでも `Description.Application | None` になるようにした (application が無いときは None になる)
+  - 恒久的には libdatachannel 側に `shared_ptr` を返す API を足して、 参照のまま安全に扱えるようにするのが本筋である。 ただし `Description` の `mEntries` / `mApplication` は private で、 `_deps` の libdatachannel に patch を当てる仕組みも無いため、 この issue では binding 側のコピーで対応した。 upstream への提案内容は次のとおり (この issue では実施しない)
+    - `Description` に `Entry` の `shared_ptr` を返す参照取得 API を足す (例: `std::shared_ptr<Entry> entry(int index)`)
+    - binding はそれを保持して戻り値の生存を保証でき、 参照のまま (書き換えも `Description` に反映される形で) 安全に扱えるようになる
+- `tests/test_description.py`
+  - `clear_media()` / `add_media(Application)` / `add_application()` の 3 経路それぞれで、 破壊的操作のあとも以前に取得した戻り値が取得時の値を返すことを確認するテストを追加した
+  - コピーであることを `is not` で直接固定し、 戻り値への書き換えが `Description` に反映されないことを確認するテストを追加した
+  - `application()` が実体の無いときに None を返すことを確認するテストを追加した
+  - 書き戻しに依存していた `test_add_rtp_map_adds_codec_to_media` を、 codec を足した media を組み立ててから `add_media()` する形 (`test_add_rtp_map_before_add_media_adds_codec`) に置き換えた
+  - 参照の寿命に関するテストの docstring を、 コピーを返す挙動に合わせて更新した
+- `CHANGES.md`
+  - `## develop` に `[CHANGE]` を追記し、 0013 のエントリの「既存の media には `add_rtp_map()` で追加する」という案内と、 0008 のエントリの対象 (`config()` のみ) を最終状態に合わせて更新した
+- 検証
+  - `tests/test_description.py` 21 passed、 全体 151 passed / 12 skipped / 1 deselected
+  - `/review-diff-code` 3 周で致命的 0 / 重要 0 (修正前のバイナリで新しいテストが落ちることも実測で確認した)
+  - `prek run --all-files ty` が PASS
 
 ## スコープ外 (関連する未解決問題)
 
