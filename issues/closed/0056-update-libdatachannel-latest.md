@@ -33,7 +33,7 @@ deps.json の libdatachannel.tag を v0.24.6 に変えて `uv build --wheel` を
 - deps.json の libdatachannel.tag は v0.24.2
 - CMakeLists.txt は deps.json の tag を ExternalProject で取得してソースからビルドする。 ビルドディレクトリは _deps/libdatachannel/<tag>/ で tag ごとに分かれ、 CI のキャッシュキーも deps.json のハッシュを含むため、 tag の変更で再ビルドされる
 - v0.24.6 では同梱される libjuice (v1.7.0 → v1.7.4) と libsrtp (v2.7.0 → v2.8.0) のバージョンが上がる。 usrsctp は変わらない
-- 公開 API の変更は追加と非推奨化が中心で、 binding が使う経路には影響しない (RtcpReportBlock::getNTPOfSR の戻り値が uint32_t から uint64_t に変わるが未 binding。 RtcpRemb の API 追加と setSsrc / getNumSSRC の非推奨化があるが RtcpRemb は未使用。 PacingHandler::run は private 追加)
+- 公開 API の変更は追加と非推奨化が中心で、 binding が使う経路には影響しない (RtcpReportBlock::getNTPOfSR の戻り値が uint32_t から uint64_t に変わるが未 binding。 RtcpRemb の API 追加と setSsrc / getNumSSRC の非推奨化があるが RtcpRemb は未使用)
 
 ## 設計方針
 

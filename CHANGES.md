@@ -55,6 +55,7 @@
   - @voluntas
 - [UPDATE] libdatachannel のバージョンを v0.24.6 に上げる
   - deps.json の libdatachannel を v0.24.6 にする
+  - DTLS の受信キュー溢れや TURN リレーでの DTLS ハンドシェイク恒停などが修正される
   - @voluntas
 - [UPDATE] auditwheel の使用方法を uvx コマンドに変更する
   - wheel を修復する処理を uvx auditwheel repair に変更する
