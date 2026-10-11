@@ -4,7 +4,7 @@
     "url": "https://github.com/Mbed-TLS/mbedtls"
   },
   "libdatachannel": {
-    "tag": "v0.24.2",
+    "tag": "v0.24.6",
     "url": "https://github.com/paullouisageneau/libdatachannel"
   }
 }
