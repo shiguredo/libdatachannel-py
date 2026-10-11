@@ -48,7 +48,7 @@ deps.json の libdatachannel.tag を v0.24.6 に変えて `uv build --wheel` を
 
 - deps.json の libdatachannel.tag が v0.24.6 になっている
 - `uv build --wheel` が成功する
-- `make develop` の後に CI と同じ 2 件 (`test_destruct_without_explicit_close` と `test_track`) を deselect した pytest が全件 PASS する
+- `make develop` の後に `.venv/bin/python -m pytest tests/ -q --timeout=600 --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close --deselect tests/test_peerconnection.py::test_track` が全件 PASS する (`make test` は deselect を渡さず、 `uv run` は sync で `make develop` が入れた拡張モジュールを消す場合があるため使わない)
 - prek のフック (ruff / ty / check-toml / check-yaml / clang-format) が PASS する
 - CI (wheel.yml の 24 leg と prek.yml) が PASS する
 - CHANGES.md の `## develop` に `[UPDATE] libdatachannel のバージョンを v0.24.6 に上げる` と担当者行があり、 中間状態の v0.24.2 のエントリが残っていない
