@@ -49,8 +49,9 @@
   - nanobind 3 では `NB_TRAMPOLINE` の size 引数が不要になったため削除し、 型 caster の `flags` を `uint32_t` に広げて `noexcept` を付ける
   - `nb::gil_scoped_acquire::is_valid()` を使い、 interpreter 停止中は Python API を触らずに終了するようにする (Python 3.15 以降で必要)
   - @voluntas
-- [UPDATE] mbedTLS のバージョンを 3.6.5 に更新する
-  - deps.json の mbedtls を v3.6.5 にする
+- [UPDATE] mbedTLS のバージョンを v3.6.7 に上げる
+  - deps.json の mbedtls を v3.6.7 にする
+  - X.509 の basicConstraints が INTEGER で始まる非準拠の証明書を拒否するようになった
   - @voluntas
 - [UPDATE] libdatachannel のバージョンを v0.24.2 に上げる
   - deps.json の libdatachannel を v0.24.2 にする

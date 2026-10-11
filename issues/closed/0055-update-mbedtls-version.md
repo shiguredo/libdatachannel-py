@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-10-11
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-11
 - Branch: feature/update-mbedtls-version
 - Polished: 2026-10-11
 
@@ -55,3 +55,18 @@ deps.json の mbedtls.tag を v3.6.7 に変えて `uv build --wheel` を実行�
 - mbedtls 3.6.6: https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.6
 - mbedtls 3.6.7: https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.7
 - 対象: deps.json の mbedtls
+
+## 解決方法
+
+- `deps.json`
+  - `mbedtls.tag` を `v3.6.5` から `v3.6.7` に変更した (`url` は変更なし)
+- `CHANGES.md`
+  - `## develop` の `[UPDATE]` の中間状態だったエントリ (`mbedTLS のバージョンを 3.6.5 に更新する`) を `mbedTLS のバージョンを v3.6.7 に上げる` に置き換えた (2025.1.2 が使っていた 3.6.4 からの最終的な差分を示す 1 件にする)
+- `CMakeLists.txt` / `THIRD_PARTY_LICENSES.md` / README は変更していない (config.py のサブコマンドと threading の設定は 3.6 系で共通で、 mbedTLS のライセンス本文は v3.6.5 と同じで、 README にバージョン記載が無い)
+- 検証
+  - `make develop` が成功し、 `_deps/libdatachannel/v0.24.2/build/CMakeCache.txt` の `MbedTLS_ROOT` が `_deps/mbedtls/v3.6.7/install` を指すことを確認した (libdatachannel が v3.6.7 で再リンクされている)。 ローカルの `_deps/libdatachannel/v0.24.2/{build,install}` は mbedtls v3.6.5 でビルド済みだったため、 削除してから再ビルドさせた
+  - `_deps/mbedtls/v3.6.7/install/include/mbedtls/mbedtls_config.h` に MBEDTLS_THREADING_C / MBEDTLS_THREADING_PTHREAD / MBEDTLS_SSL_DTLS_SRTP が定義されていることを確認した
+  - インストール済みの拡張モジュールに `mbedtls/v3.6.7` のソースパスが埋め込まれ、 `mbedtls/v3.6.5` の文字列が 0 件であることを確認した (wheel に同梱される mbedTLS が v3.6.7 であることの確認)
+  - `make develop` の後に `.venv/bin/python -m pytest tests/ -q --timeout=600 --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close --deselect tests/test_peerconnection.py::test_track` を実行し、 176 passed / 12 skipped / 2 deselected だった
+  - `prek run --all-files check-toml` / `check-yaml` と `ruff format --check` / `ruff check` が Passed
+  - CI (wheel.yml の 24 leg と prek.yml) は PR で確認する
