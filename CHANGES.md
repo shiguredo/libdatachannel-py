@@ -52,6 +52,9 @@
 - [UPDATE] mbedTLS のバージョンを 3.6.5 に更新する
   - deps.json の mbedtls を v3.6.5 にする
   - @voluntas
+- [UPDATE] libdatachannel のバージョンを v0.24.2 に上げる
+  - deps.json の libdatachannel を v0.24.2 にする
+  - @voluntas
 - [UPDATE] auditwheel の使用方法を uvx コマンドに変更する
   - wheel を修復する処理を uvx auditwheel repair に変更する
   - @voluntas
