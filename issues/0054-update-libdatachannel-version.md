@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-10-11
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-11
 - Branch: feature/update-libdatachannel-version
 - Polished: 2026-10-11
 
@@ -54,3 +54,18 @@ deps.json の libdatachannel.tag を v0.24.2 に変えて `uv build --wheel` を
 - libdatachannel v0.24.1: https://github.com/paullouisageneau/libdatachannel/releases/tag/v0.24.1
 - libdatachannel v0.24.2: https://github.com/paullouisageneau/libdatachannel/releases/tag/v0.24.2
 - 対象: deps.json の libdatachannel
+
+## 解決方法
+
+- `deps.json`
+  - `libdatachannel.tag` を `v0.24.0` から `v0.24.2` に変更した (`url` は変更なし)
+- `CHANGES.md`
+  - `## develop` の `[UPDATE]` に `libdatachannel のバージョンを v0.24.2 に上げる` を追記した
+- `src/bind_libdatachannel.cpp`
+  - `as_audio` の binding にあるコメントの `v0.24.0 の description.cpp` を `上流の description.cpp` に直した。 上流の `createEntry` / `addMedia` は v0.24.0 と v0.24.2 で変わっておらずコメントの前提は成り立つが、 使わなくなったバージョンへの参照を残さないため
+- `CMakeLists.txt` / `THIRD_PARTY_LICENSES.md` / README は変更していない (ビルドオプションはそのまま使え、 libdatachannel と同梱される libjuice / libsrtp / usrsctp のバージョンとライセンス本文は v0.24.0 と同じで、 README にバージョン記載が無い)
+- 検証
+  - `make develop` が成功し、 インストールされた拡張モジュールが `_deps/libdatachannel/v0.24.2/` のソースでビルドされていることを実測で確認した
+  - CI と同じ 2 件 (`test_destruct_without_explicit_close` と `test_track`) を deselect した pytest が 176 passed / 12 skipped / 2 deselected
+  - `prek run --all-files ruff-check` が Passed
+  - CI (wheel.yml の 24 leg と prek.yml) は PR で確認する
