@@ -66,6 +66,6 @@ deps.json の libdatachannel.tag を v0.24.2 に変えて `uv build --wheel` を
 - `CMakeLists.txt` / `THIRD_PARTY_LICENSES.md` / README は変更していない (ビルドオプションはそのまま使え、 libdatachannel と同梱される libjuice / libsrtp / usrsctp のバージョンとライセンス本文は v0.24.0 と同じで、 README にバージョン記載が無い)
 - 検証
   - `make develop` が成功し、 インストールされた拡張モジュールが `_deps/libdatachannel/v0.24.2/` のソースでビルドされていることを実測で確認した
-  - CI と同じ 2 件 (`test_destruct_without_explicit_close` と `test_track`) を deselect した pytest が 176 passed / 12 skipped / 2 deselected
+  - `make develop` の後に `.venv/bin/python -m pytest tests/ -q --timeout=600 --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close --deselect tests/test_peerconnection.py::test_track` を実行し、 176 passed / 12 skipped / 2 deselected だった (`make test` は deselect を渡さず、 `uv run` は sync で `make develop` が入れた拡張モジュールを消す場合があるため使わない)
   - `prek run --all-files ruff-check` が Passed
   - CI (wheel.yml の 24 leg と prek.yml) は PR で確認する
