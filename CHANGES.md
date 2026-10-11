@@ -28,7 +28,12 @@
 - [CHANGE] `DataChannel.send()` / `Track.send()` / `WebSocket.send()` の `(data, size)` 版と、 `Track.send_frame()` の `(data, size, info)` 版を削除する
   - `size` に `data` の長さを超える値を渡すとヒープの範囲外を読み、 その内容が対向に送信されていた (SIGBUS でプロセスが落ちることもあった)
   - `size` は `len(data)` から導出できるため、 size を取らない版 (`send` は 1 引数、 `send_frame` は `data` と `info`) とスライス (`data[:size]`) で置き換えられる (`size` を渡して呼ぶと `TypeError` になる)
-  - `Channel` 側の同じ版は binding の削除 (develop の `[FIX]` エントリ) で既に対応済み
+  - `Channel` 側の同じ版は binding の削除 (`[FIX]` エントリ) で既に対応済み
+  - @voluntas
+- [ADD] Python 3.14t に対応する
+  - Free Threading 対応
+  - @voluntas
+- [ADD] Python 3.12 に対応する
   - @voluntas
 - [UPDATE] examples/whip.py と examples/whep.py が Trickle ICE の PATCH で local candidate を送るようにする
   - 201 Created を受信するまで candidate を保持し、 受信後に 1 つの HTTP PATCH (`application/trickle-ice-sdpfrag`) でまとめて送る (RFC 9725 Section 4.3.2 / draft-ietf-wish-whep-03 Section 4.4.2)
@@ -44,10 +49,19 @@
   - nanobind 3 では `NB_TRAMPOLINE` の size 引数が不要になったため削除し、 型 caster の `flags` を `uint32_t` に広げて `noexcept` を付ける
   - `nb::gil_scoped_acquire::is_valid()` を使い、 interpreter 停止中は Python API を触らずに終了するようにする (Python 3.15 以降で必要)
   - @voluntas
-- [ADD] Python 3.14t に対応する
-  - Free Threading 対応
+- [UPDATE] mbedTLS のバージョンを 3.6.5 に更新する
+  - deps.json の mbedtls を v3.6.5 にする
   - @voluntas
-- [ADD] Python 3.12 に対応する
+- [UPDATE] auditwheel の使用方法を uvx コマンドに変更する
+  - wheel を修復する処理を uvx auditwheel repair に変更する
+  - @voluntas
+- [UPDATE] set_media_handler() が None を受け付けるようにする
+  - handler を解除したいときに None を渡せるようにする
+  - @voluntas
+- [UPDATE] examples/wish.py を whip.py に統合する
+  - @voluntas
+- [UPDATE] examples/whip.py と examples/whep.py の依存ライブラリを変更する
+  - カメラ入力に uvc-py、 音声入力に portaudio-py、 映像の描画に blend2d-py、 再生に raw-player を使う
   - @voluntas
 - [FIX] IceUdpMuxListener の stop() を GIL 解放下で実行するようにする
   - 内部 thread の join が Python callback の GIL 待ちと噛み合って恒停し得るため、 GIL を解放して停止する
@@ -99,6 +113,7 @@
   - 映像トラックとデータチャネルを同時に使い、 受信側のパケットロスが多い条件下で Python プロセスが恒久停止していた
   - `DataChannel.send()` / `Track.send()` / `Track.send_frame()` / `WebSocket.send()` を GIL 解放下で実行する
   - GIL による直列化が無くなるため、 複数 thread から同一 Track へ送信する場合は呼び出し側で直列化する
+  - なお、 Python の MediaHandler サブクラス経由で送信する場合は GIL を保持したまま送信経路に入る (今後の課題)
   - @voluntas
 - [FIX] DataChannel / Track / WebSocket の `buffered_amount()` を Python から呼ぶと SIGSEGV する問題を修正する
   - `Channel` が 2 番目の基底であるため、 `Channel` 側の binding 経由では基底オフセットが加算されず、 virtual 呼び出しが誤った vtable スロットを読んでいた
@@ -114,64 +129,68 @@
   - `NalUnit(0).forbidden_bit()` や `NalUnit(b"").forbidden_bit()` が 0 バイトのバッファで null ポインタを参照して落ち、 `H265NalUnit(1)` は 2 バイトのヘッダを範囲外で読み書きしていた (Release ビルドでは assert が消えるため libdatachannel 本体の防御が働かない)
   - コンストラクタ (size 版 / bytes 版) でヘッダサイズ以上のバッファが確保されるかを検証し、 範囲外と桁あふれは `ValueError` にする
   - @voluntas
-
 - [FIX] mbedTLS をスレッドセーフにビルドする
   - スレッド対応が無い設定でビルドしていたため、 複数の thread から TLS を初期化したときに mbedTLS 内部 (PSA / entropy) の状態が壊れ、 TLS の初期化中に SIGTRAP (malloc の freelist 検査) や SIGSEGV でプロセスが落ちていた
   - WebSocketServer / WebSocket の TLS 接続が稀にプロセスごと落ちる問題を修正する (mbedTLS のビルドを再現可能にするため、 libdatachannel も同じ設定で再ビルドが必要)
   - @voluntas
-
 - [FIX] RtpPacketizer の max_fragment_size に小さい値を渡すとハングし、 メモリを消費し続ける問題を修正する
   - H264RtpPacketizer / H265RtpPacketizer / AV1RtpPacketizer で、 ハングや範囲外アクセスになる max_fragment_size を構築時に拒否する (H264 は 4〜65535、 H265 は 6〜65535、 AV1 は 2 以上。 範囲外は `ValueError` になる)
   - 上限があるのは、 フラグメント長を uint16_t に切り詰める処理があり、 65536 以上では切り詰めで長さが 0 や 1 になるためである
   - `outgoing` を GIL 解放下で実行し、 呼び出し中も他の thread が動けるようにする
   - なお、 AV1 で SequenceHeader をキャッシュした後は max_fragment_size が 2 + SequenceHeader 長 未満だとヒープを壊す経路が残る。 SequenceHeader のキャッシュの有無は binding から判定できないため、 根本解消は libdatachannel 側の修正が必要である
   - @voluntas
-
-- [FIX] 未対応の Windows を PyPI の classifiers と CMakeLists.txt の表明から外す
+- [FIX] 未対応の Windows を PyPI の classifiers と CMakeLists.txt の表明から削除する
   - README は未対応 (優先実装) としているため、 表明を README に合わせる
   - @voluntas
-
 - [FIX] examples/whip.py と whep.py で共有する handle_error が structlog の logger に存在しない isEnabledFor を呼び AttributeError になる問題を修正する
   - レベル判定をやめ、 スタックトレースの出力は logger.debug に任せる
   - @voluntas
-
-- [FIX] 生成される型スタブに __init__.py の 6 つのエイリアスを含める
+- [FIX] 生成される型スタブに __init__.py の 6 つのエイリアスを含めるようにする
   - 型チェッカーは __init__.py より __init__.pyi を優先するため、 スタブ側に無いと利用者の import が型チェックで失敗していた
   - @voluntas
-
 - [FIX] Candidate の __eq__ と __hash__ の不整合を修正する
   - candidate 行で比較し、 同じ candidate 行なら同一 hash になるようにする (dict / set で畳み込まれなかった)
   - libdatachannel の operator!= は foundation のみを比較しており == と非対称だったため、 __ne__ のバインドを外す
   - @voluntas
-
 - [FIX] DataChannel.close() と Track.close() を GIL 解放下で実行するようにする
   - close() は送信経路や callback と同じ mutex を取るため、 GIL を保持したまま呼ぶと循環待ちになり得る
   - @voluntas
-
-### misc
-
 - [FIX] callback の参照循環によるメモリリークを解消する
   - callback を Python 側で強参照し C++ 側では弱参照で持つようにして、 close() を呼ばなくても解放されるようにした
   - Channel / DataChannel / Track / WebSocket / PeerConnection / WebSocketServer が __dict__ を持ち GC 追跡対象になる (インスタンスに属性を設定できる。 参照が無くなってから破棄されるまでが次の GC まで遅れることがある)
   - @voluntas
+- [FIX] IceUdpMuxListener の callback で例外を投げてもプロセスが落ちないようにする
+  - callback は libjuice の C callback から直接呼ばれるため、 Python の例外が C のフレームを横断すると std::terminate になっていた (実測: exit 134)
+  - binding 側で受け止めて RuntimeWarning として記録し、 STUN の未処理 request を送る実測テストを追加する
+  - @voluntas
+- [FIX] examples/whip.py の RTP timestamp が長時間の配信で wrap せず、 送信が停止する問題を修正する
+  - 毎フレームの差分の足し込みをやめ、 最初の dts からの経過時間から計算する (映像は 90000、 音声は 48000)
+  - 乱数の初期値を維持したまま 32 bit で wrap させ、 丸め誤差の累積も解消する
+  - @voluntas
+- [FIX] wheel に第三者ライセンスを同梱する
+  - pyproject.toml の license-files に THIRD_PARTY_LICENSES.md を追加する
+  - @voluntas
 
+### misc
+
+- [UPDATE] GitHub Actions をコミットハッシュ固定の最新版に更新する
+  - @voluntas
+- [UPDATE] Slack 通知を shiguredo/github-actions の slack-notify に移行する
+  - チャンネルを python-oss にし、 リポジトリ変数で停止できるようにする
+  - @voluntas
 - [FIX] callback が wrapper 自身を捕捉している場合の解放方法を明記し、 回帰テストを追加する
   - callback を登録したオブジェクトは close() で解放する (登録したままだと Python の GC から見えない循環ができて解放されない)
   - @voluntas
-
 - [FIX] 型スタブのエイリアスを __init__.py から生成するようにする
   - エイリアスの断片ファイルを手で持たずに済み、 エイリアスを増やしたときの追従漏れが無くなる
   - @voluntas
-
 - [FIX] CI の wheel テスト環境に structlog を追加する
   - tests/test_error_logging.py が examples/error_logging.py を読み込むため、 test グループだけを入れる CI で collection が失敗していた
   - @voluntas
-
 - [FIX] mbedTLS のスレッド対応が CI で有効にならない問題を修正する
   - `CMakeLists.txt` の `_deps` を捨てる条件が、 無効化されたままの行 (//#define) に誤マッチしていた
   - `wheel.yml` と `prek.yml` の `_deps` キャッシュキーに世代を付け、 修正前のキャッシュを復元させない
   - @voluntas
-
 - [FIX] CI の pytest リトライを削除する
   - リトライに頼らず、 pytest の失敗をそのまま job の失敗として扱う (mbedTLS のスレッド対応で不安定要因を解消したため)
   - @voluntas
@@ -191,14 +210,8 @@
   - @voluntas
 - [FIX] 依存ライブラリのビルドキャッシュのキーに Python バージョンを追加する
   - @voluntas
-- [FIX] IceUdpMuxListener の callback で例外を投げてもプロセスが落ちないようにする
-  - callback は libjuice の C callback から直接呼ばれるため、 Python の例外が C のフレームを横断すると std::terminate になっていた (実測: exit 134)
-  - binding 側で受け止めて RuntimeWarning として記録し、 STUN の未処理 request を送る実測テストを追加する
-- [FIX] examples/whip.py の RTP timestamp が長時間の配信で wrap せず、 送信が停止する問題を修正する
-  - 毎フレームの差分の足し込みをやめ、 最初の dts からの経過時間から計算する (映像は 90000、 音声は 48000)
-  - 乱数の初期値を維持したまま 32 bit で wrap させ、 丸め誤差の累積も解消する
-  - @voluntas
-- [CHANGE] auditwheel の使用方法を uvx コマンドに変更する
+- [FIX] CI の test_track の恒停を除外して job の timeout を回避する
+  - 恒停の原因調査は別途行い、 直ったら除外を外す
   - @voluntas
 
 ## 2025.1.2
