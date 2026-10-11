@@ -51,6 +51,7 @@
   - @voluntas
 - [UPDATE] mbedTLS のバージョンを v3.6.7 に上げる
   - deps.json の mbedtls を v3.6.7 にする
+  - X.509 の basicConstraints が INTEGER で始まる非準拠の証明書を拒否するようになった
   - @voluntas
 - [UPDATE] libdatachannel のバージョンを v0.24.2 に上げる
   - deps.json の libdatachannel を v0.24.2 にする

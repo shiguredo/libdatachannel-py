@@ -66,6 +66,7 @@ deps.json の mbedtls.tag を v3.6.7 に変えて `uv build --wheel` を実行�
 - 検証
   - `make develop` が成功し、 `_deps/libdatachannel/v0.24.2/build/CMakeCache.txt` の `MbedTLS_ROOT` が `_deps/mbedtls/v3.6.7/install` を指すことを確認した (libdatachannel が v3.6.7 で再リンクされている)。 ローカルの `_deps/libdatachannel/v0.24.2/{build,install}` は mbedtls v3.6.5 でビルド済みだったため、 削除してから再ビルドさせた
   - `_deps/mbedtls/v3.6.7/install/include/mbedtls/mbedtls_config.h` に MBEDTLS_THREADING_C / MBEDTLS_THREADING_PTHREAD / MBEDTLS_SSL_DTLS_SRTP が定義されていることを確認した
+  - インストール済みの拡張モジュールに `mbedtls/v3.6.7` のソースパスが埋め込まれ、 `mbedtls/v3.6.5` の文字列が 0 件であることを確認した (wheel に同梱される mbedTLS が v3.6.7 であることの確認)
   - `make develop` の後に `.venv/bin/python -m pytest tests/ -q --timeout=600 --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close --deselect tests/test_peerconnection.py::test_track` を実行し、 176 passed / 12 skipped / 2 deselected だった
   - `prek run --all-files check-toml` / `check-yaml` と `ruff format --check` / `ruff check` が Passed
   - CI (wheel.yml の 24 leg と prek.yml) は PR で確認する
