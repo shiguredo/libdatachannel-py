@@ -15,8 +15,8 @@ deps.json の libdatachannel を v0.24.0 (2025-11-17 公開) から v0.24.2 (202
 - v0.24.0 は 2025-11-17 公開で、 上流は v0.24.6 (2026-09-26) まで進んでいる。 本パッケージを利用する環境が採用しているバージョンに揃えることで、 検証の再現性を確保する
 - v0.24.1 に WebSocket を onError callback 内で削除したときのクラッシュ修正と、 temporal unit delimiter を持たない AV1 フレームの RTP packetizer 修正が入っている
 - v0.24.2 に RTP / RTCP パケット処理の size check 追加、 SctpTransport::sendReset のバッファアラインメント修正、 Description の複数 group 属性の修正が入っている
-- v0.24.3 以降は TLS / DTLS の挙動変更を含むため、 追従は別途判断する (本 issue では v0.24.2 までとする)
-- 公開ヘッダの変更は追加のみ (Description::sessionId と SetThreadPoolSize) で、 削除や破壊的な変更は無い
+- v0.24.3 以降にも TLS / DTLS とメモリ安全の修正 (DTLS の受信キュー溢れ、 IceTransport の use-after-free、 DTLS のハンドシェイク恒停など) が入っているため、 追従は別途判断する (本 issue では v0.24.2 までとする)
+- 公開 API の削除や破壊的な変更は無い (Description::sessionId と SetThreadPoolSize の追加、 Preload / Cleanup 宣言の並べ替え、 RtcpSr / RtcpRr の getReportBlock が範囲外で nullptr を返す修正とそのコメント追記。 getReportBlock は binding していないため影響なし)
 
 ## 実測結果 (2026-10-11)
 
@@ -46,7 +46,7 @@ deps.json の libdatachannel.tag を v0.24.2 に変えて `uv build --wheel` を
 - `make develop` の後に CI と同じ 2 件 (`test_destruct_without_explicit_close` と `test_track`) を deselect した pytest が全件 PASS する
 - prek のフック (ruff / ty / check-toml / check-yaml / clang-format) が PASS する
 - CI (wheel.yml の 24 leg と prek.yml) が PASS する
-- CHANGES.md の `## develop` に `[UPDATE] libdatachannel のバージョンを v0.24.2 に上げる` が追記されている
+- CHANGES.md の `## develop` に `[UPDATE] libdatachannel のバージョンを v0.24.2 に上げる` と担当者行 (`- @voluntas`) が追記されている
 - `/review-diff-code` の致命的 / 重要指摘が 0 件であること
 
 ## 参考
