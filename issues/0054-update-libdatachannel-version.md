@@ -4,7 +4,7 @@
 - Created: 2026-10-11
 - Completed: {YYYY-MM-DD}
 - Branch: feature/update-libdatachannel-version
-- Polished: {YYYY-MM-DD}
+- Polished: 2026-10-11
 
 ## 目的
 
@@ -36,7 +36,7 @@ deps.json の libdatachannel.tag を v0.24.2 に変えて `uv build --wheel` を
 
 - deps.json の libdatachannel.tag を v0.24.2 に変更する (url は変更しない)
 - CMakeLists.txt は変更しない (v0.24.2 でも同じビルドオプションが使えることを確認する)
-- THIRD_PARTY_LICENSES.md は変更しない (libdatachannel のライセンス本文は変わっていない)
+- THIRD_PARTY_LICENSES.md は変更しない (libdatachannel と、 同梱される libjuice / libsrtp / usrsctp のバージョンとライセンス本文が v0.24.0 と同じであることを確認済み)
 - 上流で追加された API (SetThreadPoolSize / Description::sessionId) の binding 追加は本 issue の範囲外とする
 
 ## 完了条件
