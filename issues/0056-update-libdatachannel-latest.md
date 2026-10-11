@@ -2,7 +2,7 @@
 
 - Priority: Medium
 - Created: 2026-10-11
-- Completed: {YYYY-MM-DD}
+- Completed: 2026-10-11
 - Branch: feature/update-libdatachannel-latest
 - Polished: 2026-10-11
 
@@ -59,3 +59,17 @@ deps.json の libdatachannel.tag を v0.24.6 に変えて `uv build --wheel` を
 - libdatachannel v0.24.3〜v0.24.6: https://github.com/paullouisageneau/libdatachannel/releases
 - 対象: deps.json の libdatachannel
 - 先行して v0.24.2 へ上げた対応: [[0054-update-libdatachannel-version]]
+
+## 解決方法
+
+- `deps.json`
+  - `libdatachannel.tag` を `v0.24.2` から `v0.24.6` に変更した (`url` は変更なし)
+- `CHANGES.md`
+  - `## develop` の `[UPDATE]` の中間状態だったエントリ (`libdatachannel のバージョンを v0.24.2 に上げる`) を `libdatachannel のバージョンを v0.24.6 に上げる` に置き換えた (2025.1.2 が使っていた v0.24.0 からの最終的な差分を示す 1 件にする)
+- `CMakeLists.txt` / `THIRD_PARTY_LICENSES.md` / README は変更していない (ビルドオプションはそのまま使え、 libdatachannel と同梱される libjuice / libsrtp / usrsctp のライセンス本文は v0.24.2 と同じで、 README にバージョン記載が無い)
+- 検証
+  - `make develop` が成功し、 `_deps/libdatachannel/v0.24.6/build/CMakeCache.txt` の `MbedTLS_ROOT` が `_deps/mbedtls/v3.6.7/install` を指すことを確認した (mbedtls v3.6.7 で再リンクされている)。 ローカルの `_deps/libdatachannel/v0.24.6/{build,install}` は mbedtls v3.6.5 でビルド済みだったため、 削除してから再ビルドさせた
+  - インストール済みの拡張モジュールに `libdatachannel/v0.24.6` と `mbedtls/v3.6.7` のソースパスが埋め込まれ、 古い版 (`libdatachannel/v0.24.2` / `mbedtls/v3.6.5`) の文字列が 0 件であることを確認した
+  - `make develop` の後に `.venv/bin/python -m pytest tests/ -q --timeout=600 --deselect tests/test_peerconnection.py::test_destruct_without_explicit_close --deselect tests/test_peerconnection.py::test_track` を実行し、 176 passed / 12 skipped / 2 deselected だった
+  - prek のフック (ty) が Passed
+  - CI (wheel.yml の 24 leg と prek.yml) は PR で確認する
