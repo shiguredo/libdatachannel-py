@@ -24,6 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - name: ubuntu-26.04_x86_64
+            runs_on: ubuntu-26.04
+          - name: ubuntu-26.04_armv8
+            runs_on: ubuntu-26.04-arm
           - name: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
           - name: ubuntu-24.04_armv8
@@ -33,6 +37,8 @@ jobs:
           - name: ubuntu-22.04_armv8
             runs_on: ubuntu-22.04-arm
         python_version:
+          - "3.15"
+          - "3.15t"
           - "3.14"
           - "3.14t"
           - "3.13"
@@ -91,10 +97,24 @@ jobs:
           command -v patchelf
           patchelf --version
 
+      # Ubuntu 26.04 の glibc は 2.43 で、auditwheel 6.8.2 が対応する manylinux の
+      # 最大 (manylinux_2_41) を超えるため manylinux 化できない (x86_64 で
+      # "too-recent versioned symbols" になる)。26.04 では配布 wheel を作らず
+      # ビルドとテストのみを行い、配布する manylinux wheel は 22.04 / 24.04 で
+      # ビルドしたものを使う (manylinux は前方互換)。
       - name: Repair wheel with auditwheel
+        if: ${{ !startsWith(matrix.platform.name, 'ubuntu-26.04') }}
         shell: bash
         run: |
           uvx auditwheel repair dist/*.whl --strip --only-plat
+
+      # 26.04 では manylinux 化せず、 ビルドした linux wheel をそのままテストに使う
+      - name: Stage wheel without repair
+        if: ${{ startsWith(matrix.platform.name, 'ubuntu-26.04') }}
+        shell: bash
+        run: |
+          mkdir -p wheelhouse
+          cp dist/*.whl wheelhouse/
 
       # 断続的に失敗し得るテスト: free-threading の leg のコンカレンシー系、 callback 内
       # print が残るテスト (恒停経路)、 WebSocketServer 系のテスト (稀に native crash する)。
@@ -120,7 +140,9 @@ jobs:
         if: endsWith(matrix.python_version, 't')
         run: .venv-test/bin/python -c "import sys, libdatachannel; assert not sys._is_gil_enabled()"
 
+      # 26.04 の leg は manylinux 化できないため配布 artifact に含めない
       - name: Upload Artifact
+        if: ${{ !startsWith(matrix.platform.name, 'ubuntu-26.04') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.platform.name }}_python-${{ matrix.python_version }}
@@ -136,6 +158,8 @@ jobs:
           - name: macos-15_arm64
             runs_on: macos-15
         python_version:
+          - "3.15"
+          - "3.15t"
           - "3.14"
           - "3.14t"
           - "3.13"
@@ -224,6 +248,8 @@ jobs:
           - name: macos-26_arm64
           - name: macos-15_arm64
         python_version:
+          - "3.15"
+          - "3.15t"
           - "3.14"
           - "3.14t"
           - "3.13"

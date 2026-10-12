@@ -500,7 +500,7 @@ void bind_description(nb::module_& m) {
       // 兄弟クラスへ変換すると未定義動作になる。 dynamic_cast で動的型を確認し、
       // 一致した場合は元のオブジェクト自身を返す (戻り値が同じオブジェクトのため
       // keep_alive は不要。 reference_internal にすると自己参照のリークになる)。
-      // v0.24.0 の description.cpp は createEntry / addMedia で常に base の Media を
+      // 上流の description.cpp は createEntry / addMedia で常に base の Media を
       // 作る (addMedia は値渡しでスライスする) ため、 Description から取得した media の
       // 動的型は Media になり、 この経路では例外になる。 codec は add_media する前に
       // 追加する (add_media 後の media はコピーとしてしか取得できず、 後から足しても
