@@ -24,6 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - name: ubuntu-26.04_x86_64
+            runs_on: ubuntu-26.04
+          - name: ubuntu-26.04_armv8
+            runs_on: ubuntu-26.04-arm
           - name: ubuntu-24.04_x86_64
             runs_on: ubuntu-24.04
           - name: ubuntu-24.04_armv8
@@ -33,6 +37,8 @@ jobs:
           - name: ubuntu-22.04_armv8
             runs_on: ubuntu-22.04-arm
         python_version:
+          - "3.15"
+          - "3.15t"
           - "3.14"
           - "3.14t"
           - "3.13"
@@ -136,6 +142,8 @@ jobs:
           - name: macos-15_arm64
             runs_on: macos-15
         python_version:
+          - "3.15"
+          - "3.15t"
           - "3.14"
           - "3.14t"
           - "3.13"
@@ -217,6 +225,8 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - name: ubuntu-26.04_x86_64
+          - name: ubuntu-26.04_armv8
           - name: ubuntu-24.04_x86_64
           - name: ubuntu-24.04_armv8
           - name: ubuntu-22.04_x86_64
@@ -224,6 +234,8 @@ jobs:
           - name: macos-26_arm64
           - name: macos-15_arm64
         python_version:
+          - "3.15"
+          - "3.15t"
           - "3.14"
           - "3.14t"
           - "3.13"
