@@ -30,6 +30,8 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## Python
 
+- 3.15
+- 3.15t
 - 3.14
 - 3.14t
 - 3.13
@@ -37,6 +39,8 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 ## プラットフォーム
 
+- Ubuntu 26.04 LTS x86_64
+- Ubuntu 26.04 LTS arm64
 - Ubuntu 24.04 LTS x86_64
 - Ubuntu 24.04 LTS arm64
 - Ubuntu 22.04 LTS x86_64

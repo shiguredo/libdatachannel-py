@@ -30,6 +30,12 @@
   - `size` は `len(data)` から導出できるため、 size を取らない版 (`send` は 1 引数、 `send_frame` は `data` と `info`) とスライス (`data[:size]`) で置き換えられる (`size` を渡して呼ぶと `TypeError` になる)
   - `Channel` 側の同じ版は binding の削除 (`[FIX]` エントリ) で既に対応済み
   - @voluntas
+- [ADD] Python 3.15 / 3.15t に対応する
+  - Free Threading 対応
+  - @voluntas
+- [ADD] Ubuntu 26.04 LTS (x86_64 / arm64) に対応する
+  - CI のビルドとテスト対象に追加する (配布する manylinux wheel は 22.04 / 24.04 でビルドしたものを 26.04 でも使う)
+  - @voluntas
 - [ADD] Python 3.14t に対応する
   - Free Threading 対応
   - @voluntas
