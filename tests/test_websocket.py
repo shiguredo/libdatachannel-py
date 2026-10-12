@@ -132,8 +132,9 @@ def test_websocket_send_slice(echo_websocket_server) -> None:
 # 1 回あたり 10 秒程度かかる。
 _CLOSE_ITERATIONS = 1
 _FORCE_CLOSE_ITERATIONS = 5
-# 子プロセスの正当な待ち時間の最悪値 (接続待ち + callback 待ち) より十分大きい値にする。
-_HANG_REPRODUCTION_TIMEOUT = 180
+# 子プロセスの正当な待ち時間の最悪値 (接続待ち CONNECT_ATTEMPTS×CONNECT_WAIT_SECONDS と
+# callback 待ち CALLBACK_WAIT_SECONDS の ITERATIONS 回) より十分大きい値にする。
+_HANG_REPRODUCTION_TIMEOUT = 300
 
 
 def _run_hang_reproduction(mode: str, iterations: int) -> subprocess.CompletedProcess[str]:
