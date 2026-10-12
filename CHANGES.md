@@ -34,6 +34,7 @@
   - Free Threading 対応
   - @voluntas
 - [ADD] Ubuntu 26.04 LTS (x86_64 / arm64) に対応する
+  - CI のビルドとテスト対象に追加する (配布する manylinux wheel は 22.04 / 24.04 でビルドしたものを 26.04 でも使う)
   - @voluntas
 - [ADD] Python 3.14t に対応する
   - Free Threading 対応
