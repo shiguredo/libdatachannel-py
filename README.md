@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/libdatachannel-py)](https://pypi.org/project/libdatachannel-py/)
 [![image](https://img.shields.io/pypi/pyversions/libdatachannel-py.svg)](https://pypi.python.org/pypi/libdatachannel-py)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Actions status](https://github.com/shiguredo/libdatachannel-py/workflows/build/badge.svg)](https://github.com/shiguredo/sora-python-sdk/actions)
+[![Actions status](https://github.com/shiguredo/libdatachannel-py/workflows/wheel/badge.svg)](https://github.com/shiguredo/libdatachannel-py/actions)
 
 ## About Shiguredo's open source software
 
@@ -28,6 +28,61 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
 
 [webcodecs-py](https://github.com/shiguredo/webcodecs-py) を利用してください。
 
+## Python
+
+- 3.15
+- 3.15t
+- 3.14
+- 3.14t
+- 3.13
+- 3.12
+
+## プラットフォーム
+
+- Ubuntu 26.04 LTS x86_64
+- Ubuntu 26.04 LTS arm64
+- Ubuntu 24.04 LTS x86_64
+- Ubuntu 24.04 LTS arm64
+- Ubuntu 22.04 LTS x86_64
+- Ubuntu 22.04 LTS arm64
+- macOS 26 arm64
+- macOS 15 arm64
+
+## リリースビルド
+
+```bash
+make wheel
+```
+
+## 開発ビルド
+
+```bash
+make develop
+```
+
+## テスト
+
+```bash
+uv sync
+make test
+```
+
+## lint と typecheck
+
+[prek](https://github.com/j178/prek) のフックとして実行します。 `make typecheck` は
+`make develop` が生成する型スタブを必要とします。
+
+```bash
+uv tool install prek
+prek install --prepare-hooks
+make lint
+make typecheck
+```
+
+## サンプル
+
+[examples/](examples/) ディレクトリにサンプルコードがあります。
+
 ## 優先実装
 
 優先実装とは Sora / Sora Cloud の契約頂いているお客様向けに libdatachannel-py の実装予定機能を有償にて前倒しで実装することです。
@@ -40,8 +95,6 @@ Please read <https://github.com/shiguredo/oss/blob/master/README.en.md> before u
   - x86_64
 - Windows Server 2025 対応
   - x86_64
-  - arm64
-- Python 3.12 対応
 
 ## サポートについて
 
@@ -64,8 +117,8 @@ Discord へお願いします。
 Apache License 2.0
 
 ```text
-Copyright 2025-2025, Wandbox LLC (Original Author)
-Copyright 2025-2025, Shiguredo Inc.
+Copyright 2025 Wandbox LLC (Original Author)
+Copyright 2025 Shiguredo Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -78,12 +131,4 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-```
-
-## OpenH264
-
-<https://www.openh264.org/BINARY_LICENSE.txt>
-
-```text
-"OpenH264 Video Codec provided by Cisco Systems, Inc."
 ```

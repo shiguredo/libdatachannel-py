@@ -91,7 +91,9 @@ def test_websocket_configuration_fields():
 
     assert ws_config.disable_tls_verification is True
     assert ws_config.protocols == ["json", "binary"]
+    assert ws_config.connection_timeout is not None
     assert ws_config.connection_timeout.total_seconds() == 10
+    assert ws_config.ping_interval is not None
     assert ws_config.ping_interval.total_seconds() == 30
     assert ws_config.max_outstanding_pings == 5
     assert ws_config.ca_certificate_pem_file == "/path/ca.pem"
@@ -124,6 +126,7 @@ def test_websocket_server_configuration_custom():
     assert ws_server.port == 443
     assert ws_server.enable_tls is True
     assert ws_server.key_pem_pass == "secret"
+    assert ws_server.connection_timeout is not None
     assert ws_server.connection_timeout.total_seconds() == 5
     assert ws_server.max_message_size == 65536
 
